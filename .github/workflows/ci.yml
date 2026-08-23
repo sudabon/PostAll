@@ -63,7 +63,15 @@ jobs:
         with:
           go-version: "1.26"
           cache-dependency-path: backend/go.sum
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: flutter pub get
       - name: Generate from OpenAPI and fail on drift
         run: |
           make generate
-          git diff --exit-code
+          # git diff だけでは新規生成された未追跡ファイルを見逃すのでインデックスに載せて比較する。
+          git add -A
+          git diff --cached --exit-code

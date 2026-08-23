@@ -1,1 +1,3 @@
-pg_bigm/.git
+# Dockerfile は pg_bigm を upstream から取得する。
+# 手元に clone が残っていてもビルドコンテキストには送らない。
+pg_bigm
