@@ -1,0 +1,29 @@
+name: postall-sse-proxy-test
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.sse
+    expose:
+      - "8080"
+    networks:
+      - sse-test
+
+  nginx:
+    build:
+      context: ../nginx
+    environment:
+      POSTALL_DOMAIN: localhost
+    ports:
+      - "127.0.0.1:${POSTALL_SSE_TEST_PORT:-18443}:443"
+    volumes:
+      - ../certs:/etc/nginx/certs:ro
+    depends_on:
+      - api
+    networks:
+      - sse-test
+
+networks:
+  sse-test:
+    driver: bridge
