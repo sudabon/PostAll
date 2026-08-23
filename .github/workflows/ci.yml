@@ -50,6 +50,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
+          # pubspec.lock を解決したローカル環境と揃える。stable 任せだと
+          # SDK が上がった際に lock が再解決され、analyzer と source_gen が非互換になる。
+          flutter-version: "3.32.8"
           channel: stable
       - run: flutter pub get
       - run: flutter analyze
@@ -65,6 +68,9 @@ jobs:
           cache-dependency-path: backend/go.sum
       - uses: subosito/flutter-action@v2
         with:
+          # pubspec.lock を解決したローカル環境と揃える。stable 任せだと
+          # SDK が上がった際に lock が再解決され、analyzer と source_gen が非互換になる。
+          flutter-version: "3.32.8"
           channel: stable
       - name: Install mobile dependencies
         working-directory: mobile
