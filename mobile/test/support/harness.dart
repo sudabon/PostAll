@@ -13,9 +13,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'fake_api.dart';
 
 /// テスト用の固定 ID。読みやすさのため UUID の形だけ守る。
-String testId(int n) => '00000000-0000-4000-8000-${n.toString().padLeft(12, '0')}';
+String testId(int n) =>
+    '00000000-0000-4000-8000-${n.toString().padLeft(12, '0')}';
 
-Channel channel(int n, {String? name, String? parentId, String? sortKey}) => Channel(
+Channel channel(int n, {String? name, String? parentId, String? sortKey}) =>
+    Channel(
       id: testId(n),
       parentId: parentId,
       name: name ?? 'channel$n',
@@ -32,27 +34,39 @@ Post post(
   String? threadRootId,
   int replyCount = 0,
   bool deleted = false,
+  List<Attachment>? attachments,
   List<Reaction>? reactions,
-}) =>
-    Post(
+}) => Post(
+  id: testId(n),
+  channelId: channelId,
+  threadRootId: threadRootId,
+  authorId: 'author',
+  body: body ?? 'post $n',
+  createdAt: createdAt ?? DateTime.utc(2026, 3, 1, 9, n % 60),
+  updatedAt: createdAt ?? DateTime.utc(2026, 3, 1, 9, n % 60),
+  deleted: deleted,
+  replyCount: replyCount,
+  attachments: attachments,
+  reactions: reactions,
+);
+
+Attachment attachment(int n, {required String fileName, String? postId}) =>
+    Attachment(
       id: testId(n),
-      channelId: channelId,
-      threadRootId: threadRootId,
-      authorId: 'author',
-      body: body ?? 'post $n',
-      createdAt: createdAt ?? DateTime.utc(2026, 3, 1, 9, n % 60),
-      updatedAt: createdAt ?? DateTime.utc(2026, 3, 1, 9, n % 60),
-      deleted: deleted,
-      replyCount: replyCount,
-      reactions: reactions,
+      postId: postId,
+      fileName: fileName,
+      contentType: 'image/png',
+      sizeBytes: 1,
+      checksum: 'checksum-$n',
+      createdAt: DateTime.utc(2026, 3, 1),
     );
 
 /// サインイン済みのトークン。
 TokenSet signedInTokens() => TokenSet(
-      accessToken: 'access',
-      refreshToken: 'refresh',
-      expiresAt: DateTime.now().add(const Duration(hours: 1)),
-    );
+  accessToken: 'access',
+  refreshToken: 'refresh',
+  expiresAt: DateTime.now().add(const Duration(hours: 1)),
+);
 
 /// アプリの一部をテスト用の依存で包んで描画する。
 ///
@@ -80,8 +94,9 @@ Future<ProviderContainer> pumpApp(
     overrides: [
       sharedPreferencesProvider.overrideWithValue(preferences),
       apiProvider.overrideWithValue(api),
-      tokenStoreProvider
-          .overrideWithValue(InMemoryTokenStore(signedIn ? signedInTokens() : null)),
+      tokenStoreProvider.overrideWithValue(
+        InMemoryTokenStore(signedIn ? signedInTokens() : null),
+      ),
       ...overrides,
     ],
   );
@@ -99,14 +114,14 @@ Future<ProviderContainer> pumpApp(
 
 /// 設定が揃っている状態（サインインボタンを押せる）。
 List<Override> withCognitoSettings() => [
-      settingsProvider.overrideWith(_ConfiguredSettings.new),
-    ];
+  settingsProvider.overrideWith(_ConfiguredSettings.new),
+];
 
 class _ConfiguredSettings extends SettingsNotifier {
   @override
   AppSettings build() => const AppSettings(
-        apiBaseUrl: 'https://example.invalid',
-        cognitoDomain: 'auth.example.invalid',
-        cognitoClientId: 'client',
-      );
+    apiBaseUrl: 'https://example.invalid',
+    cognitoDomain: 'auth.example.invalid',
+    cognitoClientId: 'client',
+  );
 }

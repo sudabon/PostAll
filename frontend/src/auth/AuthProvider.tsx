@@ -90,6 +90,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       redirectUri,
       challenge,
     })
+    if (platform.kind === 'browser') {
+      window.location.assign(url)
+      return
+    }
     await platform.openExternal(url)
   }, [platform, redirectUri])
 

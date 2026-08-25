@@ -31,6 +31,23 @@ afterEach(() => {
 })
 
 describe('useChangeSync', () => {
+  it('reloads all displayed query families after the initial sync watermark', async () => {
+    const sync = event({ id: '12', eventType: 'post.updated' })
+    mocks.streamEvents.mockResolvedValue(pendingSseStream([
+      { id: sync.id, event: 'postall.sync', data: sync },
+    ]))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+
+    const { unmount } = renderHook(() => useChangeSync(true), { wrapper: wrapper(queryClient) })
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3))
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['channels'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['thread'] })
+    unmount()
+  })
+
   it('ignores duplicate event IDs and coalesces cache invalidations by target', async () => {
     const channelId = '11111111-1111-1111-1111-111111111111'
     const rootId = '22222222-2222-2222-2222-222222222222'
@@ -111,6 +128,19 @@ function pendingEventStream(events: ChangeEvent[]): ReadableStream<Uint8Array> {
     start(controller) {
       for (const item of events) {
         controller.enqueue(encoder.encode(`id: ${item.id}\nevent: ${item.eventType}\ndata: ${JSON.stringify(item)}\n\n`))
+      }
+    },
+  })
+}
+
+function pendingSseStream(messages: { id: string; event: string; data: ChangeEvent }[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder()
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const message of messages) {
+        controller.enqueue(encoder.encode(
+          `id: ${message.id}\nevent: ${message.event}\ndata: ${JSON.stringify(message.data)}\n\n`,
+        ))
       }
     },
   })

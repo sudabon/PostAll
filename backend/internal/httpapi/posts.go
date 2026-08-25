@@ -29,12 +29,12 @@ func (s *Server) ListChannelPosts(w http.ResponseWriter, r *http.Request, channe
 	}
 	res, err := s.posts.ListTimeline(r.Context(), uuid.UUID(channelId), limit, params.Before, around)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	out, err := s.toAPIPosts(r.Context(), res.Posts, viewerID)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.PostList{Posts: out, NextBefore: res.NextBefore})
@@ -54,12 +54,12 @@ func (s *Server) CreateChannelPost(w http.ResponseWriter, r *http.Request, chann
 	}
 	row, err := s.posts.Create(r.Context(), uuid.UUID(channelId), author, derefBody(body.Body), uuidList(body.AttachmentIds))
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	out, err := s.toAPIPosts(r.Context(), []post.View{row}, author)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, out[0])
@@ -79,12 +79,12 @@ func (s *Server) EditPost(w http.ResponseWriter, r *http.Request, postId api.Pos
 	}
 	row, err := s.posts.Edit(r.Context(), uuid.UUID(postId), body.Body, body.AttachmentIds)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	out, err := s.toAPIPosts(r.Context(), []post.View{row}, viewerID)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out[0])
@@ -95,7 +95,7 @@ func (s *Server) DeletePost(w http.ResponseWriter, r *http.Request, postId api.P
 		return
 	}
 	if err := s.posts.Delete(r.Context(), uuid.UUID(postId)); err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -115,12 +115,12 @@ func (s *Server) CreateReply(w http.ResponseWriter, r *http.Request, postId api.
 	}
 	row, err := s.posts.CreateReply(r.Context(), uuid.UUID(postId), author, derefBody(body.Body), uuidList(body.AttachmentIds))
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	out, err := s.toAPIPosts(r.Context(), []post.View{row}, author)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, out[0])
@@ -136,7 +136,7 @@ func (s *Server) GetThread(w http.ResponseWriter, r *http.Request, postId api.Po
 	}
 	th, err := s.posts.GetThread(r.Context(), uuid.UUID(postId))
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	views := make([]post.View, 0, len(th.Replies)+1)
@@ -144,7 +144,7 @@ func (s *Server) GetThread(w http.ResponseWriter, r *http.Request, postId api.Po
 	views = append(views, th.Replies...)
 	out, err := s.toAPIPosts(r.Context(), views, viewerID)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.Thread{Root: out[0], Replies: out[1:]})

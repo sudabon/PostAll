@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Composer } from './Composer'
 import { PlatformProvider, createFakeAdapter } from '@/platform'
@@ -48,6 +49,32 @@ describe('Composer', () => {
     fireEvent.click(screen.getByTestId('composer-attach'))
     expect(await screen.findByText(/10/)).toBeTruthy()
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('starts one upload per selected file in StrictMode', async () => {
+    const file = {
+      name: 'once.png',
+      type: 'image/png',
+      data: new Uint8Array([1]).buffer,
+    }
+    const uploadFile = vi.fn().mockResolvedValue('attachment-1')
+    const adapter = createFakeAdapter({ files: [file] })
+    render(
+      <StrictMode>
+        <PlatformProvider adapter={adapter}>
+          <Composer
+            storageKey="draft:strict"
+            onSubmit={vi.fn().mockResolvedValue(undefined)}
+            uploadFile={uploadFile}
+          />
+        </PlatformProvider>
+      </StrictMode>,
+    )
+
+    fireEvent.click(screen.getByTestId('composer-attach'))
+
+    await waitFor(() => expect(uploadFile).toHaveBeenCalledTimes(1))
+    expect(uploadFile).toHaveBeenCalledWith(file, expect.any(Function))
   })
 
   it('keeps an offline draft editable and sends it after mutation access returns', async () => {

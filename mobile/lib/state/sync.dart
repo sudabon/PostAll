@@ -67,16 +67,20 @@ class ChangeSync {
     if (_stopped) return;
     _reconnectTimer?.cancel();
     final api = _ref.read(apiProvider);
-    _subscription = api.streamEvents(lastEventId: _lastEventId).listen(
-      (event) {
-        _ref.read(connectionProvider.notifier).set(BackendConnection.online);
-        _reconnectDelay = _firstReconnectDelay;
-        _apply(event);
-      },
-      onError: (Object _) => _scheduleReconnect(),
-      onDone: _scheduleReconnect,
-      cancelOnError: true,
-    );
+    _subscription = api
+        .streamEvents(lastEventId: _lastEventId)
+        .listen(
+          (event) {
+            _ref
+                .read(connectionProvider.notifier)
+                .set(BackendConnection.online);
+            _reconnectDelay = _firstReconnectDelay;
+            _apply(event);
+          },
+          onError: (Object _) => _scheduleReconnect(),
+          onDone: _scheduleReconnect,
+          cancelOnError: true,
+        );
   }
 
   void _scheduleReconnect() {
@@ -125,6 +129,21 @@ class ChangeSync {
     if (seen != null && id <= seen) return;
     _lastEventId = event.id;
 
+    if (event.isSyncWatermark) {
+      unawaited(_ref.read(channelsProvider.notifier).reload());
+      final selectedChannelId = _ref.read(selectedChannelProvider);
+      if (selectedChannelId != null) {
+        unawaited(
+          _ref.read(timelineProvider(selectedChannelId).notifier).reload(),
+        );
+      }
+      final openThreadId = _ref.read(openThreadProvider);
+      if (openThreadId != null) {
+        unawaited(_ref.read(threadProvider(openThreadId).notifier).reload());
+      }
+      return;
+    }
+
     if (event.eventType.isChannelChange) {
       unawaited(_ref.read(channelsProvider.notifier).reload());
       return;
@@ -145,7 +164,9 @@ class ChangeSync {
 
 /// サインイン中だけ購読する。
 final changeSyncProvider = Provider<ChangeSync?>((ref) {
-  final signedIn = ref.watch(authControllerProvider.select((s) => s.value?.signedIn ?? false));
+  final signedIn = ref.watch(
+    authControllerProvider.select((s) => s.value?.signedIn ?? false),
+  );
   if (!signedIn) return null;
   final sync = ChangeSync(ref)..start();
   ref.onDispose(sync.dispose);

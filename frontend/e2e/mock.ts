@@ -22,8 +22,18 @@ type Post = {
   deletedAt?: string | null
   replyCount: number
   lastReplyAt: string | null
-  attachments: unknown[]
+  attachments: Attachment[]
   reactions: Reaction[]
+}
+
+type Attachment = {
+  id: string
+  postId: string | null
+  fileName: string
+  contentType: string
+  sizeBytes: number
+  checksum: string
+  createdAt: string
 }
 
 type Emoji = {
@@ -451,6 +461,9 @@ export async function installApiMock(page: Page) {
         return
       }
       post.body = body.body
+      if (Array.isArray(body.attachmentIds)) {
+        post.attachments = post.attachments.filter((attachment) => body.attachmentIds.includes(attachment.id))
+      }
       post.editedAt = now()
       post.updatedAt = post.editedAt
       await route.fulfill({ json: post })
@@ -464,6 +477,14 @@ export async function installApiMock(page: Page) {
       }
       post.deletedAt = now()
       post.deleted = true
+      if (post.threadRootId) {
+        const root = db.posts.find((item) => item.id === post.threadRootId)
+        if (root) {
+          const remaining = db.posts.filter((item) => item.threadRootId === root.id && !item.deletedAt)
+          root.replyCount = remaining.length
+          root.lastReplyAt = remaining.at(-1)?.createdAt ?? null
+        }
+      }
       await route.fulfill({ status: 204, body: '' })
       return
     }

@@ -46,20 +46,44 @@ create index posts_thread
     where deleted_at is null;
 
 create table attachments (
-    id            uuid primary key default gen_random_uuid(),
-    post_id       uuid references posts(id),
-    uploader_id   uuid not null references users(id),
-    file_name     text not null,
-    content_type  text not null,
-    size_bytes    bigint not null,
-    storage_key   text not null unique,
-    checksum      text not null,
-    created_at    timestamptz not null default now(),
-    completed_at  timestamptz
+    id                  uuid primary key default gen_random_uuid(),
+    post_id             uuid references posts(id) on delete set null,
+    uploader_id         uuid not null references users(id),
+    file_name           text not null,
+    content_type        text not null,
+    size_bytes          bigint not null,
+    storage_key         text not null unique,
+    checksum            text not null,
+    created_at          timestamptz not null default now(),
+    completed_at        timestamptz,
+    deletion_pending_at timestamptz,
+    deletion_attempts   integer not null default 0,
+    deletion_error      text
 );
 
 create index attachments_post_id on attachments (post_id);
 create index attachments_incomplete on attachments (created_at) where post_id is null;
+create index attachments_deletion_pending
+    on attachments (deletion_pending_at, id)
+    where deletion_pending_at is not null;
+
+create function mark_post_attachments_for_deletion()
+returns trigger
+language plpgsql
+as $$
+begin
+    update attachments
+    set post_id = null,
+        deletion_pending_at = coalesce(deletion_pending_at, now()),
+        deletion_error = null
+    where post_id = old.id;
+    return old;
+end;
+$$;
+
+create trigger posts_mark_attachments_for_deletion
+before delete on posts
+for each row execute function mark_post_attachments_for_deletion();
 
 create table emojis (
     id          uuid primary key default gen_random_uuid(),

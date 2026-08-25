@@ -36,10 +36,20 @@ export function Composer({
   const [value, setValue] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [drafts, setDrafts] = useState<DraftFile[]>([])
+  const [drafts, setDraftState] = useState<DraftFile[]>([])
+  const draftsRef = useRef<DraftFile[]>([])
   const [dragging, setDragging] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
   const [loaded, setLoaded] = useState(false)
+
+  const replaceDrafts = (next: DraftFile[]) => {
+    draftsRef.current = next
+    setDraftState(next)
+  }
+
+  const updateDrafts = (update: (current: DraftFile[]) => DraftFile[]) => {
+    replaceDrafts(update(draftsRef.current))
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -78,22 +88,22 @@ export function Composer({
 
   const runUpload = (key: string, file: PickedFile) => {
     if (mutationDisabled) {
-      setDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, status: 'error', error: '接続回復後に再試行してください' } : d)))
+      updateDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, status: 'error', error: '接続回復後に再試行してください' } : d)))
       return
     }
     if (!uploadFile) {
-      setDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, status: 'error', error: 'アップロードできません' } : d)))
+      updateDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, status: 'error', error: 'アップロードできません' } : d)))
       return
     }
-    setDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, status: 'uploading', error: undefined, progress: 0 } : d)))
+    updateDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, status: 'uploading', error: undefined, progress: 0 } : d)))
     void uploadFile(file, (ratio) => {
-      setDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, progress: ratio } : d)))
+      updateDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, progress: ratio } : d)))
     })
       .then((id) => {
-        setDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, status: 'ready', id, progress: 1 } : d)))
+        updateDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, status: 'ready', id, progress: 1 } : d)))
       })
       .catch(() => {
-        setDrafts((ds) =>
+        updateDrafts((ds) =>
           ds.map((d) => (d.key === key ? { ...d, status: 'error', error: 'アップロードに失敗しました' } : d)),
         )
       })
@@ -104,35 +114,36 @@ export function Composer({
       setError('接続されていないため添付をアップロードできません')
       return
     }
-    setError(null)
-    setDrafts((curr) => {
-      const next = [...curr]
-      for (const file of picked) {
-        const type = inferMime(file.name, file.type)
-        const typed = { ...file, type }
-        const check = checkAttachment({ type, size: typed.data.byteLength }, next.length)
-        if (!check.ok) {
-          setError(check.message)
-          continue
-        }
-        const key = crypto.randomUUID()
-        const preview =
-          isImageType(type) && typeof URL.createObjectURL === 'function'
-            ? URL.createObjectURL(new Blob([typed.data], { type }))
-            : undefined
-        next.push({ key, file: typed, progress: 0, status: 'uploading', preview })
-        runUpload(key, typed)
+    const next = [...draftsRef.current]
+    const uploads: { key: string; file: PickedFile }[] = []
+    let nextError: string | null = null
+    for (const file of picked) {
+      const type = inferMime(file.name, file.type)
+      const typed = { ...file, type }
+      const check = checkAttachment({ type, size: typed.data.byteLength }, next.length)
+      if (!check.ok) {
+        nextError = check.message
+        continue
       }
-      return next
-    })
+      const key = crypto.randomUUID()
+      const preview =
+        isImageType(type) && typeof URL.createObjectURL === 'function'
+          ? URL.createObjectURL(new Blob([typed.data], { type }))
+          : undefined
+      next.push({ key, file: typed, progress: 0, status: 'uploading', preview })
+      uploads.push({ key, file: typed })
+    }
+    setError(nextError)
+    replaceDrafts(next)
+    for (const upload of uploads) {
+      runUpload(upload.key, upload.file)
+    }
   }
 
   const removeDraft = (key: string) => {
-    setDrafts((ds) => {
-      const target = ds.find((d) => d.key === key)
-      if (target?.preview) URL.revokeObjectURL(target.preview)
-      return ds.filter((d) => d.key !== key)
-    })
+    const target = draftsRef.current.find((d) => d.key === key)
+    if (target?.preview) URL.revokeObjectURL(target.preview)
+    replaceDrafts(draftsRef.current.filter((d) => d.key !== key))
   }
 
   const submit = async () => {
@@ -143,10 +154,10 @@ export function Composer({
     try {
       await onSubmit(value, readyIds)
       setValue('')
-      drafts.forEach((d) => {
+      draftsRef.current.forEach((d) => {
         if (d.preview) URL.revokeObjectURL(d.preview)
       })
-      setDrafts([])
+      replaceDrafts([])
       await platform.removeItem(storageKey)
     } catch {
       setValue(snapshot)

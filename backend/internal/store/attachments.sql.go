@@ -19,6 +19,7 @@ where id = $2
   and uploader_id = $3
   and completed_at is not null
   and post_id is null
+  and deletion_pending_at is null
 `
 
 type BindAttachmentParams struct {
@@ -41,7 +42,8 @@ set completed_at = now()
 where id = $1
   and uploader_id = $2
   and completed_at is null
-returning id, post_id, uploader_id, file_name, content_type, size_bytes, storage_key, checksum, created_at, completed_at
+  and deletion_pending_at is null
+returning id, post_id, uploader_id, file_name, content_type, size_bytes, storage_key, checksum, created_at, completed_at, deletion_pending_at, deletion_attempts, deletion_error
 `
 
 type CompleteAttachmentParams struct {
@@ -63,26 +65,17 @@ func (q *Queries) CompleteAttachment(ctx context.Context, arg CompleteAttachment
 		&i.Checksum,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.DeletionPendingAt,
+		&i.DeletionAttempts,
+		&i.DeletionError,
 	)
 	return i, err
-}
-
-const countStorageKeyRefs = `-- name: CountStorageKeyRefs :one
-select count(*)::bigint
-from attachments
-where storage_key = $1
-`
-
-func (q *Queries) CountStorageKeyRefs(ctx context.Context, storageKey string) (int64, error) {
-	row := q.db.QueryRow(ctx, countStorageKeyRefs, storageKey)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
 }
 
 const deleteAttachmentRow = `-- name: DeleteAttachmentRow :exec
 delete from attachments
 where id = $1
+  and deletion_pending_at is not null
 `
 
 func (q *Queries) DeleteAttachmentRow(ctx context.Context, id uuid.UUID) error {
@@ -91,7 +84,7 @@ func (q *Queries) DeleteAttachmentRow(ctx context.Context, id uuid.UUID) error {
 }
 
 const getAttachment = `-- name: GetAttachment :one
-select id, post_id, uploader_id, file_name, content_type, size_bytes, storage_key, checksum, created_at, completed_at from attachments
+select id, post_id, uploader_id, file_name, content_type, size_bytes, storage_key, checksum, created_at, completed_at, deletion_pending_at, deletion_attempts, deletion_error from attachments
 where id = $1
 `
 
@@ -109,6 +102,9 @@ func (q *Queries) GetAttachment(ctx context.Context, id uuid.UUID) (Attachment, 
 		&i.Checksum,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.DeletionPendingAt,
+		&i.DeletionAttempts,
+		&i.DeletionError,
 	)
 	return i, err
 }
@@ -125,7 +121,7 @@ insert into attachments (
     $6,
     $7
 )
-returning id, post_id, uploader_id, file_name, content_type, size_bytes, storage_key, checksum, created_at, completed_at
+returning id, post_id, uploader_id, file_name, content_type, size_bytes, storage_key, checksum, created_at, completed_at, deletion_pending_at, deletion_attempts, deletion_error
 `
 
 type InsertAttachmentParams struct {
@@ -160,14 +156,18 @@ func (q *Queries) InsertAttachment(ctx context.Context, arg InsertAttachmentPara
 		&i.Checksum,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.DeletionPendingAt,
+		&i.DeletionAttempts,
+		&i.DeletionError,
 	)
 	return i, err
 }
 
 const listAttachmentsByPostID = `-- name: ListAttachmentsByPostID :many
-select id, post_id, uploader_id, file_name, content_type, size_bytes, storage_key, checksum, created_at, completed_at from attachments
+select id, post_id, uploader_id, file_name, content_type, size_bytes, storage_key, checksum, created_at, completed_at, deletion_pending_at, deletion_attempts, deletion_error from attachments
 where post_id = $1
   and completed_at is not null
+  and deletion_pending_at is null
 order by created_at asc, id asc
 `
 
@@ -191,6 +191,9 @@ func (q *Queries) ListAttachmentsByPostID(ctx context.Context, postID *uuid.UUID
 			&i.Checksum,
 			&i.CreatedAt,
 			&i.CompletedAt,
+			&i.DeletionPendingAt,
+			&i.DeletionAttempts,
+			&i.DeletionError,
 		); err != nil {
 			return nil, err
 		}
@@ -202,16 +205,15 @@ func (q *Queries) ListAttachmentsByPostID(ctx context.Context, postID *uuid.UUID
 	return items, nil
 }
 
-const listReapableAttachments = `-- name: ListReapableAttachments :many
-select a.id, a.post_id, a.uploader_id, a.file_name, a.content_type, a.size_bytes, a.storage_key, a.checksum, a.created_at, a.completed_at
-from attachments a
-left join posts p on p.id = a.post_id
-where (a.post_id is null and a.created_at < $1)
-   or (p.deleted_at is not null)
+const listPendingAttachments = `-- name: ListPendingAttachments :many
+select id, post_id, uploader_id, file_name, content_type, size_bytes, storage_key, checksum, created_at, completed_at, deletion_pending_at, deletion_attempts, deletion_error from attachments
+where deletion_pending_at is not null
+order by deletion_pending_at asc, id asc
+limit $1
 `
 
-func (q *Queries) ListReapableAttachments(ctx context.Context, olderThan time.Time) ([]Attachment, error) {
-	rows, err := q.db.Query(ctx, listReapableAttachments, olderThan)
+func (q *Queries) ListPendingAttachments(ctx context.Context, rowLimit int32) ([]Attachment, error) {
+	rows, err := q.db.Query(ctx, listPendingAttachments, rowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +232,9 @@ func (q *Queries) ListReapableAttachments(ctx context.Context, olderThan time.Ti
 			&i.Checksum,
 			&i.CreatedAt,
 			&i.CompletedAt,
+			&i.DeletionPendingAt,
+			&i.DeletionAttempts,
+			&i.DeletionError,
 		); err != nil {
 			return nil, err
 		}
@@ -239,6 +244,44 @@ func (q *Queries) ListReapableAttachments(ctx context.Context, olderThan time.Ti
 		return nil, err
 	}
 	return items, nil
+}
+
+const markReapableAttachmentsPending = `-- name: MarkReapableAttachmentsPending :exec
+update attachments a
+set post_id = null,
+    deletion_pending_at = now(),
+    deletion_error = null
+where a.deletion_pending_at is null
+  and (
+    (a.post_id is null and a.created_at < $1)
+    or exists (
+      select 1 from posts p
+      where p.id = a.post_id and p.deleted_at is not null
+    )
+  )
+`
+
+func (q *Queries) MarkReapableAttachmentsPending(ctx context.Context, olderThan time.Time) error {
+	_, err := q.db.Exec(ctx, markReapableAttachmentsPending, olderThan)
+	return err
+}
+
+const recordAttachmentDeletionFailure = `-- name: RecordAttachmentDeletionFailure :exec
+update attachments
+set deletion_attempts = deletion_attempts + 1,
+    deletion_error = left($1, 2000)
+where id = $2
+  and deletion_pending_at is not null
+`
+
+type RecordAttachmentDeletionFailureParams struct {
+	DeletionError string
+	ID            uuid.UUID
+}
+
+func (q *Queries) RecordAttachmentDeletionFailure(ctx context.Context, arg RecordAttachmentDeletionFailureParams) error {
+	_, err := q.db.Exec(ctx, recordAttachmentDeletionFailure, arg.DeletionError, arg.ID)
+	return err
 }
 
 const unbindByPostID = `-- name: UnbindByPostID :exec

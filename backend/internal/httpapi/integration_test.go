@@ -192,15 +192,36 @@ func TestAuthenticationAndChannelHierarchy(t *testing.T) {
 	}
 
 	softOnly := createChannel(t, h, authz, map[string]any{"name": "soft-only"})
-	if _, err := pool.Exec(context.Background(),
-		`insert into posts (channel_id, author_id, body, deleted_at) values ($1, $2, 'gone', now())`,
+	var softPostID uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`insert into posts (channel_id, author_id, body, deleted_at) values ($1, $2, 'gone', now()) returning id`,
 		softOnly.Id, userID,
-	); err != nil {
+	).Scan(&softPostID); err != nil {
+		t.Fatal(err)
+	}
+	softAttachmentID := uuid.New()
+	if _, err := pool.Exec(context.Background(), `
+		insert into attachments (
+			id, post_id, uploader_id, file_name, content_type, size_bytes,
+			storage_key, checksum, completed_at
+		) values ($1, $2, $3, 'soft.txt', 'text/plain', 4, $4, 'sum', now())`,
+		softAttachmentID, softPostID, userID, "attachments/soft-channel"); err != nil {
 		t.Fatal(err)
 	}
 	okDel := doJSON(t, h, http.MethodDelete, "/v1/channels/"+softOnly.Id.String(), authz, nil)
 	if okDel.Code != http.StatusNoContent {
 		t.Fatalf("delete soft-only=%d %s", okDel.Code, okDel.Body)
+	}
+	var detachedPostID *uuid.UUID
+	var deletionPendingAt *time.Time
+	if err := pool.QueryRow(context.Background(), `
+		select post_id, deletion_pending_at from attachments where id = $1`,
+		softAttachmentID,
+	).Scan(&detachedPostID, &deletionPendingAt); err != nil {
+		t.Fatal(err)
+	}
+	if detachedPostID != nil || deletionPendingAt == nil {
+		t.Fatalf("attachment after channel delete post=%v pending=%v", detachedPostID, deletionPendingAt)
 	}
 
 	token2 := mint(t, key, kid, "user-sub")

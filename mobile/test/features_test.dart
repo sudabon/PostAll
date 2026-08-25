@@ -26,7 +26,12 @@ void main() {
         channels: [channel(1, name: 'general')],
         posts: [
           for (var i = 0; i < 25; i++)
-            post(100 + i, channelId: testId(1), body: 'post $i', createdAt: DateTime(2026, 3, 1, 9, i)),
+            post(
+              100 + i,
+              channelId: testId(1),
+              body: 'post $i',
+              createdAt: DateTime(2026, 3, 1, 9, i),
+            ),
         ],
       );
       addTearDown(api.dispose);
@@ -50,7 +55,10 @@ void main() {
     testWidgets('10 件未満なら追加取得を要求しない', (tester) async {
       final api = FakeApi(
         channels: [channel(1, name: 'general')],
-        posts: [post(10, channelId: testId(1)), post(11, channelId: testId(1))],
+        posts: [
+          post(10, channelId: testId(1)),
+          post(11, channelId: testId(1)),
+        ],
       );
       addTearDown(api.dispose);
 
@@ -73,7 +81,12 @@ void main() {
         channels: [channel(1, name: 'general')],
         posts: [
           for (var i = 0; i < 25; i++)
-            post(100 + i, channelId: testId(1), body: 'post $i', createdAt: DateTime(2026, 3, 1, 9, i)),
+            post(
+              100 + i,
+              channelId: testId(1),
+              body: 'post $i',
+              createdAt: DateTime(2026, 3, 1, 9, i),
+            ),
         ],
       );
       addTearDown(api.dispose);
@@ -100,7 +113,11 @@ void main() {
         channels: [channel(1, name: 'general')],
         posts: [
           for (var i = 0; i < 25; i++)
-            post(100 + i, channelId: testId(1), createdAt: DateTime(2026, 3, 1, 9, i)),
+            post(
+              100 + i,
+              channelId: testId(1),
+              createdAt: DateTime(2026, 3, 1, 9, i),
+            ),
         ],
       );
       addTearDown(api.dispose);
@@ -118,15 +135,26 @@ void main() {
       await Future.wait([notifier.loadOlder(), notifier.loadOlder()]);
       await tester.pumpAndSettle();
 
-      expect(api.calls.where((c) => c.startsWith('listPosts')).length, before + 1);
+      expect(
+        api.calls.where((c) => c.startsWith('listPosts')).length,
+        before + 1,
+      );
     });
 
     testWidgets('スレッド返信と子チャネルのポストを混ぜない', (tester) async {
       final api = FakeApi(
-        channels: [channel(1, name: 'parent'), channel(2, name: 'child', parentId: testId(1))],
+        channels: [
+          channel(1, name: 'parent'),
+          channel(2, name: 'child', parentId: testId(1)),
+        ],
         posts: [
           post(10, channelId: testId(1), body: '親チャネルのポスト'),
-          post(11, channelId: testId(1), threadRootId: testId(10), body: 'スレッド返信'),
+          post(
+            11,
+            channelId: testId(1),
+            threadRootId: testId(10),
+            body: 'スレッド返信',
+          ),
           post(12, channelId: testId(2), body: '子チャネルのポスト'),
         ],
       );
@@ -180,7 +208,9 @@ void main() {
       );
 
       expect(find.text('まだポストがありません'), findsOneWidget);
-      final field = tester.widget<TextField>(find.byKey(const Key('composer-input')));
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('composer-input')),
+      );
       expect(field.enabled, isTrue);
     });
 
@@ -229,7 +259,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('こんにちは'), findsOneWidget);
-      final field = tester.widget<TextField>(find.byKey(const Key('composer-input')));
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('composer-input')),
+      );
       expect(field.controller?.text, isEmpty);
     });
 
@@ -245,7 +277,9 @@ void main() {
         child: const HomeShell(),
       );
 
-      final send = tester.widget<IconButton>(find.byKey(const Key('composer-send')));
+      final send = tester.widget<IconButton>(
+        find.byKey(const Key('composer-send')),
+      );
       expect(send.onPressed, isNull);
     });
 
@@ -267,17 +301,25 @@ void main() {
         child: const HomeShell(),
       );
 
-      await tester.enterText(find.byKey(const Key('composer-input')), 'チャネルの下書き');
+      await tester.enterText(
+        find.byKey(const Key('composer-input')),
+        'チャネルの下書き',
+      );
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('1 件の返信'));
       await tester.pumpAndSettle();
 
       // スレッドのフォームは空で始まる。
-      final threadField = tester.widget<TextField>(find.byKey(const Key('composer-input')));
+      final threadField = tester.widget<TextField>(
+        find.byKey(const Key('composer-input')),
+      );
       expect(threadField.controller?.text, isEmpty);
 
-      await tester.enterText(find.byKey(const Key('composer-input')), 'スレッドの下書き');
+      await tester.enterText(
+        find.byKey(const Key('composer-input')),
+        'スレッドの下書き',
+      );
       await tester.pumpAndSettle();
 
       final drafts = container.read(draftsProvider.notifier);
@@ -303,7 +345,9 @@ void main() {
         child: const HomeShell(),
       );
 
-      final field = tester.widget<TextField>(find.byKey(const Key('composer-input')));
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('composer-input')),
+      );
       expect(field.controller?.text, '書きかけの本文');
     });
 
@@ -325,7 +369,9 @@ void main() {
       await tester.tap(find.byTooltip('コードブロックを挿入'));
       await tester.pumpAndSettle();
 
-      final field = tester.widget<TextField>(find.byKey(const Key('composer-input')));
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('composer-input')),
+      );
       expect(field.controller?.text, '```\n```');
       expect(field.controller?.selection.baseOffset, 3);
     });
@@ -359,6 +405,44 @@ void main() {
       expect(find.text('直した本文'), findsOneWidget);
       expect(find.text('元の本文'), findsNothing);
       expect(find.text('編集済み'), findsOneWidget);
+    });
+
+    testWidgets('編集時に添付を選んで外せる', (tester) async {
+      final keep = attachment(20, fileName: 'keep.png', postId: testId(10));
+      final remove = attachment(21, fileName: 'remove.png', postId: testId(10));
+      final api = FakeApi(
+        channels: [channel(1, name: 'general')],
+        posts: [
+          post(
+            10,
+            channelId: testId(1),
+            body: '添付付き',
+            attachments: [keep, remove],
+          ),
+        ],
+      );
+      addTearDown(api.dispose);
+
+      await pumpApp(
+        tester,
+        api: api,
+        size: _narrow,
+        prefs: {'channels.selected': testId(1)},
+        child: const HomeShell(),
+      );
+
+      await tester.longPress(find.text('添付付き'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('編集'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('keep.png'), findsOneWidget);
+      expect(find.text('remove.png'), findsOneWidget);
+      await tester.tap(find.byKey(Key('post-edit-attachment-${remove.id}')));
+      await tester.tap(find.byKey(const Key('post-edit-save')));
+      await tester.pumpAndSettle();
+
+      expect(api.lastEditAttachmentIds, [keep.id]);
     });
 
     testWidgets('削除は確認を求め、取り消すと残る', (tester) async {
@@ -448,8 +532,19 @@ void main() {
       final api = FakeApi(
         channels: [channel(1, name: 'general')],
         posts: [
-          post(10, channelId: testId(1), body: '削除された親', deleted: true, replyCount: 1),
-          post(11, channelId: testId(1), threadRootId: testId(10), body: '残る返信'),
+          post(
+            10,
+            channelId: testId(1),
+            body: '削除された親',
+            deleted: true,
+            replyCount: 1,
+          ),
+          post(
+            11,
+            channelId: testId(1),
+            threadRootId: testId(10),
+            body: '残る返信',
+          ),
         ],
       );
       addTearDown(api.dispose);
@@ -459,7 +554,9 @@ void main() {
         api: api,
         size: _narrow,
         prefs: {'channels.selected': testId(1)},
-        child: const ThreadScreen(rootPostId: '00000000-0000-4000-8000-000000000010'),
+        child: const ThreadScreen(
+          rootPostId: '00000000-0000-4000-8000-000000000010',
+        ),
       );
 
       expect(find.text('このポストは削除されました'), findsOneWidget);
@@ -470,7 +567,12 @@ void main() {
 
   group('emoji-reactions: リアクション', () {
     testWidgets('自分の付与を区別して表示する', (tester) async {
-      final emoji = Emoji(id: testId(900), shortcode: 'tada', imagePath: 'tada.png', checksum: 'x');
+      final emoji = Emoji(
+        id: testId(900),
+        shortcode: 'tada',
+        imagePath: 'tada.png',
+        checksum: 'x',
+      );
       final api = FakeApi(
         channels: [channel(1, name: 'general')],
         emojis: [emoji],
@@ -479,7 +581,14 @@ void main() {
             10,
             channelId: testId(1),
             body: '祝う',
-            reactions: [Reaction(emoji: emoji, count: 2, reactedByMe: true, reactorIds: const ['me', 'other'])],
+            reactions: [
+              Reaction(
+                emoji: emoji,
+                count: 2,
+                reactedByMe: true,
+                reactorIds: const ['me', 'other'],
+              ),
+            ],
           ),
         ],
       );
@@ -499,7 +608,12 @@ void main() {
     });
 
     testWidgets('付与済みのリアクションを押すと解除される', (tester) async {
-      final emoji = Emoji(id: testId(900), shortcode: 'tada', imagePath: 'tada.png', checksum: 'x');
+      final emoji = Emoji(
+        id: testId(900),
+        shortcode: 'tada',
+        imagePath: 'tada.png',
+        checksum: 'x',
+      );
       final api = FakeApi(
         channels: [channel(1, name: 'general')],
         emojis: [emoji],
@@ -508,7 +622,14 @@ void main() {
             10,
             channelId: testId(1),
             body: '祝う',
-            reactions: [Reaction(emoji: emoji, count: 1, reactedByMe: true, reactorIds: const ['me'])],
+            reactions: [
+              Reaction(
+                emoji: emoji,
+                count: 1,
+                reactedByMe: true,
+                reactorIds: const ['me'],
+              ),
+            ],
           ),
         ],
       );
@@ -525,7 +646,10 @@ void main() {
       await tester.tap(find.text(':tada:'));
       await tester.pumpAndSettle();
 
-      expect(api.calls, contains('removeReaction:${testId(10)}:${testId(900)}'));
+      expect(
+        api.calls,
+        contains('removeReaction:${testId(10)}:${testId(900)}'),
+      );
       expect(find.text(':tada:'), findsNothing);
     });
   });
@@ -534,7 +658,9 @@ void main() {
     testWidgets('コードブロックをハイライトして描く', (tester) async {
       final api = FakeApi(
         channels: [channel(1, name: 'general')],
-        posts: [post(10, channelId: testId(1), body: '```dart\nvoid main() {}\n```')],
+        posts: [
+          post(10, channelId: testId(1), body: '```dart\nvoid main() {}\n```'),
+        ],
       );
       addTearDown(api.dispose);
 
@@ -553,7 +679,9 @@ void main() {
     testWidgets('未対応の言語でも素のコードとして描く', (tester) async {
       final api = FakeApi(
         channels: [channel(1, name: 'general')],
-        posts: [post(10, channelId: testId(1), body: '```klingon\nnuqneH\n```')],
+        posts: [
+          post(10, channelId: testId(1), body: '```klingon\nnuqneH\n```'),
+        ],
       );
       addTearDown(api.dispose);
 
@@ -575,13 +703,20 @@ void main() {
       final api = FakeApi(channels: [channel(1, name: 'general')]);
       addTearDown(api.dispose);
 
-      await pumpApp(tester, api: api, size: _narrow, child: const SearchScreen());
+      await pumpApp(
+        tester,
+        api: api,
+        size: _narrow,
+        child: const SearchScreen(),
+      );
 
       await tester.enterText(find.byKey(const Key('search-input')), 'あ');
       await tester.pumpAndSettle();
 
       expect(find.text('2 文字以上で検索します'), findsOneWidget);
-      final run = tester.widget<IconButton>(find.byKey(const Key('search-run')));
+      final run = tester.widget<IconButton>(
+        find.byKey(const Key('search-run')),
+      );
       expect(run.onPressed, isNull);
     });
 
@@ -592,7 +727,12 @@ void main() {
       );
       addTearDown(api.dispose);
 
-      await pumpApp(tester, api: api, size: _narrow, child: const SearchScreen());
+      await pumpApp(
+        tester,
+        api: api,
+        size: _narrow,
+        child: const SearchScreen(),
+      );
 
       await tester.enterText(find.byKey(const Key('search-input')), '議事録');
       await tester.pumpAndSettle();
@@ -615,7 +755,12 @@ void main() {
         channels: [channel(1, name: 'general')],
         posts: [
           for (var i = 0; i < 30; i++)
-            post(100 + i, channelId: testId(1), body: 'post $i', createdAt: DateTime(2026, 3, 1, 9, i)),
+            post(
+              100 + i,
+              channelId: testId(1),
+              body: 'post $i',
+              createdAt: DateTime(2026, 3, 1, 9, i),
+            ),
         ],
       );
       addTearDown(api.dispose);

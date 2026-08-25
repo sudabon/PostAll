@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../../util/mermaid_document.dart';
 import 'code_block.dart';
 
 /// 同時に生成する WebView の上限。
@@ -114,42 +115,15 @@ class _MermaidViewState extends State<MermaidView> {
     final dark = Theme.of(context).brightness == Brightness.dark;
     try {
       final script = await bundle.loadString('assets/mermaid/mermaid.min.js');
-      await controller.loadHtmlString(_html(script: script, dark: dark), baseUrl: 'about:blank');
+      await controller.loadHtmlString(
+        buildMermaidDocument(script: script, source: widget.source, dark: dark),
+        baseUrl: 'about:blank',
+      );
     } on Object {
       if (mounted) setState(() => _failed = true);
       return;
     }
     if (mounted) setState(() => _controller = controller);
-  }
-
-  String _html({required String script, required bool dark}) {
-    final source = jsonEncode(widget.source);
-    return '''
-<!doctype html>
-<html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  body { margin: 0; padding: 0; background: transparent; }
-  #host { overflow-x: auto; }
-</style>
-<script>$script</script>
-</head>
-<body>
-<div id="host"></div>
-<script>
-  (async () => {
-    const report = (payload) => MermaidHost.postMessage(JSON.stringify(payload));
-    try {
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: ${dark ? "'dark'" : "'default'"} });
-      const { svg } = await mermaid.render('postall-mermaid', $source);
-      document.getElementById('host').innerHTML = svg;
-      report({ height: document.getElementById('host').scrollHeight });
-    } catch (error) {
-      report({ error: String(error) });
-    }
-  })();
-</script>
-</body></html>
-''';
   }
 
   @override
@@ -189,7 +163,12 @@ class _MermaidViewState extends State<MermaidView> {
               borderRadius: BorderRadius.circular(6),
             ),
             child: _controller == null
-                ? const Center(child: SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2)))
+                ? const Center(
+                    child: SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
                 : WebViewWidget(controller: _controller!),
           ),
         ],
@@ -198,10 +177,10 @@ class _MermaidViewState extends State<MermaidView> {
   }
 
   Widget _toggle({required String label, required _MermaidMode to}) => Align(
-        alignment: Alignment.centerRight,
-        child: TextButton(
-          onPressed: () => setState(() => _mode = to),
-          child: Text(label, style: Theme.of(context).textTheme.labelSmall),
-        ),
-      );
+    alignment: Alignment.centerRight,
+    child: TextButton(
+      onPressed: () => setState(() => _mode = to),
+      child: Text(label, style: Theme.of(context).textTheme.labelSmall),
+    ),
+  );
 }

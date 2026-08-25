@@ -22,7 +22,7 @@ func (s *Server) StartAttachmentUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.attachments.Start(r.Context(), author, body.FileName, body.ContentType, body.Checksum, body.SizeBytes)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.StartUploadResponse{
@@ -42,7 +42,7 @@ func (s *Server) CompleteAttachment(w http.ResponseWriter, r *http.Request, atta
 	}
 	view, err := s.attachments.Complete(r.Context(), uuid.UUID(attachmentId), author)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toAPIAttachment(view))
@@ -58,7 +58,7 @@ func (s *Server) GetAttachmentDownload(w http.ResponseWriter, r *http.Request, a
 	}
 	res, err := s.attachments.Download(r.Context(), uuid.UUID(attachmentId), author)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.DownloadUrlResponse{Url: res.URL, ExpiresAt: res.ExpiresAt})

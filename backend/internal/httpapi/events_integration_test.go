@@ -15,6 +15,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sudabon/PostAll/backend/internal/auth"
+	"github.com/sudabon/PostAll/backend/internal/httpapi"
+	"github.com/sudabon/PostAll/backend/internal/testutil"
 )
 
 func TestEventStreamDeliversCommittedChanges(t *testing.T) {
@@ -49,14 +52,74 @@ func TestEventStreamDeliversCommittedChanges(t *testing.T) {
 	defer cancel()
 	response := openEventStream(t, ctx, server.URL, authz, "")
 	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	syncFrame := readSSEFrame(t, reader)
+	if syncFrame.Event != "postall.sync" || syncFrame.ID != syncFrame.Data.ID {
+		t.Fatalf("sync frame=%+v", syncFrame)
+	}
+	if syncFrame.Data.EventType != "post.updated" || syncFrame.Data.ChannelID != nil || syncFrame.Data.PostID != nil || syncFrame.Data.ThreadRootID != nil {
+		t.Fatalf("sync sentinel=%+v", syncFrame.Data)
+	}
 
 	created := createPost(t, h, authz, channel.Id.String(), "streamed")
-	frame := readSSEFrame(t, bufio.NewReader(response.Body))
+	frame := readSSEFrame(t, reader)
 	if frame.Event != "post.created" || frame.Data.PostID == nil || *frame.Data.PostID != created.Id.String() {
 		t.Fatalf("frame=%+v", frame)
 	}
 	if frame.ID != frame.Data.ID {
 		t.Fatalf("SSE id=%q data id=%q", frame.ID, frame.Data.ID)
+	}
+}
+
+func TestEventStreamsShareOneListenerConnection(t *testing.T) {
+	databaseURL := testutil.PostgresURL(t) + "&pool_max_conns=2"
+	key, jwks, kid := testRSA(t)
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(jwks)
+	}))
+	t.Cleanup(jwksServer.Close)
+	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "client-1", jwksServer.Client())
+	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authz := "Bearer " + mint(t, key, kid, "stream-pool-user")
+	createChannel(t, h, authz, map[string]any{"name": "pool"})
+
+	server := httptest.NewServer(h)
+	t.Cleanup(server.Close)
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	defer cancelFirst()
+	first := openEventStream(t, firstCtx, server.URL, authz, "")
+	defer first.Body.Close()
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	defer cancelSecond()
+	second := openEventStream(t, secondCtx, server.URL, authz, "")
+	defer second.Body.Close()
+
+	requestCtx, cancelRequest := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelRequest()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, server.URL+"/v1/channels", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", authz)
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("normal API request blocked by event streams: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("normal API status=%d %s", response.StatusCode, body)
+	}
+
+	for i, stream := range []*http.Response{first, second} {
+		frame := readSSEFrame(t, bufio.NewReader(stream.Body))
+		if frame.Event != "postall.sync" {
+			t.Fatalf("stream %d initial frame=%+v", i+1, frame)
+		}
 	}
 }
 

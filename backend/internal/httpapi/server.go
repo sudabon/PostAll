@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -41,6 +42,7 @@ type Server struct {
 	emojis      *emoji.Service
 	emojiDir    string
 	attachments *attachment.Service
+	events      *eventBroker
 	stopReap    context.CancelFunc
 	mux         http.Handler
 }
@@ -73,6 +75,7 @@ func New(cfg Config) (http.Handler, error) {
 			blobStore = s3
 		}
 		s.attachments = attachment.NewService(st.Queries, blobStore)
+		s.events = newEventBroker(pool)
 		s.channels = channel.NewService(st.Queries)
 		s.posts = post.NewService(st.Queries, st.Pool, s.attachments)
 		s.search = searchservice.NewService(st.Queries)
@@ -98,7 +101,7 @@ func New(cfg Config) (http.Handler, error) {
 			writeAPIError(w, http.StatusBadRequest, "validation", "リクエストが不正です", nil)
 		},
 	})
-	s.mux = auth.Middleware(v, users)(inner)
+	s.mux = requestIDMiddleware(auth.Middleware(v, users)(inner))
 	return s, nil
 }
 
@@ -134,6 +137,9 @@ func (s *Server) Close() {
 	if s.stopReap != nil {
 		s.stopReap()
 	}
+	if s.events != nil {
+		s.events.Close()
+	}
 	if s.pool != nil {
 		s.pool.Close()
 	}
@@ -147,7 +153,9 @@ func (s *Server) reapLoop(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = s.attachments.Reap(ctx)
+			if err := s.attachments.Reap(ctx); err != nil {
+				slog.ErrorContext(ctx, "attachment reaper failed", "error", safeLogError(err))
+			}
 		}
 	}
 }

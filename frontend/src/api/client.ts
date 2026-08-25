@@ -92,8 +92,11 @@ export class ApiClient {
     })
   }
 
-  editPost(id: string, body: string) {
-    return this.request<Post>(`/v1/posts/${id}`, { method: 'PATCH', json: { body } })
+  editPost(id: string, body: string, attachmentIds?: string[]) {
+    return this.request<Post>(`/v1/posts/${id}`, {
+      method: 'PATCH',
+      json: attachmentIds === undefined ? { body } : { body, attachmentIds },
+    })
   }
 
   deletePost(id: string) {

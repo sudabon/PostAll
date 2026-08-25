@@ -8,19 +8,23 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Attachment struct {
-	ID          uuid.UUID
-	PostID      *uuid.UUID
-	UploaderID  uuid.UUID
-	FileName    string
-	ContentType string
-	SizeBytes   int64
-	StorageKey  string
-	Checksum    string
-	CreatedAt   time.Time
-	CompletedAt *time.Time
+	ID                uuid.UUID
+	PostID            *uuid.UUID
+	UploaderID        uuid.UUID
+	FileName          string
+	ContentType       string
+	SizeBytes         int64
+	StorageKey        string
+	Checksum          string
+	CreatedAt         time.Time
+	CompletedAt       *time.Time
+	DeletionPendingAt *time.Time
+	DeletionAttempts  int32
+	DeletionError     pgtype.Text
 }
 
 type ChangeEvent struct {

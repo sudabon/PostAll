@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sudabon/PostAll/backend/internal/api"
 	"github.com/sudabon/PostAll/backend/internal/attachment"
@@ -96,6 +98,21 @@ func TestAttachmentsUploadDownloadAndReap(t *testing.T) {
 		t.Fatalf("attachments=%v", post.Attachments)
 	}
 
+	failedEdit := doJSON(t, h, http.MethodPatch, "/v1/posts/"+post.Id.String(), authz, map[string]any{
+		"body":          "must-roll-back",
+		"attachmentIds": []string{started.Id.String(), uuid.NewString()},
+	})
+	if failedEdit.Code != http.StatusBadRequest {
+		t.Fatalf("edit with invalid attachment=%d %s", failedEdit.Code, failedEdit.Body)
+	}
+	afterFailedEdit := getThread(t, h, authz, post.Id.String()).Root
+	if afterFailedEdit.Body != "" {
+		t.Fatalf("body after failed attachment edit=%q, want original", afterFailedEdit.Body)
+	}
+	if afterFailedEdit.Attachments == nil || len(*afterFailedEdit.Attachments) != 1 || (*afterFailedEdit.Attachments)[0].Id != started.Id {
+		t.Fatalf("attachments after failed edit=%v, want original attachment", afterFailedEdit.Attachments)
+	}
+
 	dl := doJSON(t, h, http.MethodGet, "/v1/attachments/"+started.Id.String()+"/download", authz, nil)
 	if dl.Code != http.StatusOK {
 		t.Fatalf("download=%d %s", dl.Code, dl.Body)
@@ -144,4 +161,83 @@ func TestAttachmentsUploadDownloadAndReap(t *testing.T) {
 	if gone.Code != http.StatusNotFound {
 		t.Fatalf("download after delete reap=%d %s", gone.Code, gone.Body)
 	}
+}
+
+func TestAttachmentReapRetriesFailedObjectDeletion(t *testing.T) {
+	dbURL := testutil.PostgresURL(t)
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	userID := uuid.New()
+	attachmentID := uuid.New()
+	storageKey := "attachments/retry-me"
+	if _, err := pool.Exec(ctx, `insert into users (id, cognito_sub) values ($1, $2)`, userID, "reaper-user"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		insert into attachments (
+			id, uploader_id, file_name, content_type, size_bytes, storage_key,
+			checksum, created_at, completed_at
+		) values ($1, $2, 'retry.txt', 'text/plain', 4, $3, 'sum', $4, now())`,
+		attachmentID, userID, storageKey, time.Now().Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	mem := blob.NewMemory()
+	mem.PutObject(storageKey, []byte("data"))
+	deleteErr := errors.New("object store unavailable")
+	flaky := &failOnceDeleteBlob{Memory: mem, err: deleteErr}
+	svc := attachment.NewService(store.NewStore(pool).Queries, flaky)
+
+	if err := svc.Reap(ctx); !errors.Is(err, deleteErr) {
+		t.Fatalf("first reap error=%v, want %v", err, deleteErr)
+	}
+	if !mem.Has(storageKey) {
+		t.Fatal("object must remain after failed deletion")
+	}
+	var postID *uuid.UUID
+	var pendingAt *time.Time
+	var attempts int
+	var deletionError *string
+	if err := pool.QueryRow(ctx, `
+		select post_id, deletion_pending_at, deletion_attempts, deletion_error
+		from attachments where id = $1`, attachmentID,
+	).Scan(&postID, &pendingAt, &attempts, &deletionError); err != nil {
+		t.Fatalf("pending attachment row was lost: %v", err)
+	}
+	if postID != nil || pendingAt == nil || attempts != 1 || deletionError == nil || *deletionError != deleteErr.Error() {
+		t.Fatalf("pending state post=%v pending=%v attempts=%d error=%v", postID, pendingAt, attempts, deletionError)
+	}
+
+	if err := svc.Reap(ctx); err != nil {
+		t.Fatalf("retry reap: %v", err)
+	}
+	if mem.Has(storageKey) {
+		t.Fatal("object must be deleted after successful retry")
+	}
+	var rows int
+	if err := pool.QueryRow(ctx, `select count(*) from attachments where id = $1`, attachmentID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("attachment rows=%d, want 0 after object deletion", rows)
+	}
+}
+
+type failOnceDeleteBlob struct {
+	*blob.Memory
+	err   error
+	calls int
+}
+
+func (b *failOnceDeleteBlob) Delete(ctx context.Context, key string) error {
+	b.calls++
+	if b.calls == 1 {
+		return b.err
+	}
+	return b.Memory.Delete(ctx, key)
 }

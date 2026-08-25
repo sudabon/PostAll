@@ -28,7 +28,7 @@ func (s *Server) SearchPosts(w http.ResponseWriter, r *http.Request, params api.
 		Limit: limit, Cursor: params.Cursor,
 	})
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	results := make([]api.SearchResult, 0, len(page.Results))

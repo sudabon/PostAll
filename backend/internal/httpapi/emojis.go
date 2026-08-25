@@ -22,7 +22,7 @@ func (s *Server) ListEmojis(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.emojis.List(r.Context())
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	out := make([]api.Emoji, 0, len(items))
@@ -38,7 +38,7 @@ func (s *Server) GetEmojiImage(w http.ResponseWriter, r *http.Request, shortcode
 	}
 	item, err := s.emojis.GetByShortcode(r.Context(), string(shortcode))
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	if filepath.Base(item.StorageKey) != item.StorageKey || strings.ToLower(filepath.Ext(item.StorageKey)) != ".png" {
@@ -52,7 +52,7 @@ func (s *Server) GetEmojiImage(w http.ResponseWriter, r *http.Request, shortcode
 			writeEmojiImageNotFound(w)
 			return
 		}
-		writeInternal(w)
+		writeInternal(w, r, err)
 		return
 	}
 	defer root.Close()
@@ -62,13 +62,13 @@ func (s *Server) GetEmojiImage(w http.ResponseWriter, r *http.Request, shortcode
 			writeEmojiImageNotFound(w)
 			return
 		}
-		writeInternal(w)
+		writeInternal(w, r, err)
 		return
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		writeInternal(w)
+		writeInternal(w, r, err)
 		return
 	}
 	if !info.Mode().IsRegular() {
@@ -97,7 +97,7 @@ func (s *Server) AddReaction(w http.ResponseWriter, r *http.Request, postId api.
 	}
 	summary, err := s.emojis.AddReaction(r.Context(), uuid.UUID(postId), uuid.UUID(emojiId), userID)
 	if err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toAPIReaction(summary, userID))
@@ -112,7 +112,7 @@ func (s *Server) RemoveReaction(w http.ResponseWriter, r *http.Request, postId a
 		return
 	}
 	if err := s.emojis.RemoveReaction(r.Context(), uuid.UUID(postId), uuid.UUID(emojiId), userID); err != nil {
-		writeAppError(w, err)
+		writeAppError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

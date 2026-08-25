@@ -40,10 +40,22 @@ export function useChangeSync(enabled = true) {
       queueMicrotask(flushInvalidations)
     }
 
-    const applyEvent = (event: ChangeEvent) => {
-      if (!/^[0-9]+$/.test(event.id)) return
-      if (lastEventId !== null && BigInt(event.id) <= BigInt(lastEventId)) return
+    const advanceCursor = (event: ChangeEvent): boolean => {
+      if (!/^[0-9]+$/.test(event.id)) return false
+      if (lastEventId !== null && BigInt(event.id) <= BigInt(lastEventId)) return false
       lastEventId = event.id
+      return true
+    }
+
+    const applySyncWatermark = (event: ChangeEvent) => {
+      if (event.channelId || event.postId || event.threadRootId || !advanceCursor(event)) return
+      queueInvalidation('channels', ['channels'])
+      queueInvalidation('posts', ['posts'])
+      queueInvalidation('thread', ['thread'])
+    }
+
+    const applyEvent = (event: ChangeEvent) => {
+      if (!advanceCursor(event)) return
       if (event.eventType.startsWith('channel.')) {
         queueInvalidation('channels', ['channels'])
         return
@@ -137,6 +149,10 @@ export function useChangeSync(enabled = true) {
             try {
               const event = JSON.parse(message.data) as ChangeEvent
               if (message.id && message.id !== event.id) return
+              if (message.event === 'postall.sync') {
+                applySyncWatermark(event)
+                return
+              }
               applyEvent(event)
             } catch {
               // Ignore one malformed frame and keep the durable stream alive.

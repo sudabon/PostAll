@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -40,7 +39,7 @@ func (s *Server) ListChangeEvents(w http.ResponseWriter, r *http.Request, params
 
 	page, err := s.changes.ListAfter(r.Context(), after, limit)
 	if err != nil {
-		writeInternal(w)
+		writeInternal(w, r, err)
 		return
 	}
 	events := make([]api.ChangeEvent, 0, len(page.Events))
@@ -55,7 +54,7 @@ func (s *Server) ListChangeEvents(w http.ResponseWriter, r *http.Request, params
 }
 
 func (s *Server) StreamChangeEvents(w http.ResponseWriter, r *http.Request, params api.StreamChangeEventsParams) {
-	if s.changes == nil || s.pool == nil {
+	if s.changes == nil || s.events == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "unavailable", "データベースに接続できません", nil)
 		return
 	}
@@ -70,29 +69,25 @@ func (s *Server) StreamChangeEvents(w http.ResponseWriter, r *http.Request, para
 		lastID = parsed
 	}
 
-	connection, err := s.pool.Acquire(r.Context())
-	if err != nil {
-		writeInternal(w)
-		return
-	}
-	defer connection.Release()
-	if _, err := connection.Exec(r.Context(), "listen postall_events"); err != nil {
-		writeInternal(w)
-		return
-	}
-	if !replay {
-		lastID, err = s.changes.LatestID(r.Context())
-		if err != nil {
-			writeInternal(w)
-			return
-		}
-	}
-
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeAPIError(w, http.StatusInternalServerError, "streaming_unavailable", "イベントストリームを開始できません", nil)
 		return
 	}
+	wake, unsubscribe, err := s.events.Subscribe(r.Context())
+	if err != nil {
+		writeInternal(w, r, err)
+		return
+	}
+	defer unsubscribe()
+	if !replay {
+		lastID, err = s.changes.LatestID(r.Context())
+		if err != nil {
+			writeInternal(w, r, err)
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -104,29 +99,49 @@ func (s *Server) StreamChangeEvents(w http.ResponseWriter, r *http.Request, para
 		if err := s.writePendingEvents(r.Context(), w, flusher, &lastID); err != nil {
 			return
 		}
+	} else if err := writeSyncEvent(w, flusher, lastID); err != nil {
+		return
 	}
+	heartbeat := time.NewTicker(eventHeartbeatInterval)
+	defer heartbeat.Stop()
 	for {
-		waitCtx, cancel := context.WithTimeout(r.Context(), eventHeartbeatInterval)
-		_, waitErr := connection.Conn().WaitForNotification(waitCtx)
-		cancel()
-		if waitErr == nil {
+		select {
+		case <-r.Context().Done():
+			return
+		case _, ok := <-wake:
+			if !ok {
+				return
+			}
 			if err := s.writePendingEvents(r.Context(), w, flusher, &lastID); err != nil {
 				return
 			}
-			continue
-		}
-		if r.Context().Err() != nil {
-			return
-		}
-		if errors.Is(waitErr, context.DeadlineExceeded) {
+		case <-heartbeat.C:
+			if err := s.writePendingEvents(r.Context(), w, flusher, &lastID); err != nil {
+				return
+			}
 			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {
 				return
 			}
 			flusher.Flush()
-			continue
 		}
-		return
 	}
+}
+
+func writeSyncEvent(w http.ResponseWriter, flusher http.Flusher, watermark int64) error {
+	id := strconv.FormatInt(watermark, 10)
+	body, err := json.Marshal(api.ChangeEvent{
+		Id:        id,
+		EventType: api.ChangeEventEventType("post.updated"),
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "id: %s\nevent: postall.sync\ndata: %s\n\n", id, body); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
 }
 
 func (s *Server) writePendingEvents(

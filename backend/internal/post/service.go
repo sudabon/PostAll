@@ -154,6 +154,26 @@ func (s *Service) Edit(ctx context.Context, id uuid.UUID, body string, attachmen
 	if err != nil {
 		return View{}, err
 	}
+	if attachmentIDs != nil && s.pool != nil && s.attachments != nil {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return View{}, err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		q := s.q.WithTx(tx)
+		row, err := q.UpdatePostBody(ctx, store.UpdatePostBodyParams{ID: id, Body: body})
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return View{}, mapWrite(ctx, s, id, err)
+		}
+		if err := s.attachments.Replace(ctx, q, id, row.AuthorID, *attachmentIDs); err != nil {
+			return View{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return View{}, err
+		}
+		return s.viewOf(ctx, row)
+	}
 	row, err := s.q.UpdatePostBody(ctx, store.UpdatePostBodyParams{ID: id, Body: body})
 	if err != nil {
 		return View{}, mapWrite(ctx, s, id, err)

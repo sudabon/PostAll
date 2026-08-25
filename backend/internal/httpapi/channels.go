@@ -22,7 +22,7 @@ func (s *Server) ListChannels(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.channels.List(r.Context())
 	if err != nil {
-		writeInternal(w)
+		writeInternal(w, r, err)
 		return
 	}
 	out := make([]api.Channel, 0, len(rows))
@@ -42,7 +42,7 @@ func (s *Server) CreateChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := s.channels.Create(r.Context(), body.Name, body.ParentId)
 	if err != nil {
-		writeChannelError(w, err)
+		writeChannelError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toAPIChannel(row))
@@ -58,7 +58,7 @@ func (s *Server) RenameChannel(w http.ResponseWriter, r *http.Request, channelId
 	}
 	row, err := s.channels.Rename(r.Context(), uuid.UUID(channelId), body.Name)
 	if err != nil {
-		writeChannelError(w, err)
+		writeChannelError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toAPIChannel(row))
@@ -78,7 +78,7 @@ func (s *Server) MoveChannel(w http.ResponseWriter, r *http.Request, channelId a
 		AfterID:  body.AfterId,
 	})
 	if err != nil {
-		writeChannelError(w, err)
+		writeChannelError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, toAPIChannel(row))
@@ -89,7 +89,7 @@ func (s *Server) DeleteChannel(w http.ResponseWriter, r *http.Request, channelId
 		return
 	}
 	if err := s.channels.Delete(r.Context(), uuid.UUID(channelId)); err != nil {
-		writeChannelError(w, err)
+		writeChannelError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -112,11 +112,11 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	return true
 }
 
-func writeChannelError(w http.ResponseWriter, err error) {
-	writeAppError(w, err)
+func writeChannelError(w http.ResponseWriter, r *http.Request, err error) {
+	writeAppError(w, r, err)
 }
 
-func writeAppError(w http.ResponseWriter, err error) {
+func writeAppError(w http.ResponseWriter, r *http.Request, err error) {
 	var ce *channel.Error
 	if errors.As(err, &ce) {
 		writeAPIError(w, ce.Status, ce.Code, ce.Message, ce.Details)
@@ -142,10 +142,11 @@ func writeAppError(w http.ResponseWriter, err error) {
 		writeAPIError(w, se.Status, se.Code, se.Message, nil)
 		return
 	}
-	writeInternal(w)
+	writeInternal(w, r, err)
 }
 
-func writeInternal(w http.ResponseWriter) {
+func writeInternal(w http.ResponseWriter, r *http.Request, err error) {
+	logUnexpected(r, err)
 	writeAPIError(w, http.StatusInternalServerError, "internal", "内部エラーが発生しました", nil)
 }
 

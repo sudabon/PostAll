@@ -5,6 +5,7 @@ import { formatDateLabel, formatTime, localDateKey } from '@/lib/dates'
 import { useUi } from '@/state/ui'
 import { useAuth } from '@/auth/AuthProvider'
 import { Composer } from '@/components/composer/Composer'
+import { PostActions } from '@/components/post/PostActions'
 import { PostBody } from '@/components/post/PostBody'
 import { ReactionBar } from '@/components/reactions/ReactionBar'
 import { uploadPickedFile } from '@/lib/upload'
@@ -101,7 +102,7 @@ export function Timeline({ channelId }: { channelId: string | null }) {
                 post={post}
                 highlighted={post.id === targetPostId}
                 mutationDisabled={!canMutate}
-                onEdit={(body) => mutations.edit.mutate({ id: post.id, body })}
+                onEdit={(body, attachmentIds) => mutations.edit.mutate({ id: post.id, body, attachmentIds })}
                 onDelete={() => mutations.remove.mutate(post.id)}
               />
             </div>
@@ -135,7 +136,7 @@ function PostRow({
   post: Post
   highlighted: boolean
   mutationDisabled: boolean
-  onEdit: (body: string) => void
+  onEdit: (body: string, attachmentIds: string[]) => void
   onDelete: () => void
 }) {
   return (
@@ -173,29 +174,13 @@ function PostRow({
           スレッドで返信
         </button>
       )}
-      <div className={cn('absolute right-2 top-2 hidden gap-2 group-hover:flex')}>
-        <button
-          type="button"
-          className="text-xs"
-          disabled={mutationDisabled}
-          onClick={() => {
-            const next = window.prompt('本文を編集', post.body)
-            if (next != null) onEdit(next)
-          }}
-        >
-          編集
-        </button>
-        <button
-          type="button"
-          className="text-xs text-destructive"
-          disabled={mutationDisabled}
-          onClick={() => {
-            if (window.confirm('このポストを削除しますか？')) onDelete()
-          }}
-        >
-          削除
-        </button>
-      </div>
+      <PostActions
+        post={post}
+        kind="ポスト"
+        mutationDisabled={mutationDisabled}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />
     </article>
   )
 }

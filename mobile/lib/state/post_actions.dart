@@ -20,9 +20,15 @@ class PostActions {
     }
   }
 
-  Future<Post> createPost(String channelId, String body, List<String> attachmentIds) async {
+  Future<Post> createPost(
+    String channelId,
+    String body,
+    List<String> attachmentIds,
+  ) async {
     _requireConnection();
-    final post = await _ref.read(apiProvider).createPost(
+    final post = await _ref
+        .read(apiProvider)
+        .createPost(
           channelId,
           body,
           attachmentIds: attachmentIds.isEmpty ? null : attachmentIds,
@@ -31,9 +37,15 @@ class PostActions {
     return post;
   }
 
-  Future<Post> createReply(String rootPostId, String body, List<String> attachmentIds) async {
+  Future<Post> createReply(
+    String rootPostId,
+    String body,
+    List<String> attachmentIds,
+  ) async {
     _requireConnection();
-    final reply = await _ref.read(apiProvider).createReply(
+    final reply = await _ref
+        .read(apiProvider)
+        .createReply(
           rootPostId,
           body,
           attachmentIds: attachmentIds.isEmpty ? null : attachmentIds,
@@ -44,13 +56,23 @@ class PostActions {
     return reply;
   }
 
-  Future<Post> editPost(Post post, String body) async {
+  Future<Post> editPost(
+    Post post,
+    String body, {
+    List<String>? attachmentIds,
+  }) async {
     _requireConnection();
-    final updated = await _ref.read(apiProvider).editPost(post.id, body);
+    final updated = await _ref
+        .read(apiProvider)
+        .editPost(post.id, body, attachmentIds: attachmentIds);
     if (post.threadRootId == null) {
-      _ref.read(timelineProvider(post.channelId).notifier).replaceLocally(updated);
+      _ref
+          .read(timelineProvider(post.channelId).notifier)
+          .replaceLocally(updated);
     } else {
-      _ref.read(threadProvider(post.threadRootId!).notifier).replaceLocally(updated);
+      _ref
+          .read(threadProvider(post.threadRootId!).notifier)
+          .replaceLocally(updated);
     }
     return updated;
   }
@@ -59,15 +81,23 @@ class PostActions {
     _requireConnection();
     await _ref.read(apiProvider).deletePost(post.id);
     if (post.threadRootId == null) {
-      _ref.read(timelineProvider(post.channelId).notifier).removeLocally(post.id);
+      _ref
+          .read(timelineProvider(post.channelId).notifier)
+          .removeLocally(post.id);
     } else {
-      _ref.read(threadProvider(post.threadRootId!).notifier).removeReplyLocally(post.id);
+      _ref
+          .read(threadProvider(post.threadRootId!).notifier)
+          .removeReplyLocally(post.id);
     }
   }
 
   /// リアクションを付ける／外す。失敗したらサーバの状態へ戻す
   /// （emoji-reactions spec「リアクションの失敗時の巻き戻し」）。
-  Future<void> toggleReaction(Post post, Emoji emoji, {required bool add}) async {
+  Future<void> toggleReaction(
+    Post post,
+    Emoji emoji, {
+    required bool add,
+  }) async {
     _requireConnection();
     final api = _ref.read(apiProvider);
     try {

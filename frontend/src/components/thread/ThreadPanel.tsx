@@ -5,6 +5,7 @@ import { useUi } from '@/state/ui'
 import { useAuth } from '@/auth/AuthProvider'
 import { Composer } from '@/components/composer/Composer'
 import { PostBody } from '@/components/post/PostBody'
+import { PostActions } from '@/components/post/PostActions'
 import { ReactionBar } from '@/components/reactions/ReactionBar'
 import { uploadPickedFile } from '@/lib/upload'
 
@@ -56,13 +57,20 @@ export function ThreadPanel({ channelId }: { channelId: string | null }) {
             key={reply.id}
             id={`thread-reply-${reply.id}`}
             tabIndex={-1}
-            className={`mb-3 border-t border-border pt-3 focus:outline-none ${
+            className={`group relative mb-3 border-t border-border pt-3 focus:outline-none ${
               reply.id === targetReplyId ? 'rounded-md bg-accent p-2 ring-2 ring-primary' : ''
             }`}
           >
             <p className="text-xs text-muted-foreground">{formatDateTime(reply.createdAt)}</p>
             <PostBody post={reply} />
             <ReactionBar postId={reply.id} reactions={reply.reactions ?? []} />
+            <PostActions
+              post={reply}
+              kind="返信"
+              mutationDisabled={!canMutate}
+              onEdit={(body, attachmentIds) => mutations.edit.mutate({ id: reply.id, body, attachmentIds })}
+              onDelete={() => mutations.remove.mutate(reply.id)}
+            />
           </article>
         ))}
       </div>

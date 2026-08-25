@@ -15,11 +15,18 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrUnknownKID   = errors.New("unknown key id")
+)
+
+const (
+	defaultUnknownKIDTTL             = time.Minute
+	defaultUnknownKIDRefreshCooldown = 5 * time.Second
+	defaultMaxUnknownKIDs            = 256
 )
 
 type Claims struct {
@@ -34,8 +41,15 @@ type Verifier struct {
 	audience string
 	client   *http.Client
 
-	mu   sync.RWMutex
-	keys map[string]*rsa.PublicKey
+	mu                    sync.RWMutex
+	keys                  map[string]*rsa.PublicKey
+	unknownKIDs           map[string]time.Time
+	lastUnknownKIDRefresh time.Time
+	unknownKIDTTL         time.Duration
+	unknownKIDCooldown    time.Duration
+	maxUnknownKIDs        int
+	now                   func() time.Time
+	refreshGroup          singleflight.Group
 }
 
 func NewVerifier(region, userPoolID, clientID string, client *http.Client) *Verifier {
@@ -43,11 +57,16 @@ func NewVerifier(region, userPoolID, clientID string, client *http.Client) *Veri
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &Verifier{
-		jwksURL:  fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s/.well-known/jwks.json", region, userPoolID),
-		issuer:   fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", region, userPoolID),
-		audience: clientID,
-		client:   client,
-		keys:     map[string]*rsa.PublicKey{},
+		jwksURL:            fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s/.well-known/jwks.json", region, userPoolID),
+		issuer:             fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", region, userPoolID),
+		audience:           clientID,
+		client:             client,
+		keys:               map[string]*rsa.PublicKey{},
+		unknownKIDs:        map[string]time.Time{},
+		unknownKIDTTL:      defaultUnknownKIDTTL,
+		unknownKIDCooldown: defaultUnknownKIDRefreshCooldown,
+		maxUnknownKIDs:     defaultMaxUnknownKIDs,
+		now:                time.Now,
 	}
 }
 
@@ -56,11 +75,16 @@ func NewVerifierFromURL(jwksURL, issuer, audience string, client *http.Client) *
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &Verifier{
-		jwksURL:  jwksURL,
-		issuer:   issuer,
-		audience: audience,
-		client:   client,
-		keys:     map[string]*rsa.PublicKey{},
+		jwksURL:            jwksURL,
+		issuer:             issuer,
+		audience:           audience,
+		client:             client,
+		keys:               map[string]*rsa.PublicKey{},
+		unknownKIDs:        map[string]time.Time{},
+		unknownKIDTTL:      defaultUnknownKIDTTL,
+		unknownKIDCooldown: defaultUnknownKIDRefreshCooldown,
+		maxUnknownKIDs:     defaultMaxUnknownKIDs,
+		now:                time.Now,
 	}
 }
 
@@ -68,43 +92,57 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Claims, error) {
 	if raw == "" {
 		return Claims{}, ErrUnauthorized
 	}
-	claims, err := v.parse(ctx, raw, false)
+	claims, err := v.parse(raw)
 	if err == nil {
 		return claims, nil
 	}
-	if !errors.Is(err, ErrUnknownKID) {
+	var unknown *unknownKIDError
+	if !errors.As(err, &unknown) {
 		return Claims{}, ErrUnauthorized
 	}
-	if err := v.refresh(ctx); err != nil {
+	if err := v.refreshForUnknownKID(ctx, unknown.kid); err != nil {
 		return Claims{}, ErrUnauthorized
 	}
-	claims, err = v.parse(ctx, raw, true)
+	claims, err = v.parse(raw)
 	if err != nil {
 		return Claims{}, ErrUnauthorized
 	}
 	return claims, nil
 }
 
-func (v *Verifier) parse(ctx context.Context, raw string, refreshed bool) (Claims, error) {
+type unknownKIDError struct {
+	kid string
+}
+
+func (e *unknownKIDError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrUnknownKID, e.kid)
+}
+
+func (e *unknownKIDError) Unwrap() error {
+	return ErrUnknownKID
+}
+
+func (v *Verifier) parse(raw string) (Claims, error) {
 	token, err := jwt.Parse(raw, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, ErrUnauthorized
 		}
 		kid, _ := t.Header["kid"].(string)
+		if kid == "" {
+			return nil, ErrUnauthorized
+		}
 		v.mu.RLock()
 		key, ok := v.keys[kid]
 		v.mu.RUnlock()
 		if ok {
 			return key, nil
 		}
-		if refreshed {
-			return nil, ErrUnknownKID
-		}
-		return nil, ErrUnknownKID
+		return nil, &unknownKIDError{kid: kid}
 	}, jwt.WithIssuer(v.issuer), jwt.WithExpirationRequired(), jwt.WithIssuedAt())
 	if err != nil {
-		if errors.Is(err, ErrUnknownKID) {
-			return Claims{}, ErrUnknownKID
+		var unknown *unknownKIDError
+		if errors.As(err, &unknown) {
+			return Claims{}, unknown
 		}
 		return Claims{}, ErrUnauthorized
 	}
@@ -136,8 +174,86 @@ func (v *Verifier) parse(ctx context.Context, raw string, refreshed bool) (Claim
 	default:
 		return Claims{}, ErrUnauthorized
 	}
-	_ = ctx
 	return Claims{Subject: sub, ClientID: v.audience, TokenUse: tokenUse}, nil
+}
+
+func (v *Verifier) refreshForUnknownKID(ctx context.Context, kid string) error {
+	if v.hasKey(kid) {
+		return nil
+	}
+	if v.suppressUnknownKIDRefresh(kid) {
+		return ErrUnknownKID
+	}
+
+	result := v.refreshGroup.DoChan("jwks", func() (any, error) {
+		if v.hasKey(kid) {
+			return nil, nil
+		}
+		if v.suppressUnknownKIDRefresh(kid) {
+			return nil, ErrUnknownKID
+		}
+		if err := v.refresh(ctx); err != nil {
+			return nil, err
+		}
+		if !v.hasKey(kid) {
+			v.rememberUnknownKID(kid)
+			return nil, ErrUnknownKID
+		}
+		return nil, nil
+	})
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case outcome := <-result:
+		return outcome.Err
+	}
+}
+
+func (v *Verifier) hasKey(kid string) bool {
+	v.mu.RLock()
+	_, ok := v.keys[kid]
+	v.mu.RUnlock()
+	return ok
+}
+
+func (v *Verifier) suppressUnknownKIDRefresh(kid string) bool {
+	now := v.now()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.pruneUnknownKIDsLocked(now)
+	if _, ok := v.unknownKIDs[kid]; ok {
+		return true
+	}
+	return !v.lastUnknownKIDRefresh.IsZero() && now.Sub(v.lastUnknownKIDRefresh) < v.unknownKIDCooldown
+}
+
+func (v *Verifier) rememberUnknownKID(kid string) {
+	now := v.now()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.pruneUnknownKIDsLocked(now)
+	if _, exists := v.unknownKIDs[kid]; !exists && len(v.unknownKIDs) >= v.maxUnknownKIDs {
+		var oldestKID string
+		var oldestExpiry time.Time
+		for candidate, expiry := range v.unknownKIDs {
+			if oldestKID == "" || expiry.Before(oldestExpiry) {
+				oldestKID = candidate
+				oldestExpiry = expiry
+			}
+		}
+		delete(v.unknownKIDs, oldestKID)
+	}
+	v.unknownKIDs[kid] = now.Add(v.unknownKIDTTL)
+	v.lastUnknownKIDRefresh = now
+}
+
+func (v *Verifier) pruneUnknownKIDsLocked(now time.Time) {
+	for kid, expiry := range v.unknownKIDs {
+		if !expiry.After(now) {
+			delete(v.unknownKIDs, kid)
+		}
+	}
 }
 
 type jwksDoc struct {
@@ -188,6 +304,9 @@ func (v *Verifier) refresh(ctx context.Context) error {
 	}
 	v.mu.Lock()
 	v.keys = next
+	for kid := range next {
+		delete(v.unknownKIDs, kid)
+	}
 	v.mu.Unlock()
 	return nil
 }

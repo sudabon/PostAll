@@ -8,6 +8,7 @@ import 'package:postall/app.dart';
 import 'package:postall/state/channels.dart';
 import 'package:postall/state/connection.dart';
 import 'package:postall/state/sync.dart';
+import 'package:postall/state/thread.dart';
 import 'package:postall/ui/screens/channels_screen.dart';
 import 'package:postall/ui/screens/home_shell.dart';
 import 'package:postall/ui/screens/thread_screen.dart';
@@ -49,7 +50,13 @@ void main() {
       );
       addTearDown(api.dispose);
 
-      await pumpApp(tester, api: api, signedIn: false, size: _narrow, child: const PostAllApp());
+      await pumpApp(
+        tester,
+        api: api,
+        signedIn: false,
+        size: _narrow,
+        child: const PostAllApp(),
+      );
 
       expect(find.text('サインイン'), findsOneWidget);
       expect(find.text('general'), findsNothing);
@@ -99,8 +106,12 @@ void main() {
       final api = FakeApi(channels: [channel(1, name: 'general')]);
       addTearDown(api.dispose);
 
-      final container =
-          await pumpApp(tester, api: api, size: _narrow, child: const HomeShell());
+      final container = await pumpApp(
+        tester,
+        api: api,
+        size: _narrow,
+        child: const HomeShell(),
+      );
 
       await tester.tap(find.text('general'));
       await tester.pumpAndSettle();
@@ -118,7 +129,12 @@ void main() {
         channels: [channel(1, name: 'general')],
         posts: [
           post(10, channelId: testId(1), body: '親ポスト', replyCount: 1),
-          post(11, channelId: testId(1), threadRootId: testId(10), body: '返信です'),
+          post(
+            11,
+            channelId: testId(1),
+            threadRootId: testId(10),
+            body: '返信です',
+          ),
         ],
       );
       addTearDown(api.dispose);
@@ -190,19 +206,29 @@ void main() {
 
     testWidgets('Scenario: 長押しドラッグで移動する — 親の付け替えが保存される', (tester) async {
       final api = FakeApi(
-        channels: [channel(1, name: 'alpha'), channel(2, name: 'beta', sortKey: 'n')],
+        channels: [
+          channel(1, name: 'alpha'),
+          channel(2, name: 'beta', sortKey: 'n'),
+        ],
       );
       addTearDown(api.dispose);
 
       await pumpApp(tester, api: api, size: _narrow, child: const HomeShell());
 
-      await _longPressDrag(tester, from: find.text('beta'), to: find.text('alpha'));
+      await _longPressDrag(
+        tester,
+        from: find.text('beta'),
+        to: find.text('alpha'),
+      );
 
       expect(
         api.calls,
         contains('moveChannel:${testId(2)}:parent=${testId(1)}:before=null'),
       );
-      expect(api.channels.firstWhere((c) => c.id == testId(2)).parentId, testId(1));
+      expect(
+        api.channels.firstWhere((c) => c.id == testId(2)).parentId,
+        testId(1),
+      );
     });
 
     testWidgets('Scenario: 無効な移動を拒否する — 自身の子孫へはドロップできない', (tester) async {
@@ -218,16 +244,25 @@ void main() {
         tester,
         api: api,
         size: _narrow,
-        prefs: {'channels.expanded': <String>[testId(1)]},
+        prefs: {
+          'channels.expanded': <String>[testId(1)],
+        },
         child: const HomeShell(),
       );
       expect(find.text('child'), findsOneWidget);
 
-      await _longPressDrag(tester, from: find.text('parent'), to: find.text('child'));
+      await _longPressDrag(
+        tester,
+        from: find.text('parent'),
+        to: find.text('child'),
+      );
 
       // 移動要求そのものが発行されない。
       expect(api.calls.where((c) => c.startsWith('moveChannel')), isEmpty);
-      expect(api.channels.firstWhere((c) => c.id == testId(1)).parentId, isNull);
+      expect(
+        api.channels.firstWhere((c) => c.id == testId(1)).parentId,
+        isNull,
+      );
     });
 
     testWidgets('Scenario: 名前が衝突する移動を拒否する', (tester) async {
@@ -244,15 +279,24 @@ void main() {
         tester,
         api: api,
         size: _narrow,
-        prefs: {'channels.expanded': <String>[testId(1)]},
+        prefs: {
+          'channels.expanded': <String>[testId(1)],
+        },
         child: const HomeShell(),
       );
 
       // ルートの docs を parent の下（既に docs がある）へ落とす。
-      await _longPressDrag(tester, from: find.text('docs').last, to: find.text('parent'));
+      await _longPressDrag(
+        tester,
+        from: find.text('docs').last,
+        to: find.text('parent'),
+      );
 
       expect(api.calls.where((c) => c.startsWith('moveChannel')), isEmpty);
-      expect(api.channels.firstWhere((c) => c.id == testId(3)).parentId, isNull);
+      expect(
+        api.channels.firstWhere((c) => c.id == testId(3)).parentId,
+        isNull,
+      );
       expect(find.text('移動先に同じ名前のチャネルがあります'), findsOneWidget);
     });
   });
@@ -280,7 +324,9 @@ void main() {
       addTearDown(tester.view.resetViewInsets);
       await tester.pumpAndSettle();
 
-      final input = tester.getBottomLeft(find.byKey(const Key('composer-input'))).dy;
+      final input = tester
+          .getBottomLeft(find.byKey(const Key('composer-input')))
+          .dy;
       // 入力欄がキーボード領域（画面下 300 論理ピクセル）へ潜り込まない。
       expect(input, lessThanOrEqualTo(before - 300));
     });
@@ -288,7 +334,10 @@ void main() {
     testWidgets('Scenario: キーボード表示中もタイムラインを読む — 入力内容を失わない', (tester) async {
       final api = FakeApi(
         channels: [channel(1, name: 'general')],
-        posts: [for (var i = 0; i < 10; i++) post(20 + i, channelId: testId(1), body: 'post $i')],
+        posts: [
+          for (var i = 0; i < 10; i++)
+            post(20 + i, channelId: testId(1), body: 'post $i'),
+        ],
       );
       addTearDown(api.dispose);
 
@@ -306,7 +355,9 @@ void main() {
       await tester.drag(find.byType(ListView).first, const Offset(0, 200));
       await tester.pumpAndSettle();
 
-      final field = tester.widget<TextField>(find.byKey(const Key('composer-input')));
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('composer-input')),
+      );
       expect(field.controller?.text, '書きかけ');
     });
 
@@ -329,20 +380,58 @@ void main() {
         child: const HomeShell(),
       );
 
-      final input = tester.getBottomLeft(find.byKey(const Key('composer-input'))).dy;
+      final input = tester
+          .getBottomLeft(find.byKey(const Key('composer-input')))
+          .dy;
       final screenBottom = tester.getBottomLeft(find.byType(Composer)).dy;
       expect(input, lessThanOrEqualTo(screenBottom - 34));
     });
   });
 
   group('Requirement: バックグラウンド復帰時の更新', () {
-    testWidgets('Scenario: 復帰時に差分を取得する', (tester) async {
+    testWidgets('Scenario: 初期同期で表示中のデータを取り直す', (tester) async {
+      final root = post(10, channelId: testId(1), body: '最初', replyCount: 1);
       final api = FakeApi(
         channels: [channel(1, name: 'general')],
-        posts: [post(10, channelId: testId(1), body: '最初')],
-      )
-        // バックグラウンドでは SSE が切れている（design.md D13 のトレードオフ）。
-        ..streamConnected = false;
+        posts: [
+          root,
+          post(11, channelId: testId(1), threadRootId: root.id, body: '返信'),
+        ],
+      );
+      addTearDown(api.dispose);
+
+      final container = await pumpApp(
+        tester,
+        api: api,
+        size: _narrow,
+        prefs: {'channels.selected': testId(1)},
+        child: const HomeShell(),
+      );
+      container.read(openThreadProvider.notifier).open(root.id);
+      await tester.pumpAndSettle();
+      api.calls.clear();
+
+      api.emit('post.updated');
+      await tester.pumpAndSettle();
+
+      expect(api.calls, contains('listChannels'));
+      expect(
+        api.calls.where((call) => call.startsWith('listPosts:${testId(1)}')),
+        isNotEmpty,
+      );
+      expect(api.calls, contains('getThread:${root.id}'));
+      expect(container.read(changeSyncProvider)!.lastEventId, '1');
+      container.read(changeSyncProvider)!.dispose();
+    });
+
+    testWidgets('Scenario: 復帰時に差分を取得する', (tester) async {
+      final api =
+          FakeApi(
+              channels: [channel(1, name: 'general')],
+              posts: [post(10, channelId: testId(1), body: '最初')],
+            )
+            // バックグラウンドでは SSE が切れている（design.md D13 のトレードオフ）。
+            ..streamConnected = false;
       addTearDown(api.dispose);
 
       final container = await pumpApp(
@@ -386,11 +475,15 @@ void main() {
         child: const HomeShell(),
       );
 
-      container.read(connectionProvider.notifier).set(BackendConnection.offline);
+      container
+          .read(connectionProvider.notifier)
+          .set(BackendConnection.offline);
       await tester.pumpAndSettle();
 
       expect(find.text('バックエンドへ接続できないため投稿できません'), findsOneWidget);
-      final field = tester.widget<TextField>(find.byKey(const Key('composer-input')));
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('composer-input')),
+      );
       expect(field.enabled, isFalse);
     });
   });

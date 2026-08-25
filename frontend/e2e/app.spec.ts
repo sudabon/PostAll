@@ -97,6 +97,40 @@ test('emoji reactions filter, roll back, toggle, and work in replies', async ({ 
   await expect(reply.getByRole('button', { name: /:shipit: 1件/ })).toHaveAttribute('aria-pressed', 'true')
 })
 
+test('edits and deletes a thread reply and refreshes the root reply count', async ({ page }) => {
+  await installApiMock(page)
+  await page.goto('/')
+
+  await page.getByTestId('new-channel-button').click()
+  await page.getByTestId('channel-name-input').fill('reply-actions')
+  await page.getByTestId('channel-name-input').press('Enter')
+  await page.getByTestId('channel-reply-actions').click()
+  await page.getByTestId('composer-input').fill('root memo')
+  await page.getByTestId('composer-input').press('Enter')
+
+  const root = page.getByTestId('timeline').locator('article').filter({ hasText: 'root memo' })
+  await root.getByRole('button', { name: 'スレッドで返信' }).click()
+  const panel = page.getByTestId('thread-panel')
+  await panel.getByTestId('composer-input').fill('reply before edit')
+  await panel.getByTestId('composer-input').press('Enter')
+  await expect(root.getByRole('button', { name: /1 件の返信/ })).toBeVisible()
+
+  let reply = panel.locator('article').filter({ hasText: 'reply before edit' })
+  await reply.hover()
+  await reply.getByRole('button', { name: /返信を編集/ }).click()
+  const editDialog = page.getByRole('dialog', { name: '返信を編集' })
+  await editDialog.getByLabel('本文').fill('reply after edit')
+  await editDialog.getByRole('button', { name: '保存' }).click()
+  await expect(panel.getByText('reply after edit')).toBeVisible()
+
+  reply = panel.locator('article').filter({ hasText: 'reply after edit' })
+  await reply.hover()
+  page.once('dialog', (dialog) => dialog.accept())
+  await reply.getByRole('button', { name: /返信を削除/ }).click()
+  await expect(panel.getByText('reply after edit')).toHaveCount(0)
+  await expect(root.getByRole('button', { name: 'スレッドで返信' })).toBeVisible()
+})
+
 test('searches Japanese posts and focuses root and reply source positions', async ({ page }) => {
   const mock = await installApiMock(page)
   const scenario = mock.seedSearchScenario()

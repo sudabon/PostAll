@@ -59,4 +59,19 @@ describe('ApiClient', () => {
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example/v1/events?after=42&limit=200')
   })
+
+  it('keeps body-only edits compatible and sends attachment IDs when selected', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new ApiClient(() => 'https://api.example', async () => 'token')
+
+    await api.editPost('post-1', 'body only')
+    await api.editPost('post-1', 'with attachment', ['attachment-1'])
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ body: 'body only' })
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      body: 'with attachment',
+      attachmentIds: ['attachment-1'],
+    })
+  })
 })

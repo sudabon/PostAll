@@ -16,9 +16,9 @@ class FakeApi implements PostAllApi {
     List<Post>? posts,
     List<Emoji>? emojis,
     this.healthy = true,
-  })  : channels = [...?channels],
-        posts = [...?posts],
-        emojis = [...?emojis];
+  }) : channels = [...?channels],
+       posts = [...?posts],
+       emojis = [...?emojis];
 
   final List<Channel> channels;
   final List<Post> posts;
@@ -37,9 +37,12 @@ class FakeApi implements PostAllApi {
   /// 呼び出しの記録。テストが「どう呼ばれたか」を確認するために使う。
   final calls = <String>[];
 
+  List<String>? lastEditAttachmentIds;
+
   var _nextId = 1000;
 
-  String _id() => '00000000-0000-4000-8000-${(_nextId++).toString().padLeft(12, '0')}';
+  String _id() =>
+      '00000000-0000-4000-8000-${(_nextId++).toString().padLeft(12, '0')}';
 
   void dispose() => _events.close();
 
@@ -58,7 +61,10 @@ class FakeApi implements PostAllApi {
   }
 
   @override
-  Future<Channel> createChannel({required String name, String? parentId}) async {
+  Future<Channel> createChannel({
+    required String name,
+    String? parentId,
+  }) async {
     calls.add('createChannel:$name');
     if (channels.any((c) => c.parentId == parentId && c.name == name)) {
       throw ApiException(409, 'channel_name_conflict', '同じ階層に同名のチャネルがあります');
@@ -82,7 +88,9 @@ class FakeApi implements PostAllApi {
     calls.add('renameChannel:$id:$name');
     final index = channels.indexWhere((c) => c.id == id);
     final current = channels[index];
-    if (channels.any((c) => c.id != id && c.parentId == current.parentId && c.name == name)) {
+    if (channels.any(
+      (c) => c.id != id && c.parentId == current.parentId && c.name == name,
+    )) {
       throw ApiException(409, 'channel_name_conflict', '同じ階層に同名のチャネルがあります');
     }
     final updated = _copyChannel(current, name: name);
@@ -100,31 +108,55 @@ class FakeApi implements PostAllApi {
   }
 
   @override
-  Future<Channel> moveChannel(String id, {String? parentId, String? beforeId, String? afterId}) async {
+  Future<Channel> moveChannel(
+    String id, {
+    String? parentId,
+    String? beforeId,
+    String? afterId,
+  }) async {
     calls.add('moveChannel:$id:parent=$parentId:before=$beforeId');
     final index = channels.indexWhere((c) => c.id == id);
     final current = channels[index];
-    if (channels.any((c) => c.id != id && c.parentId == parentId && c.name == current.name)) {
+    if (channels.any(
+      (c) => c.id != id && c.parentId == parentId && c.name == current.name,
+    )) {
       throw ApiException(409, 'channel_name_conflict', '移動先に同じ名前のチャネルがあります');
     }
-    final updated = _copyChannel(current, parentId: parentId, clearParent: parentId == null);
+    final updated = _copyChannel(
+      current,
+      parentId: parentId,
+      clearParent: parentId == null,
+    );
     channels[index] = updated;
     return updated;
   }
 
   @override
-  Future<PostList> listPosts(String channelId, {int limit = 10, String? before, String? around}) async {
-    calls.add('listPosts:$channelId:limit=$limit:before=$before:around=$around');
+  Future<PostList> listPosts(
+    String channelId, {
+    int limit = 10,
+    String? before,
+    String? around,
+  }) async {
+    calls.add(
+      'listPosts:$channelId:limit=$limit:before=$before:around=$around',
+    );
     if (!healthy) throw NetworkException('接続できません');
 
     // タイムラインはチャネル直下のみ。論理削除は返さない。
-    final all = posts
-        .where((p) => p.channelId == channelId && p.threadRootId == null && !p.deleted)
-        .toList()
-      ..sort((a, b) {
-        final byTime = a.createdAt.compareTo(b.createdAt);
-        return byTime != 0 ? byTime : a.id.compareTo(b.id);
-      });
+    final all =
+        posts
+            .where(
+              (p) =>
+                  p.channelId == channelId &&
+                  p.threadRootId == null &&
+                  !p.deleted,
+            )
+            .toList()
+          ..sort((a, b) {
+            final byTime = a.createdAt.compareTo(b.createdAt);
+            return byTime != 0 ? byTime : a.id.compareTo(b.id);
+          });
 
     var end = all.length;
     if (before != null) {
@@ -140,7 +172,11 @@ class FakeApi implements PostAllApi {
   }
 
   @override
-  Future<Post> createPost(String channelId, String body, {List<String>? attachmentIds}) async {
+  Future<Post> createPost(
+    String channelId,
+    String body, {
+    List<String>? attachmentIds,
+  }) async {
     calls.add('createPost:$channelId');
     final post = Post(
       id: _id(),
@@ -158,10 +194,26 @@ class FakeApi implements PostAllApi {
   }
 
   @override
-  Future<Post> editPost(String id, String body, {List<String>? attachmentIds}) async {
+  Future<Post> editPost(
+    String id,
+    String body, {
+    List<String>? attachmentIds,
+  }) async {
     calls.add('editPost:$id');
+    lastEditAttachmentIds = attachmentIds == null ? null : [...attachmentIds];
     final index = posts.indexWhere((p) => p.id == id);
-    final updated = _copyPost(posts[index], body: body, editedAt: DateTime.now());
+    final current = posts[index];
+    final attachments = attachmentIds == null
+        ? current.attachments
+        : current.attachments
+              ?.where((attachment) => attachmentIds.contains(attachment.id))
+              .toList();
+    final updated = _copyPost(
+      current,
+      body: body,
+      editedAt: DateTime.now(),
+      attachments: attachments,
+    );
     posts[index] = updated;
     emit(
       updated.threadRootId == null ? 'post.updated' : 'reply.updated',
@@ -190,12 +242,18 @@ class FakeApi implements PostAllApi {
   Future<Thread> getThread(String postId) async {
     calls.add('getThread:$postId');
     final root = posts.firstWhere((p) => p.id == postId);
-    final replies = posts.where((p) => p.threadRootId == postId && !p.deleted).toList();
+    final replies = posts
+        .where((p) => p.threadRootId == postId && !p.deleted)
+        .toList();
     return Thread(root: root, replies: replies);
   }
 
   @override
-  Future<Post> createReply(String postId, String body, {List<String>? attachmentIds}) async {
+  Future<Post> createReply(
+    String postId,
+    String body, {
+    List<String>? attachmentIds,
+  }) async {
     calls.add('createReply:$postId');
     final root = posts.firstWhere((p) => p.id == postId);
     final reply = Post(
@@ -211,7 +269,10 @@ class FakeApi implements PostAllApi {
     );
     posts.add(reply);
     final index = posts.indexWhere((p) => p.id == postId);
-    posts[index] = _copyPost(posts[index], replyCount: posts[index].replyCount + 1);
+    posts[index] = _copyPost(
+      posts[index],
+      replyCount: posts[index].replyCount + 1,
+    );
     emit(
       'reply.created',
       channelId: reply.channelId,
@@ -233,8 +294,16 @@ class FakeApi implements PostAllApi {
     calls.add('addReaction:$postId:$emojiId');
     final emoji = emojis.firstWhere((e) => e.id == emojiId);
     final index = posts.indexWhere((p) => p.id == postId);
-    final reaction = Reaction(emoji: emoji, count: 1, reactedByMe: true, reactorIds: const ['me']);
-    posts[index] = _copyPost(posts[index], reactions: [...?posts[index].reactions, reaction]);
+    final reaction = Reaction(
+      emoji: emoji,
+      count: 1,
+      reactedByMe: true,
+      reactorIds: const ['me'],
+    );
+    posts[index] = _copyPost(
+      posts[index],
+      reactions: [...?posts[index].reactions, reaction],
+    );
     emit(
       'reaction.updated',
       channelId: posts[index].channelId,
@@ -273,7 +342,10 @@ class FakeApi implements PostAllApi {
   }) async {
     calls.add('searchPosts:$query');
     final results = posts
-        .where((p) => !p.deleted && p.body.toLowerCase().contains(query.toLowerCase()))
+        .where(
+          (p) =>
+              !p.deleted && p.body.toLowerCase().contains(query.toLowerCase()),
+        )
         .map(
           (p) => SearchResult(
             postId: p.id,
@@ -290,11 +362,17 @@ class FakeApi implements PostAllApi {
   }
 
   @override
-  Future<ChangeEventPage> listEvents({String after = '0', int limit = 200}) async {
+  Future<ChangeEventPage> listEvents({
+    String after = '0',
+    int limit = 200,
+  }) async {
     calls.add('listEvents:after=$after');
     if (!healthy) throw NetworkException('接続できません');
     final since = BigInt.parse(after);
-    final pending = _log.where((e) => BigInt.parse(e.id) > since).take(limit).toList();
+    final pending = _log
+        .where((e) => BigInt.parse(e.id) > since)
+        .take(limit)
+        .toList();
     return ChangeEventPage(
       events: pending,
       nextAfter: pending.isEmpty ? after : pending.last.id,
@@ -339,7 +417,11 @@ class FakeApi implements PostAllApi {
     required String checksum,
   }) async {
     calls.add('startUpload:$fileName');
-    return StartUploadResponse(id: _id(), uploadUrl: 'https://example.invalid/upload', headers: const {});
+    return StartUploadResponse(
+      id: _id(),
+      uploadUrl: 'https://example.invalid/upload',
+      headers: const {},
+    );
   }
 
   @override
@@ -353,16 +435,17 @@ class FakeApi implements PostAllApi {
 
   @override
   Future<Attachment> completeUpload(String id) async => Attachment(
-        id: id,
-        fileName: 'file',
-        contentType: 'image/png',
-        sizeBytes: 1,
-        checksum: 'x',
-        createdAt: DateTime.now(),
-      );
+    id: id,
+    fileName: 'file',
+    contentType: 'image/png',
+    sizeBytes: 1,
+    checksum: 'x',
+    createdAt: DateTime.now(),
+  );
 
   @override
-  Future<DownloadUrlResponse> getDownloadUrl(String id) async => DownloadUrlResponse(
+  Future<DownloadUrlResponse> getDownloadUrl(String id) async =>
+      DownloadUrlResponse(
         url: 'https://example.invalid/download/$id',
         expiresAt: DateTime.now().add(const Duration(minutes: 5)),
       );
@@ -372,15 +455,14 @@ class FakeApi implements PostAllApi {
     String? name,
     String? parentId,
     bool clearParent = false,
-  }) =>
-      Channel(
-        id: channel.id,
-        parentId: clearParent ? null : (parentId ?? channel.parentId),
-        name: name ?? channel.name,
-        sortKey: channel.sortKey,
-        createdAt: channel.createdAt,
-        updatedAt: DateTime.now(),
-      );
+  }) => Channel(
+    id: channel.id,
+    parentId: clearParent ? null : (parentId ?? channel.parentId),
+    name: name ?? channel.name,
+    sortKey: channel.sortKey,
+    createdAt: channel.createdAt,
+    updatedAt: DateTime.now(),
+  );
 
   static Post _copyPost(
     Post post, {
@@ -388,21 +470,21 @@ class FakeApi implements PostAllApi {
     DateTime? editedAt,
     bool? deleted,
     int? replyCount,
+    List<Attachment>? attachments,
     List<Reaction>? reactions,
-  }) =>
-      Post(
-        id: post.id,
-        channelId: post.channelId,
-        threadRootId: post.threadRootId,
-        authorId: post.authorId,
-        body: body ?? post.body,
-        createdAt: post.createdAt,
-        updatedAt: DateTime.now(),
-        editedAt: editedAt ?? post.editedAt,
-        deleted: deleted ?? post.deleted,
-        replyCount: replyCount ?? post.replyCount,
-        lastReplyAt: post.lastReplyAt,
-        attachments: post.attachments,
-        reactions: reactions ?? post.reactions,
-      );
+  }) => Post(
+    id: post.id,
+    channelId: post.channelId,
+    threadRootId: post.threadRootId,
+    authorId: post.authorId,
+    body: body ?? post.body,
+    createdAt: post.createdAt,
+    updatedAt: DateTime.now(),
+    editedAt: editedAt ?? post.editedAt,
+    deleted: deleted ?? post.deleted,
+    replyCount: replyCount ?? post.replyCount,
+    lastReplyAt: post.lastReplyAt,
+    attachments: attachments ?? post.attachments,
+    reactions: reactions ?? post.reactions,
+  );
 }

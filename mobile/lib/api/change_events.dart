@@ -21,3 +21,13 @@ ChangeEventEventType changeEventType(String wireValue) =>
       (value) => value.json == wireValue,
       orElse: () => ChangeEventEventType.$unknown,
     );
+
+extension ChangeEventSynchronization on ChangeEvent {
+  /// SSE の `postall.sync` フレームは既存デコーダとの互換性を保つため、
+  /// entity ID を持たない `post.updated` として運ぶ。
+  bool get isSyncWatermark =>
+      eventType.wireValue == 'post.updated' &&
+      channelId == null &&
+      postId == null &&
+      threadRootId == null;
+}

@@ -44,9 +44,9 @@ export function usePostMutations(channelId: string | null) {
       onSuccess: invalidate,
     }),
     edit: useMutation({
-      mutationFn: (input: { id: string; body: string }) => {
+      mutationFn: (input: { id: string; body: string; attachmentIds?: string[] }) => {
         requireMutationConnection()
-        return api.editPost(input.id, input.body)
+        return api.editPost(input.id, input.body, input.attachmentIds)
       },
       onSuccess: invalidate,
     }),

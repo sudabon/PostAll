@@ -2,6 +2,8 @@ package attachment
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path"
 	"strings"
 	"time"
@@ -196,25 +198,30 @@ func (s *Service) Reap(ctx context.Context) error {
 	if !s.Ready() {
 		return nil
 	}
-	rows, err := s.q.ListReapableAttachments(ctx, time.Now().Add(-IncompleteAge))
+	if err := s.q.MarkReapableAttachmentsPending(ctx, time.Now().Add(-IncompleteAge)); err != nil {
+		return err
+	}
+	rows, err := s.q.ListPendingAttachments(ctx, 100)
 	if err != nil {
 		return err
 	}
+	var reapErrors []error
 	for _, row := range rows {
-		n, err := s.q.CountStorageKeyRefs(ctx, row.StorageKey)
-		if err != nil {
-			return err
+		if err := s.blob.Delete(ctx, row.StorageKey); err != nil {
+			reapErrors = append(reapErrors, err)
+			if recordErr := s.q.RecordAttachmentDeletionFailure(ctx, store.RecordAttachmentDeletionFailureParams{
+				ID:            row.ID,
+				DeletionError: err.Error(),
+			}); recordErr != nil {
+				reapErrors = append(reapErrors, fmt.Errorf("record attachment %s deletion failure: %w", row.ID, recordErr))
+			}
+			continue
 		}
 		if err := s.q.DeleteAttachmentRow(ctx, row.ID); err != nil {
-			return err
-		}
-		if n <= 1 {
-			if err := s.blob.Delete(ctx, row.StorageKey); err != nil {
-				return err
-			}
+			reapErrors = append(reapErrors, fmt.Errorf("delete attachment %s row: %w", row.ID, err))
 		}
 	}
-	return nil
+	return errors.Join(reapErrors...)
 }
 
 func fromRow(row store.Attachment) View {
