@@ -1,0 +1,11 @@
+const { contextBridge, ipcRenderer } = require('electron')
+
+contextBridge.exposeInMainWorld('postallPlatform', {
+  kind: 'electron',
+  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+  on: (channel, listener) => {
+    const wrapped = (_event, payload) => listener(payload)
+    ipcRenderer.on(channel, wrapped)
+    return () => ipcRenderer.removeListener(channel, wrapped)
+  },
+})

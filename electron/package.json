@@ -1,0 +1,36 @@
+{
+  "name": "postall-desktop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --mac dir"
+  },
+  "devDependencies": {
+    "electron": "^37.3.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "app.postall.desktop",
+    "productName": "PostAll",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.mjs",
+      "preload.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontend/dist",
+        "to": "frontend"
+      }
+    ],
+    "mac": {
+      "target": ["dir"],
+      "category": "public.app-category.productivity"
+    }
+  }
+}

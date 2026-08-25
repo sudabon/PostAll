@@ -1,0 +1,866 @@
+openapi: 3.0.3
+info:
+  title: PostAll API
+  version: 0.1.0
+  description: 3 クライアント共通の PostAll HTTP API。
+servers:
+  - url: /
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [ops]
+      security: []
+      responses:
+        "200":
+          description: 稼働中
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: 依存先が落ちている
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /v1/channels:
+    get:
+      operationId: listChannels
+      tags: [channels]
+      summary: チャネル階層を一覧する
+      responses:
+        "200":
+          description: 階層関係と並び順を復元できるチャネル一覧
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelList"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createChannel
+      tags: [channels]
+      summary: チャネルを作成する
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChannelRequest"
+      responses:
+        "201":
+          description: 作成されたチャネル
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/channels/{channelId}:
+    parameters:
+      - $ref: "#/components/parameters/ChannelId"
+    patch:
+      operationId: renameChannel
+      tags: [channels]
+      summary: チャネルをリネームする
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenameChannelRequest"
+      responses:
+        "200":
+          description: 更新後のチャネル
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteChannel
+      tags: [channels]
+      summary: ポストを持たないチャネルを削除する
+      responses:
+        "204":
+          description: 削除成功
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/channels/{channelId}/move:
+    parameters:
+      - $ref: "#/components/parameters/ChannelId"
+    post:
+      operationId: moveChannel
+      tags: [channels]
+      summary: 親の付け替えと並び替え
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveChannelRequest"
+      responses:
+        "200":
+          description: 適用後の親と sort_key を含むチャネル
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/channels/{channelId}/posts:
+    parameters:
+      - $ref: "#/components/parameters/ChannelId"
+    get:
+      operationId: listChannelPosts
+      tags: [posts]
+      summary: チャネル直下のポストを keyset で取得する
+      description: |
+        thread_root_id が null の行のみを返す。
+        カーソル無しなら最新 limit 件（既定 10）を昇順で返す。
+        before を付けると、そのカーソルより古いポストを昇順で返す。
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: before
+          in: query
+          schema:
+            type: string
+          description: より古いポストを取るカーソル（nextBefore の値）
+        - name: around
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: 検索結果から移動するとき、このルートポストを含む履歴を返す。
+      responses:
+        "200":
+          description: 昇順のポスト一覧と、さらに過去がある場合のカーソル
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostList"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createChannelPost
+      tags: [posts]
+      summary: チャネル直下にポストを作成する
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePostRequest"
+      responses:
+        "201":
+          description: 作成されたポスト
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/posts/{postId}:
+    parameters:
+      - $ref: "#/components/parameters/PostId"
+    patch:
+      operationId: editPost
+      tags: [posts]
+      summary: ポスト本文を上書きする
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditPostRequest"
+      responses:
+        "200":
+          description: 更新後のポスト
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deletePost
+      tags: [posts]
+      summary: ポストを論理削除する
+      responses:
+        "204":
+          description: 削除成功
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/posts/{postId}/thread:
+    parameters:
+      - $ref: "#/components/parameters/PostId"
+    get:
+      operationId: getThread
+      tags: [posts]
+      summary: 親ポストと返信を古い順で取得する
+      description: |
+        親が論理削除済みならプレースホルダとして deleted=true で返す。
+        削除済みの返信は含めない。
+      responses:
+        "200":
+          description: スレッド
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Thread"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/posts/{postId}/replies:
+    parameters:
+      - $ref: "#/components/parameters/PostId"
+    post:
+      operationId: createReply
+      tags: [posts]
+      summary: スレッドへ返信する
+      description: 親が返信でも thread_root_id を継承し、多段スレッドは作らない。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePostRequest"
+      responses:
+        "201":
+          description: 作成された返信
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/attachments/uploads:
+    post:
+      operationId: startAttachmentUpload
+      tags: [attachments]
+      summary: 添付のアップロード用署名付き URL を発行する
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartUploadRequest"
+      responses:
+        "201":
+          description: アップロード開始
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartUploadResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/attachments/{attachmentId}/complete:
+    parameters:
+      - $ref: "#/components/parameters/AttachmentId"
+    post:
+      operationId: completeAttachment
+      tags: [attachments]
+      summary: アップロード完了を通知しメタデータを確定する
+      responses:
+        "200":
+          description: 確定した添付
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attachment"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/attachments/{attachmentId}/download:
+    parameters:
+      - $ref: "#/components/parameters/AttachmentId"
+    get:
+      operationId: getAttachmentDownload
+      tags: [attachments]
+      summary: ダウンロード用の短期署名付き URL を発行する
+      responses:
+        "200":
+          description: 署名付き URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadUrlResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/emojis:
+    get:
+      operationId: listEmojis
+      tags: [emojis]
+      summary: 登録済みのカスタム絵文字を一覧する
+      responses:
+        "200":
+          description: ショートコード順の絵文字カタログ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmojiList"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/emojis/{shortcode}/image:
+    parameters:
+      - $ref: "#/components/parameters/EmojiShortcode"
+    get:
+      operationId: getEmojiImage
+      tags: [emojis]
+      summary: カスタム絵文字の PNG を取得する
+      responses:
+        "200":
+          description: 絵文字画像
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/posts/{postId}/reactions/{emojiId}:
+    parameters:
+      - $ref: "#/components/parameters/PostId"
+      - $ref: "#/components/parameters/EmojiId"
+    put:
+      operationId: addReaction
+      tags: [reactions]
+      summary: ポストへリアクションを付与する
+      description: 同じ付与要求が重複しても既存状態を維持して成功する。
+      responses:
+        "200":
+          description: 付与後のリアクション集計
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reaction"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: removeReaction
+      tags: [reactions]
+      summary: 自身のリアクションを解除する
+      responses:
+        "204":
+          description: 解除成功。既に解除済みの場合も成功する。
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/search:
+    get:
+      operationId: searchPosts
+      tags: [search]
+      summary: ポスト本文を全文検索する
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+        - name: channelId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: createdFrom
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: createdTo
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 新しい順の検索結果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResultPage"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/events:
+    get:
+      operationId: listChangeEvents
+      tags: [events]
+      summary: 指定したイベント ID より後の変更を取得する
+      parameters:
+        - name: after
+          in: query
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
+            default: "0"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+      responses:
+        "200":
+          description: ID の昇順に並んだ変更イベント
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangeEventPage"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/events/stream:
+    get:
+      operationId: streamChangeEvents
+      tags: [events]
+      summary: 変更イベントを Server-Sent Events で購読する
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
+          description: 再送を開始する直前のイベント ID。
+      responses:
+        "200":
+          description: id、event、data フィールドを持つ変更イベントストリーム
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ChannelId:
+      name: channelId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PostId:
+      name: postId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AttachmentId:
+      name: attachmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    EmojiId:
+      name: emojiId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    EmojiShortcode:
+      name: shortcode
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
+  responses:
+    Error:
+      description: 一貫したエラー形式
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Health:
+      type: object
+      required: [status, database]
+      properties:
+        status:
+          type: string
+          enum: [ok, unhealthy]
+        database:
+          type: string
+          enum: [ok, skipped, unreachable]
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: 機械可読なエラーコード
+        message:
+          type: string
+          description: 人間可読なメッセージ
+        details:
+          type: object
+          additionalProperties: true
+    Channel:
+      type: object
+      required: [id, name, sortKey, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        parentId:
+          type: string
+          format: uuid
+          nullable: true
+        name:
+          type: string
+        sortKey:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ChannelList:
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/Channel"
+    CreateChannelRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        parentId:
+          type: string
+          format: uuid
+          nullable: true
+    RenameChannelRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+    MoveChannelRequest:
+      type: object
+      properties:
+        parentId:
+          type: string
+          format: uuid
+          nullable: true
+        beforeId:
+          type: string
+          format: uuid
+          nullable: true
+          description: このチャネルの直前に挿入する。null なら末尾。
+        afterId:
+          type: string
+          format: uuid
+          nullable: true
+          description: このチャネルの直後に挿入する。
+    Post:
+      type: object
+      required: [id, channelId, authorId, body, createdAt, updatedAt, deleted, replyCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        channelId:
+          type: string
+          format: uuid
+        threadRootId:
+          type: string
+          format: uuid
+          nullable: true
+        authorId:
+          type: string
+          format: uuid
+        body:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        editedAt:
+          type: string
+          format: date-time
+          nullable: true
+        deleted:
+          type: boolean
+          description: 論理削除済み。スレッド親のプレースホルダでのみ true になる。
+        replyCount:
+          type: integer
+          minimum: 0
+        lastReplyAt:
+          type: string
+          format: date-time
+          nullable: true
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Attachment"
+        reactions:
+          type: array
+          description: 最初に付与された順のリアクション集計。
+          items:
+            $ref: "#/components/schemas/Reaction"
+    PostList:
+      type: object
+      required: [posts]
+      properties:
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Post"
+        nextBefore:
+          type: string
+          nullable: true
+          description: より古いポストを取得するカーソル。これ以上過去が無ければ null。
+    CreatePostRequest:
+      type: object
+      properties:
+        body:
+          type: string
+          description: 本文。添付が無い場合は空であってはならない。
+        attachmentIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 10
+    EditPostRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+        attachmentIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 10
+          description: 指定した場合は添付の集合を置き換える。省略時は既存の添付を維持する。
+    Attachment:
+      type: object
+      required: [id, fileName, contentType, sizeBytes, checksum, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        postId:
+          type: string
+          format: uuid
+          nullable: true
+        fileName:
+          type: string
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        checksum:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    StartUploadRequest:
+      type: object
+      required: [fileName, contentType, sizeBytes, checksum]
+      properties:
+        fileName:
+          type: string
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 1
+        checksum:
+          type: string
+          description: SHA-256 の hex
+    StartUploadResponse:
+      type: object
+      required: [id, uploadUrl, headers]
+      properties:
+        id:
+          type: string
+          format: uuid
+        uploadUrl:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+    DownloadUrlResponse:
+      type: object
+      required: [url, expiresAt]
+      properties:
+        url:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    Emoji:
+      type: object
+      required: [id, shortcode, imagePath, checksum]
+      properties:
+        id:
+          type: string
+          format: uuid
+        shortcode:
+          type: string
+        imagePath:
+          type: string
+        checksum:
+          type: string
+    EmojiList:
+      type: object
+      required: [emojis]
+      properties:
+        emojis:
+          type: array
+          items:
+            $ref: "#/components/schemas/Emoji"
+    Reaction:
+      type: object
+      required: [emoji, count, reactedByMe, reactorIds]
+      properties:
+        emoji:
+          $ref: "#/components/schemas/Emoji"
+        count:
+          type: integer
+          minimum: 1
+        reactedByMe:
+          type: boolean
+        reactorIds:
+          type: array
+          description: 付与者 ID。reactedByMe が true の場合は現在のユーザーを先頭にする。
+          items:
+            type: string
+            format: uuid
+    Thread:
+      type: object
+      required: [root, replies]
+      properties:
+        root:
+          $ref: "#/components/schemas/Post"
+        replies:
+          type: array
+          items:
+            $ref: "#/components/schemas/Post"
+    SearchResult:
+      type: object
+      required: [postId, timelinePostId, channelId, channelName, body, createdAt]
+      properties:
+        postId:
+          type: string
+          format: uuid
+        timelinePostId:
+          type: string
+          format: uuid
+          description: チャネルタイムラインに表示するルートポスト ID。
+        channelId:
+          type: string
+          format: uuid
+        channelName:
+          type: string
+        threadRootId:
+          type: string
+          format: uuid
+          nullable: true
+        body:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    SearchResultPage:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+        nextCursor:
+          type: string
+          nullable: true
+    ChangeEvent:
+      type: object
+      required: [id, eventType, createdAt]
+      properties:
+        id:
+          type: string
+          pattern: '^[0-9]+$'
+          description: JavaScript で精度を失わない十進文字列の単調増加 ID。
+        eventType:
+          type: string
+          enum:
+            - channel.created
+            - channel.updated
+            - channel.deleted
+            - post.created
+            - post.updated
+            - post.deleted
+            - reply.created
+            - reply.updated
+            - reply.deleted
+            - reaction.updated
+        channelId:
+          type: string
+          format: uuid
+          nullable: true
+        postId:
+          type: string
+          format: uuid
+          nullable: true
+        threadRootId:
+          type: string
+          format: uuid
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    ChangeEventPage:
+      type: object
+      required: [events, nextAfter, hasMore]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangeEvent"
+        nextAfter:
+          type: string
+          pattern: '^[0-9]+$'
+        hasMore:
+          type: boolean
+security:
+  - bearerAuth: []

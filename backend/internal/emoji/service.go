@@ -1,0 +1,114 @@
+package emoji
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/sudabon/PostAll/backend/internal/store"
+)
+
+var shortcodePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
+type Service struct {
+	q *store.Queries
+}
+
+func NewService(q *store.Queries) *Service {
+	return &Service{q: q}
+}
+
+type SyncIssue struct {
+	File   string
+	Reason string
+}
+
+type SyncResult struct {
+	Created   int
+	Updated   int
+	Unchanged int
+	Skipped   int
+	Issues    []SyncIssue
+}
+
+func (s *Service) Sync(ctx context.Context, dir string) (SyncResult, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("read emoji directory: %w", err)
+	}
+
+	result := SyncResult{Issues: []SyncIssue{}}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !entry.Type().IsRegular() {
+			result.skip(name, "通常ファイルではありません")
+			continue
+		}
+		if filepath.Ext(name) != ".png" {
+			result.skip(name, "PNG ファイルではありません")
+			continue
+		}
+		shortcode := strings.TrimSuffix(name, ".png")
+		if !shortcodePattern.MatchString(shortcode) {
+			result.skip(name, "ショートコードとして不正なファイル名です")
+			continue
+		}
+
+		checksum, err := fileChecksum(filepath.Join(dir, name))
+		if err != nil {
+			return result, fmt.Errorf("checksum %s: %w", name, err)
+		}
+		existing, err := s.q.GetEmojiByShortcode(ctx, shortcode)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			if _, err := s.q.InsertEmoji(ctx, store.InsertEmojiParams{
+				Shortcode:  shortcode,
+				StorageKey: name,
+				Checksum:   checksum,
+			}); err != nil {
+				return result, fmt.Errorf("insert emoji %s: %w", shortcode, err)
+			}
+			result.Created++
+		case err != nil:
+			return result, fmt.Errorf("get emoji %s: %w", shortcode, err)
+		case existing.Checksum == checksum && existing.StorageKey == name:
+			result.Unchanged++
+		default:
+			if _, err := s.q.UpdateEmoji(ctx, store.UpdateEmojiParams{
+				StorageKey: name,
+				Checksum:   checksum,
+				Shortcode:  shortcode,
+			}); err != nil {
+				return result, fmt.Errorf("update emoji %s: %w", shortcode, err)
+			}
+			result.Updated++
+		}
+	}
+	return result, nil
+}
+
+func (r *SyncResult) skip(file, reason string) {
+	r.Skipped++
+	r.Issues = append(r.Issues, SyncIssue{File: file, Reason: reason})
+}
+
+func fileChecksum(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}

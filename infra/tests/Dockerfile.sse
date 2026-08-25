@@ -1,0 +1,9 @@
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY sse-upstream.go .
+RUN CGO_ENABLED=0 go build -o /sse-upstream ./sse-upstream.go
+
+FROM alpine:3.21
+COPY --from=build /sse-upstream /usr/local/bin/sse-upstream
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/sse-upstream"]

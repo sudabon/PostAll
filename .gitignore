@@ -26,7 +26,47 @@ go.work.sum
 
 # env file
 .env
+.env.*
+!.env.example
 
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Playwright
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
+
+# Flutter
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/build/
+
+# TLS material (generated)
+infra/certs/*.pem
+# pg_bigm は Dockerfile が upstream から取得する。手元に残った clone は追跡しない。
+infra/postgres/pg_bigm/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.specstory/
+.serena/
+
+# CodingAgent
+.claude/
+.codex/
+.cursor/
+
+# Cursor
+.cursorrules
+.cursorignore
+.cursorindexingignore
