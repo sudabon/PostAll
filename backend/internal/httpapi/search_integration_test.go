@@ -109,7 +109,7 @@ func TestSearchPostsFiltersThreadsAndPaginates(t *testing.T) {
 	if err := pool.QueryRow(context.Background(), `
 		select exists (
 			select 1 from pg_indexes
-			where indexname = 'posts_body_bigm' and indexdef like '%lower(body)%'
+			where indexname = 'posts_body_pgroonga' and indexdef like '%pgroonga_text_regexp_ops_v2%'
 		)
 	`).Scan(&indexed); err != nil {
 		t.Fatal(err)

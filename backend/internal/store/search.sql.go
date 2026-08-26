@@ -24,7 +24,7 @@ select
 from posts p
 join channels c on c.id = p.channel_id
 where p.deleted_at is null
-  and p.body ilike $1::text escape '\'
+  and p.body ilike $1 escape '\'
   and ($2::uuid is null or p.channel_id = $2::uuid)
   and ($3::timestamptz is null or p.created_at >= $3::timestamptz)
   and ($4::timestamptz is null or p.created_at <= $4::timestamptz)
@@ -40,7 +40,7 @@ limit $7
 `
 
 type SearchPostsBeforeParams struct {
-	SearchQuery     string
+	SearchQuery     []byte
 	ChannelID       *uuid.UUID
 	CreatedFrom     *time.Time
 	CreatedTo       *time.Time
@@ -107,7 +107,7 @@ select
 from posts p
 join channels c on c.id = p.channel_id
 where p.deleted_at is null
-  and p.body ilike $1::text escape '\'
+  and p.body ilike $1 escape '\'
   and ($2::uuid is null or p.channel_id = $2::uuid)
   and ($3::timestamptz is null or p.created_at >= $3::timestamptz)
   and ($4::timestamptz is null or p.created_at <= $4::timestamptz)
@@ -116,7 +116,7 @@ limit $5
 `
 
 type SearchPostsLatestParams struct {
-	SearchQuery string
+	SearchQuery []byte
 	ChannelID   *uuid.UUID
 	CreatedFrom *time.Time
 	CreatedTo   *time.Time

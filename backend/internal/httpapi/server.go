@@ -63,7 +63,9 @@ func New(cfg Config) (*Server, error) {
 		}
 		poolCfg.MaxConns = 2
 		poolCfg.MaxConnIdleTime = 30 * time.Second
-		poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+		// DescribeExec avoids named prepared statements (42P05 on Supavisor
+		// transaction pooling) while still describing types so uuid[] encodes.
+		poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
 		pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 		if err != nil {
 			return nil, err

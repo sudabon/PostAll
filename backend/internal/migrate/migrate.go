@@ -63,7 +63,7 @@ func open(databaseURL string) (*sql.DB, error) {
 	}
 	// Named prepared statements survive on the server connection. Supavisor
 	// reuses that connection for the next client, which yields 42P05.
-	cfg.DefaultQueryExecMode = pgx.QueryExecModeExec
+	cfg.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
 	db := stdlib.OpenDB(*cfg)
 	db.SetMaxOpenConns(1)
 	return db, nil

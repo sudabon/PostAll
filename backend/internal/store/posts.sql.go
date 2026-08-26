@@ -51,7 +51,7 @@ func (q *Queries) GetPost(ctx context.Context, id uuid.UUID) (Post, error) {
 
 const insertPost = `-- name: InsertPost :one
 insert into posts (channel_id, thread_root_id, author_id, body)
-values ($1, $2, $3, $4)
+values ($1, $2::uuid, $3, $4)
 returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at
 `
 

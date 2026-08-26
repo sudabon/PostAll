@@ -79,7 +79,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 
 const insertChannel = `-- name: InsertChannel :one
 insert into channels (parent_id, name, sort_key)
-values ($1, $2, $3)
+values ($1::uuid, $2, $3)
 returning id, parent_id, name, sort_key, created_at, updated_at
 `
 
@@ -157,7 +157,7 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 const listSiblings = `-- name: ListSiblings :many
 select id, parent_id, name, sort_key, created_at, updated_at
 from channels
-where parent_id is not distinct from $1
+where parent_id is not distinct from $1::uuid
 order by sort_key, id
 `
 
@@ -216,7 +216,7 @@ func (q *Queries) RenameChannel(ctx context.Context, arg RenameChannelParams) (C
 
 const updateChannelLocation = `-- name: UpdateChannelLocation :one
 update channels
-set parent_id = $1,
+set parent_id = $1::uuid,
     sort_key = $2,
     updated_at = now()
 where id = $3

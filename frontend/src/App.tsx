@@ -34,7 +34,7 @@ export default function App() {
     : !online
       ? 'ネットワークに接続できません'
       : null
-  const syncHint = signedIn && !offline && syncStatusMessage && connectionState !== 'offline'
+  const syncHint = signedIn && !offline && syncStatusMessage
     ? syncStatusMessage
     : null
 

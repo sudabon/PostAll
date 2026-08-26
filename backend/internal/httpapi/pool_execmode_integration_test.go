@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sudabon/PostAll/backend/internal/store"
@@ -17,7 +18,7 @@ func TestTransactionPoolerCompatibleQueryExecMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.MaxConns = 2
-	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -39,5 +40,19 @@ func TestTransactionPoolerCompatibleQueryExecMode(t *testing.T) {
 	}
 	if _, err := q.GetUserByAuthSubject(ctx, "pool-user"); err != nil {
 		t.Fatalf("repeat select after reconnect-style exec: %v", err)
+	}
+
+	ch, err := q.InsertChannel(ctx, store.InsertChannelParams{Name: "pool", SortKey: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post, err := q.InsertPost(ctx, store.InsertPostParams{
+		ChannelID: ch.ID, AuthorID: first.ID, Body: "describe-exec",
+	})
+	if err != nil {
+		t.Fatalf("insert post with null thread_root: %v", err)
+	}
+	if _, err := q.ListReactionRowsForPosts(ctx, []uuid.UUID{post.ID}); err != nil {
+		t.Fatalf("list reactions: %v", err)
 	}
 }
