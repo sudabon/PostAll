@@ -18,19 +18,23 @@ import (
 	searchservice "github.com/sudabon/PostAll/backend/internal/search"
 	"github.com/sudabon/PostAll/backend/internal/store"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Config struct {
-	DatabaseURL       string
-	AWSRegion         string
-	CognitoUserPoolID string
-	CognitoClientID   string
-	Verifier          *auth.Verifier
-	S3Bucket          string
-	Blob              blob.Store
-	EmojiDir          string
-	ReaperInterval    time.Duration
+	DatabaseURL    string
+	SupabaseURL    string
+	Verifier       *auth.Verifier
+	S3Endpoint     string
+	S3Region       string
+	S3Bucket       string
+	S3AccessKey    string
+	S3SecretKey    string
+	EmojiBucket    string
+	Blob           blob.Store
+	EmojiBlob      blob.Store
+	CronSecret     string
 }
 
 type Server struct {
@@ -40,25 +44,27 @@ type Server struct {
 	search      *searchservice.Service
 	changes     *changeservice.Service
 	emojis      *emoji.Service
-	emojiDir    string
+	emojiBlobs  blob.Store
 	attachments *attachment.Service
-	events      *eventBroker
-	stopReap    context.CancelFunc
+	cronSecret  string
 	mux         http.Handler
 }
 
-func New(cfg Config) (http.Handler, error) {
-	emojiDir := cfg.EmojiDir
-	if emojiDir == "" {
-		emojiDir = "../emoji"
-	}
-	s := &Server{emojiDir: emojiDir}
+func New(cfg Config) (*Server, error) {
+	s := &Server{cronSecret: cfg.CronSecret, emojiBlobs: cfg.EmojiBlob}
 
 	var users auth.UserStore
 	if cfg.DatabaseURL != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+		poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+		if err != nil {
+			return nil, err
+		}
+		poolCfg.MaxConns = 2
+		poolCfg.MaxConnIdleTime = 30 * time.Second
+		poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+		pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 		if err != nil {
 			return nil, err
 		}
@@ -67,34 +73,49 @@ func New(cfg Config) (http.Handler, error) {
 		users = st
 		blobStore := cfg.Blob
 		if blobStore == nil && cfg.S3Bucket != "" {
-			s3, err := blob.NewS3(ctx, cfg.AWSRegion, cfg.S3Bucket)
+			s3, err := blob.NewS3(ctx, blob.S3Config{
+				Endpoint:  cfg.S3Endpoint,
+				Region:    cfg.S3Region,
+				Bucket:    cfg.S3Bucket,
+				AccessKey: cfg.S3AccessKey,
+				SecretKey: cfg.S3SecretKey,
+			})
 			if err != nil {
 				pool.Close()
 				return nil, err
 			}
 			blobStore = s3
 		}
+		if s.emojiBlobs == nil && cfg.EmojiBucket != "" {
+			emojiS3, err := blob.NewS3(ctx, blob.S3Config{
+				Endpoint:  cfg.S3Endpoint,
+				Region:    cfg.S3Region,
+				Bucket:    cfg.EmojiBucket,
+				AccessKey: cfg.S3AccessKey,
+				SecretKey: cfg.S3SecretKey,
+			})
+			if err != nil {
+				pool.Close()
+				return nil, err
+			}
+			s.emojiBlobs = emojiS3
+		}
 		s.attachments = attachment.NewService(st.Queries, blobStore)
-		s.events = newEventBroker(pool)
 		s.channels = channel.NewService(st.Queries)
 		s.posts = post.NewService(st.Queries, st.Pool, s.attachments)
 		s.search = searchservice.NewService(st.Queries)
 		s.changes = changeservice.NewService(st.Queries)
 		s.emojis = emoji.NewService(st.Queries)
-		if cfg.ReaperInterval > 0 && s.attachments.Ready() {
-			reapCtx, cancel := context.WithCancel(context.Background())
-			s.stopReap = cancel
-			go s.reapLoop(reapCtx, cfg.ReaperInterval)
-		}
 	}
 
 	v := cfg.Verifier
-	if v == nil && cfg.AWSRegion != "" && cfg.CognitoUserPoolID != "" && cfg.CognitoClientID != "" {
-		v = auth.NewVerifier(cfg.AWSRegion, cfg.CognitoUserPoolID, cfg.CognitoClientID, nil)
+	if v == nil && cfg.SupabaseURL != "" {
+		v = auth.NewSupabaseVerifier(cfg.SupabaseURL, nil)
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ready", s.GetHealth)
+	mux.HandleFunc("POST /internal/attachments/reap", s.ReapAttachments)
 	inner := api.HandlerWithOptions(s, api.StdHTTPServerOptions{
 		BaseRouter: mux,
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -127,6 +148,23 @@ func (s *Server) GetHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) ReapAttachments(w http.ResponseWriter, r *http.Request) {
+	if !auth.BearerMatches(r.Header.Get("Authorization"), s.cronSecret) {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "認可情報を検証できませんでした", nil)
+		return
+	}
+	if s.attachments == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "unavailable", "データベースに接続できません", nil)
+		return
+	}
+	if err := s.attachments.Reap(r.Context()); err != nil {
+		slog.ErrorContext(r.Context(), "attachment reaper failed", "error", safeLogError(err))
+		writeInternal(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -134,28 +172,7 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 }
 
 func (s *Server) Close() {
-	if s.stopReap != nil {
-		s.stopReap()
-	}
-	if s.events != nil {
-		s.events.Close()
-	}
 	if s.pool != nil {
 		s.pool.Close()
-	}
-}
-
-func (s *Server) reapLoop(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := s.attachments.Reap(ctx); err != nil {
-				slog.ErrorContext(ctx, "attachment reaper failed", "error", safeLogError(err))
-			}
-		}
 	}
 }

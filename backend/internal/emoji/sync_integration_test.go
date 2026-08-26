@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sudabon/PostAll/backend/internal/blob"
 	emojisync "github.com/sudabon/PostAll/backend/internal/emoji"
 	"github.com/sudabon/PostAll/backend/internal/store"
 	"github.com/sudabon/PostAll/backend/internal/testutil"
@@ -26,8 +27,9 @@ func TestSyncRegistersUpdatesAndSkipsInvalidFiles(t *testing.T) {
 	writeFixture(t, dir, "bad name.png", "bad")
 	writeFixture(t, dir, "animated.gif", "gif")
 
+	objects := blob.NewMemory()
 	service := emojisync.NewService(store.New(pool))
-	first, err := service.Sync(context.Background(), dir)
+	first, err := service.Sync(context.Background(), dir, objects)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,8 +53,12 @@ func TestSyncRegistersUpdatesAndSkipsInvalidFiles(t *testing.T) {
 		t.Fatalf("storage key = %q", storageKey)
 	}
 
+	if !objects.Has("shipit.png") || !objects.Has("SmartHR.png") {
+		t.Fatal("png files were not uploaded")
+	}
+
 	writeFixture(t, dir, "shipit.png", "v2")
-	second, err := service.Sync(context.Background(), dir)
+	second, err := service.Sync(context.Background(), dir, objects)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,12 +78,22 @@ func TestSyncRegistersUpdatesAndSkipsInvalidFiles(t *testing.T) {
 		t.Fatalf("updated checksum = %q", updatedChecksum)
 	}
 
-	third, err := service.Sync(context.Background(), dir)
+	if !objects.Has("shipit.png") {
+		t.Fatal("updated png was not uploaded")
+	}
+	if err := objects.Delete(context.Background(), "shipit.png"); err != nil {
+		t.Fatal(err)
+	}
+
+	third, err := service.Sync(context.Background(), dir, objects)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if third.Created != 0 || third.Updated != 0 || third.Unchanged != 2 || third.Skipped != 2 {
 		t.Fatalf("third sync = %+v", third)
+	}
+	if objects.Has("shipit.png") {
+		t.Fatal("unchanged png was re-uploaded")
 	}
 }
 

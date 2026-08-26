@@ -14,6 +14,10 @@ export function subscribeSignedIn(listener: (signedIn: boolean) => void): () => 
   return () => listeners.delete(listener)
 }
 
+export function currentAccessToken(): string | null {
+  return tokens?.accessToken ?? null
+}
+
 export function rememberTokens(next: TokenSet | null) {
   tokens = next
   const signedIn = Boolean(next?.accessToken)
@@ -38,15 +42,15 @@ export function createApiClient(platform: PlatformAdapter): ApiClient {
       const cur = tokens
       if (!cur) return null
       if (cur.expiresAt - Date.now() > 60_000) return cur.accessToken
-      const { cognitoDomain, cognitoClientId } = useSettings.getState()
-      if (!cur.refreshToken || !cognitoDomain) {
+      const { supabaseUrl, supabasePublishableKey } = useSettings.getState()
+      if (!cur.refreshToken || !supabaseUrl || !supabasePublishableKey) {
         await persistTokens(platform, null)
         return null
       }
       try {
         const next = await refreshTokens({
-          domain: cognitoDomain,
-          clientId: cognitoClientId,
+          supabaseUrl,
+          publishableKey: supabasePublishableKey,
           refreshToken: cur.refreshToken,
         })
         const merged = { ...next, refreshToken: next.refreshToken ?? cur.refreshToken }

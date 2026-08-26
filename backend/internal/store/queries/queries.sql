@@ -1,11 +1,15 @@
--- name: UpsertUserByCognitoSub :one
-insert into users (cognito_sub)
+-- name: GetUserByAuthSubject :one
+select id, auth_subject, created_at, updated_at
+from users
+where auth_subject = $1;
+
+-- name: InsertUserByAuthSubject :one
+insert into users (auth_subject)
 values ($1)
-on conflict (cognito_sub) do update set updated_at = now()
-returning id, cognito_sub, created_at, updated_at;
+returning id, auth_subject, created_at, updated_at;
 
 -- name: GetUserByID :one
-select id, cognito_sub, created_at, updated_at
+select id, auth_subject, created_at, updated_at
 from users
 where id = $1;
 

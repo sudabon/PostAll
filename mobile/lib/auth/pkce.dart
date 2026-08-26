@@ -23,7 +23,7 @@ PkcePair generatePkce([Random? random]) {
 String base64UrlEncodeNoPad(List<int> bytes) =>
     base64Url.encode(bytes).replaceAll('=', '');
 
-/// Cognito のトークン応答。
+/// GoTrue のトークン応答。
 class TokenSet {
   const TokenSet({
     required this.accessToken,
@@ -70,29 +70,18 @@ class TokenSet {
       };
 }
 
-/// Hosted UI の認可エンドポイント URL を組み立てる。
+String _trimBase(String supabaseUrl) => supabaseUrl.replaceAll(RegExp(r'/$'), '');
+
+/// GoTrue の認可エンドポイント URL を組み立てる。
 Uri authorizeUrl({
-  required String domain,
-  required String clientId,
+  required String supabaseUrl,
   required String redirectUri,
   required String challenge,
 }) =>
-    Uri.https(domain, '/oauth2/authorize', {
-      'response_type': 'code',
-      'client_id': clientId,
-      'redirect_uri': redirectUri,
-      'code_challenge': challenge,
-      'code_challenge_method': 'S256',
-      'scope': 'openid email',
-    });
-
-/// サインアウト後の戻り先は `postall://auth/logout`（design.md D20）。
-Uri logoutUrl({
-  required String domain,
-  required String clientId,
-  required String logoutUri,
-}) =>
-    Uri.https(domain, '/logout', {
-      'client_id': clientId,
-      'logout_uri': logoutUri,
-    });
+    Uri.parse('${_trimBase(supabaseUrl)}/auth/v1/authorize').replace(
+      queryParameters: {
+        'redirect_to': redirectUri,
+        'code_challenge': challenge,
+        'code_challenge_method': 'S256',
+      },
+    );

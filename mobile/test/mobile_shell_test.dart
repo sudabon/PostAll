@@ -408,11 +408,13 @@ void main() {
         child: const HomeShell(),
       );
       container.read(openThreadProvider.notifier).open(root.id);
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump();
       api.calls.clear();
 
       api.emit('post.updated');
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump();
 
       expect(api.calls, contains('listChannels'));
       expect(
@@ -430,7 +432,7 @@ void main() {
               channels: [channel(1, name: 'general')],
               posts: [post(10, channelId: testId(1), body: '最初')],
             )
-            // バックグラウンドでは SSE が切れている（design.md D13 のトレードオフ）。
+            // バックグラウンドでは Realtime が切れている（design.md D13 のトレードオフ）。
             ..streamConnected = false;
       addTearDown(api.dispose);
 
@@ -442,14 +444,16 @@ void main() {
         child: const HomeShell(),
       );
 
-      // 見ていない間にサーバ側でポストが増えた。SSE が切れているので届かない。
+      // 見ていない間にサーバ側でポストが増えた。Realtime が切れているので届かない。
       await api.createPost(testId(1), '不在中の投稿');
       await tester.pump();
       expect(find.text('不在中の投稿'), findsNothing);
 
       // 復帰で差分をまとめて取り直す。
       await container.read(changeSyncProvider)!.resume();
-      await tester.pumpAndSettle();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump();
+      }
 
       expect(api.calls.where((c) => c.startsWith('listEvents')), isNotEmpty);
       expect(find.text('不在中の投稿'), findsOneWidget);

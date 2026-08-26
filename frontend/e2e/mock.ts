@@ -70,8 +70,6 @@ function now() {
 
 export async function installApiMock(page: Page) {
   await page.addInitScript(() => {
-    const controllers = new Set<ReadableStreamDefaultController<Uint8Array>>()
-    const encoder = new TextEncoder()
     let online = true
     Object.defineProperty(navigator, 'onLine', {
       configurable: true,
@@ -79,47 +77,11 @@ export async function installApiMock(page: Page) {
     })
     const bridge = window as MockBrowserBridge
     bridge.__postallEmitEvent = (event) => {
-      const frame = `id: ${event.id}\nevent: ${event.eventType}\ndata: ${JSON.stringify(event)}\n\n`
-      for (const controller of [...controllers]) {
-        try {
-          controller.enqueue(encoder.encode(frame))
-        } catch {
-          controllers.delete(controller)
-        }
-      }
+      window.dispatchEvent(new CustomEvent('postall:change-signal', { detail: event }))
     }
     bridge.__postallSetOnline = (next) => {
       online = next
-      if (!next) {
-        for (const controller of [...controllers]) {
-          try {
-            controller.error(new TypeError('mock connection lost'))
-          } catch {
-            // The stream may already be closed.
-          }
-        }
-        controllers.clear()
-      }
       window.dispatchEvent(new Event(next ? 'online' : 'offline'))
-    }
-    const nativeFetch = window.fetch.bind(window)
-    window.fetch = async (input, init) => {
-      const requestUrl = new URL(input instanceof Request ? input.url : String(input), window.location.href)
-      if (requestUrl.pathname === '/v1/events/stream') {
-        const stream = new ReadableStream<Uint8Array>({
-          start(controller) {
-            controllers.add(controller)
-          },
-          cancel() {
-            // parseSseStream cancels readers on AbortSignal; closed controllers are removed on emit.
-          },
-        })
-        return new Response(stream, {
-          status: 200,
-          headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-        })
-      }
-      return nativeFetch(input, init)
     }
   })
 
@@ -182,13 +144,6 @@ export async function installApiMock(page: Page) {
       return raw ? JSON.parse(raw) : {}
     }
 
-    if (url.pathname === '/v1/events/stream' && method === 'GET') {
-      await route.fulfill({
-        contentType: 'text/event-stream',
-        body: ': mock stream fallback\n\n',
-      })
-      return
-    }
     if (url.pathname === '/v1/events' && method === 'GET') {
       const after = BigInt(url.searchParams.get('after') ?? '0')
       const limit = Math.min(Number(url.searchParams.get('limit') ?? 200), 200)

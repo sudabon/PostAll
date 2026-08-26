@@ -4,17 +4,15 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/sudabon/PostAll/backend/migrations"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 )
 
 func Up(databaseURL string) error {
-	if databaseURL == "" {
-		return fmt.Errorf("DATABASE_URL is required to apply migrations")
-	}
-	db, err := sql.Open("pgx", databaseURL)
+	db, err := open(databaseURL)
 	if err != nil {
 		return err
 	}
@@ -28,10 +26,7 @@ func Up(databaseURL string) error {
 }
 
 func Pending(databaseURL string) ([]string, error) {
-	if databaseURL == "" {
-		return nil, fmt.Errorf("DATABASE_URL is required")
-	}
-	db, err := sql.Open("pgx", databaseURL)
+	db, err := open(databaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -56,4 +51,20 @@ func Pending(databaseURL string) ([]string, error) {
 		}
 	}
 	return pending, nil
+}
+
+func open(databaseURL string) (*sql.DB, error) {
+	if databaseURL == "" {
+		return nil, fmt.Errorf("DATABASE_URL is required to apply migrations")
+	}
+	cfg, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	// Named prepared statements survive on the server connection. Supavisor
+	// reuses that connection for the next client, which yields 42P05.
+	cfg.DefaultQueryExecMode = pgx.QueryExecModeExec
+	db := stdlib.OpenDB(*cfg)
+	db.SetMaxOpenConns(1)
+	return db, nil
 }

@@ -25,12 +25,12 @@ class FakeApi implements PostAllApi {
   final List<Emoji> emojis;
   bool healthy;
 
-  /// SSE が繋がっているか。false の間は購読が即座に終わり、クライアントは
+  /// Realtime が繋がっているか。false の間は合図を出さず、クライアントは
   /// `listEvents` による差分取得へ退避する（iOS のバックグラウンドを模す）。
   bool streamConnected = true;
 
-  /// 発行したイベント。SSE の購読者へ配り、`listEvents` でも返す。
-  final _events = StreamController<ChangeEvent>.broadcast();
+  /// 発行したイベント。購読者へ合図を配り、`listEvents` でも返す。
+  final _signals = StreamController<void>.broadcast();
   final _log = <ChangeEvent>[];
   var _nextEventId = 0;
 
@@ -44,7 +44,9 @@ class FakeApi implements PostAllApi {
   String _id() =>
       '00000000-0000-4000-8000-${(_nextId++).toString().padLeft(12, '0')}';
 
-  void dispose() => _events.close();
+  void dispose() {
+    _signals.close();
+  }
 
   @override
   Future<Health> getHealth() async {
@@ -381,13 +383,12 @@ class FakeApi implements PostAllApi {
   }
 
   @override
-  Stream<ChangeEvent> streamEvents({String? lastEventId}) {
-    calls.add('streamEvents:last=$lastEventId');
-    if (!streamConnected) return const Stream<ChangeEvent>.empty();
-    return _events.stream;
+  Stream<void> watchChangeSignals() {
+    calls.add('watchChangeSignals');
+    return _signals.stream;
   }
 
-  /// サーバ発の変更を記録し、購読中のクライアントへ配る。
+  /// サーバ発の変更を記録し、購読中のクライアントへ合図を送る。
   ///
   /// 切断中に起きた変更も [listEvents] から取り出せるよう、常に記録する。
   ChangeEvent emit(
@@ -405,7 +406,7 @@ class FakeApi implements PostAllApi {
       createdAt: DateTime.now(),
     );
     _log.add(event);
-    _events.add(event);
+    if (streamConnected) _signals.add(null);
     return event;
   }
 

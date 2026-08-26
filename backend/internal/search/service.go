@@ -64,7 +64,7 @@ func (s *Service) Search(ctx context.Context, in Input) (Page, error) {
 	results := make([]Result, 0, fetch)
 	if in.Cursor == nil || *in.Cursor == "" {
 		rows, err := s.q.SearchPostsLatest(ctx, store.SearchPostsLatestParams{
-			SearchQuery: in.Query,
+			SearchQuery: ContainsPattern(in.Query),
 			ChannelID:   in.ChannelID,
 			CreatedFrom: in.CreatedFrom,
 			CreatedTo:   in.CreatedTo,
@@ -86,7 +86,7 @@ func (s *Service) Search(ctx context.Context, in Input) (Page, error) {
 			return Page{}, errValidation("検索カーソルが不正です")
 		}
 		rows, err := s.q.SearchPostsBefore(ctx, store.SearchPostsBeforeParams{
-			SearchQuery:     in.Query,
+			SearchQuery:     ContainsPattern(in.Query),
 			ChannelID:       in.ChannelID,
 			CreatedFrom:     in.CreatedFrom,
 			CreatedTo:       in.CreatedTo,

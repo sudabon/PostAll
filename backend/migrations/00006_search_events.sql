@@ -1,9 +1,4 @@
 -- +goose Up
-create extension if not exists pg_bigm;
-
-create index posts_body_bigm
-    on posts using gin (lower(body) gin_bigm_ops);
-
 create table change_events (
     id             bigint generated always as identity primary key,
     event_type     text not null,
@@ -149,5 +144,3 @@ drop function if exists postall_record_channel_change();
 drop trigger if exists change_events_notify on change_events;
 drop function if exists postall_notify_change_event();
 drop table if exists change_events;
-drop index if exists posts_body_bigm;
-drop extension if exists pg_bigm;

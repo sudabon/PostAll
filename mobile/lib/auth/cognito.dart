@@ -3,7 +3,7 @@ import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 import 'pkce.dart';
 
-/// サインインを中断した、または Hosted UI がエラーを返した。
+/// サインインを中断した、または認可画面がエラーを返した。
 class SignInCancelled implements Exception {
   const SignInCancelled([this.message = 'サインインが中断されました']);
 
@@ -22,27 +22,28 @@ class SignInFailure implements Exception {
   String toString() => message;
 }
 
-/// Cognito Hosted UI との受け渡し（design.md D20）。
+/// Supabase Auth（GoTrue）との受け渡し（design.md D20）。
 ///
 /// iOS は `ASWebAuthenticationSession` でカスタムスキームのコールバックを受ける。
-class CognitoAuth {
-  CognitoAuth({required this.domain, required this.clientId, Dio? dio})
-      : _dio = dio ?? Dio();
+class SupabaseAuth {
+  SupabaseAuth({
+    required this.supabaseUrl,
+    required this.publishableKey,
+    Dio? dio,
+  }) : _dio = dio ?? Dio();
 
   static const callbackScheme = 'postall';
   static const redirectUri = '$callbackScheme://auth/callback';
-  static const logoutUri = '$callbackScheme://auth/logout';
 
-  final String domain;
-  final String clientId;
+  final String supabaseUrl;
+  final String publishableKey;
   final Dio _dio;
 
-  /// Hosted UI を開き、返ってきた認可コードをトークンへ交換する。
+  /// 認可画面を開き、返ってきた認可コードをトークンへ交換する。
   Future<TokenSet> signIn({Future<String> Function(Uri url)? authenticate}) async {
     final pkce = generatePkce();
     final url = authorizeUrl(
-      domain: domain,
-      clientId: clientId,
+      supabaseUrl: supabaseUrl,
       redirectUri: redirectUri,
       challenge: pkce.challenge,
     );
@@ -64,26 +65,33 @@ class CognitoAuth {
       throw const SignInFailure('認可コードを受け取れませんでした');
     }
 
-    return _token({
-      'grant_type': 'authorization_code',
-      'client_id': clientId,
-      'redirect_uri': redirectUri,
-      'code': code,
-      'code_verifier': pkce.verifier,
-    });
+    return _token(
+      grantType: 'pkce',
+      body: {
+        'auth_code': code,
+        'code_verifier': pkce.verifier,
+      },
+    );
   }
 
-  Future<TokenSet> refresh(String refreshToken) => _token({
-        'grant_type': 'refresh_token',
-        'client_id': clientId,
-        'refresh_token': refreshToken,
-      });
+  Future<TokenSet> refresh(String refreshToken) => _token(
+        grantType: 'refresh_token',
+        body: {'refresh_token': refreshToken},
+      );
 
-  /// Hosted UI 側のセッションも落とす。失敗しても端末側の破棄は続行する。
-  Future<void> signOut({Future<String> Function(Uri url)? authenticate}) async {
-    final url = logoutUrl(domain: domain, clientId: clientId, logoutUri: logoutUri);
+  /// サーバ側セッションも落とす。失敗しても端末側の破棄は続行する。
+  Future<void> signOut({String? accessToken}) async {
     try {
-      await (authenticate ?? _authenticate)(url);
+      await _dio.postUri<dynamic>(
+        Uri.parse('${_base()}/auth/v1/logout'),
+        options: Options(
+          headers: {
+            'apikey': publishableKey,
+            if (accessToken != null && accessToken.isNotEmpty) 'Authorization': 'Bearer $accessToken',
+          },
+          validateStatus: (_) => true,
+        ),
+      );
     } on Exception {
       // 中断されても、呼び出し側が端末のトークンを破棄する。
     }
@@ -94,19 +102,23 @@ class CognitoAuth {
         callbackUrlScheme: callbackScheme,
       );
 
-  Future<TokenSet> _token(Map<String, String> body) async {
+  Future<TokenSet> _token({
+    required String grantType,
+    required Map<String, String> body,
+  }) async {
     final Response<dynamic> response;
     try {
       response = await _dio.postUri<dynamic>(
-        Uri.https(domain, '/oauth2/token'),
+        Uri.parse('${_base()}/auth/v1/token?grant_type=$grantType'),
         data: body,
         options: Options(
-          contentType: Headers.formUrlEncodedContentType,
+          contentType: Headers.jsonContentType,
+          headers: {'apikey': publishableKey},
           validateStatus: (_) => true,
         ),
       );
     } on DioException catch (error) {
-      throw SignInFailure(error.message ?? 'Cognito へ接続できません');
+      throw SignInFailure(error.message ?? 'Supabase Auth へ接続できません');
     }
 
     final data = response.data;
@@ -114,9 +126,11 @@ class CognitoAuth {
     final status = response.statusCode ?? 0;
     if (status < 200 || status >= 300) {
       throw SignInFailure(
-        (json['error_description'] ?? json['error'] ?? 'トークンの取得に失敗しました').toString(),
+        (json['error_description'] ?? json['error'] ?? json['msg'] ?? 'トークンの取得に失敗しました').toString(),
       );
     }
     return TokenSet.fromTokenResponse(json);
   }
+
+  String _base() => supabaseUrl.replaceAll(RegExp(r'/$'), '');
 }

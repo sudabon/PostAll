@@ -53,8 +53,8 @@ abstract class PostAllApi {
 
   Future<ChangeEventPage> listEvents({String after = '0', int limit = 200});
 
-  /// SSE で変更イベントを購読する。購読を止めるにはストリームの購読を解除する。
-  Stream<ChangeEvent> streamEvents({String? lastEventId});
+  /// Realtime の合図。受信したら [listEvents] で差分を取る。
+  Stream<void> watchChangeSignals();
 
   Future<StartUploadResponse> startUpload({
     required String fileName,

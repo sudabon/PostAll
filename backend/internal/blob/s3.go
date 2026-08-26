@@ -3,14 +3,25 @@ package blob
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
+
+type S3Config struct {
+	Endpoint  string
+	Region    string
+	Bucket    string
+	AccessKey string
+	SecretKey string
+}
 
 type S3 struct {
 	client  *s3.Client
@@ -18,16 +29,33 @@ type S3 struct {
 	bucket  string
 }
 
-func NewS3(ctx context.Context, region, bucket string) (*S3, error) {
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
+	region := cfg.Region
+	if region == "" {
+		region = "auto"
+	}
+	loadOpts := []func(*config.LoadOptions) error{
+		config.WithRegion(region),
+	}
+	if cfg.AccessKey != "" {
+		loadOpts = append(loadOpts, config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, ""),
+		))
+	}
+	awsCfg, err := config.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
 		return nil, err
 	}
-	client := s3.NewFromConfig(cfg)
+	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		if cfg.Endpoint != "" {
+			o.BaseEndpoint = aws.String(cfg.Endpoint)
+			o.UsePathStyle = true
+		}
+	})
 	return &S3{
 		client:  client,
 		presign: s3.NewPresignClient(client),
-		bucket:  bucket,
+		bucket:  cfg.Bucket,
 	}, nil
 }
 
@@ -44,6 +72,9 @@ func (s *S3) PresignPut(ctx context.Context, key, contentType string, size int64
 	headers := map[string]string{}
 	if contentType != "" {
 		headers["Content-Type"] = contentType
+	}
+	if size >= 0 {
+		headers["Content-Length"] = strconv.FormatInt(size, 10)
 	}
 	return out.URL, headers, nil
 }
@@ -89,6 +120,22 @@ func (s *S3) Delete(ctx context.Context, key string) error {
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
+	return err
+}
+
+func (s *S3) Put(ctx context.Context, key, contentType string, body io.Reader, size int64) error {
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Body:   body,
+	}
+	if contentType != "" {
+		input.ContentType = aws.String(contentType)
+	}
+	if size >= 0 {
+		input.ContentLength = aws.Int64(size)
+	}
+	_, err := s.client.PutObject(ctx, input)
 	return err
 }
 

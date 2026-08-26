@@ -73,8 +73,8 @@ type Reaction struct {
 }
 
 type User struct {
-	ID         uuid.UUID
-	CognitoSub string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID          uuid.UUID
+	AuthSubject string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }

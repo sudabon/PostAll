@@ -33,9 +33,10 @@ export default function App() {
     ? syncStatusMessage
     : !online
       ? 'ネットワークに接続できません'
-      : signedIn
-        ? syncStatusMessage
-        : null
+      : null
+  const syncHint = signedIn && !offline && syncStatusMessage && connectionState !== 'offline'
+    ? syncStatusMessage
+    : null
 
   useEffect(() => {
     const root = document.documentElement
@@ -73,28 +74,33 @@ export default function App() {
       ) : null}
       {statusMessage ? (
         <div
-          role={offline ? 'alert' : undefined}
-          aria-live={offline ? undefined : 'polite'}
+          role="alert"
           className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md border border-destructive bg-card px-4 py-3 shadow"
           data-testid="connection-error"
         >
           <p className="text-sm">{statusMessage}</p>
-          {offline ? (
-            <button
-              type="button"
-              className="mt-1 text-sm text-primary"
-              onClick={() => {
-                if (!navigator.onLine) {
-                  window.location.reload()
-                  return
-                }
-                useUi.getState().setConnectionState('connecting')
-                window.dispatchEvent(new Event('online'))
-              }}
-            >
-              再試行
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="mt-1 text-sm text-primary"
+            onClick={() => {
+              if (!navigator.onLine) {
+                window.location.reload()
+                return
+              }
+              useUi.getState().setConnectionState('connecting')
+              window.dispatchEvent(new Event('online'))
+            }}
+          >
+            再試行
+          </button>
+        </div>
+      ) : syncHint ? (
+        <div
+          aria-live="polite"
+          className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md border bg-card px-4 py-3 shadow"
+          data-testid="connection-status"
+        >
+          <p className="text-sm">{syncHint}</p>
         </div>
       ) : null}
     </>

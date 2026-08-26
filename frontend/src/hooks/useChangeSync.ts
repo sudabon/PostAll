@@ -1,26 +1,27 @@
 import { useEffect } from 'react'
 import { useQueryClient, type QueryKey } from '@tanstack/react-query'
 import type { ChangeEvent } from '@/api/client'
-import { parseSseStream } from '@/api/sse'
 import { useAuth } from '@/auth/AuthProvider'
+import { currentAccessToken } from '@/auth/session'
+import { subscribePostallEvents } from '@/lib/realtime'
+import { useSettings } from '@/state/settings'
 import { useUi } from '@/state/ui'
 
-const firstReconnectDelay = 1_000
-const maxReconnectDelay = 30_000
+const pollInterval = 15_000
 
 export function useChangeSync(enabled = true) {
   const { api, signedIn } = useAuth()
   const queryClient = useQueryClient()
+  const supabaseUrl = useSettings((s) => s.supabaseUrl)
+  const publishableKey = useSettings((s) => s.supabasePublishableKey)
 
   useEffect(() => {
     if (!enabled || !signedIn) return
     let stopped = false
     let lastEventId: string | null = null
-    let streamController: AbortController | null = null
-    let reconnectTimer: number | null = null
-    let wakeReconnect: (() => void) | null = null
+    let pollTimer: number | null = null
     let recovery: Promise<boolean> | null = null
-    let reconnectImmediately = false
+    let unsubscribeRealtime: (() => void) | null = null
     const pendingInvalidations = new Map<string, QueryKey>()
     let invalidationQueued = false
 
@@ -45,13 +46,6 @@ export function useChangeSync(enabled = true) {
       if (lastEventId !== null && BigInt(event.id) <= BigInt(lastEventId)) return false
       lastEventId = event.id
       return true
-    }
-
-    const applySyncWatermark = (event: ChangeEvent) => {
-      if (event.channelId || event.postId || event.threadRootId || !advanceCursor(event)) return
-      queueInvalidation('channels', ['channels'])
-      queueInvalidation('posts', ['posts'])
-      queueInvalidation('thread', ['thread'])
     }
 
     const applyEvent = (event: ChangeEvent) => {
@@ -84,7 +78,6 @@ export function useChangeSync(enabled = true) {
         return false
       }
       if (stopped) return false
-      useUi.getState().setConnectionState('degraded')
       try {
         let cursor = lastEventId ?? '0'
         while (!stopped) {
@@ -117,89 +110,82 @@ export function useChangeSync(enabled = true) {
       return recovery
     }
 
-    const waitBeforeReconnect = (delay: number) => new Promise<void>((resolve) => {
-      wakeReconnect = () => {
-        if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
-        reconnectTimer = null
-        wakeReconnect = null
-        resolve()
-      }
-      reconnectTimer = window.setTimeout(() => wakeReconnect?.(), delay)
-    })
+    const startPolling = () => {
+      if (pollTimer !== null) return
+      pollTimer = window.setInterval(() => {
+        void recoverOnce()
+      }, pollInterval)
+    }
 
-    const run = async () => {
-      let delay = firstReconnectDelay
-      useUi.getState().setConnectionState('connecting')
-      while (!stopped) {
-        if (recovery) await recovery
-        reconnectImmediately = false
-        if (!navigator.onLine) {
-          useUi.getState().setConnectionState('offline')
-          await waitBeforeReconnect(delay)
-          delay = Math.min(delay * 2, maxReconnectDelay)
-          continue
-        }
-        streamController = new AbortController()
-        try {
-          const stream = await api.streamEvents(lastEventId, streamController.signal)
-          if (stopped) return
-          useUi.getState().setConnectionState('live')
-          delay = firstReconnectDelay
-          await parseSseStream(stream, (message) => {
-            try {
-              const event = JSON.parse(message.data) as ChangeEvent
-              if (message.id && message.id !== event.id) return
-              if (message.event === 'postall.sync') {
-                applySyncWatermark(event)
-                return
-              }
-              applyEvent(event)
-            } catch {
-              // Ignore one malformed frame and keep the durable stream alive.
-            }
-          }, streamController.signal)
-          if (stopped) return
-        } catch {
-          if (stopped) return
-        }
-        await recoverOnce()
-        if (stopped) return
-        if (reconnectImmediately) continue
-        await waitBeforeReconnect(delay)
-        delay = Math.min(delay * 2, maxReconnectDelay)
+    const stopPolling = () => {
+      if (pollTimer === null) return
+      window.clearInterval(pollTimer)
+      pollTimer = null
+    }
+
+    const connectRealtime = () => {
+      unsubscribeRealtime?.()
+      if (!navigator.onLine) {
+        useUi.getState().setConnectionState('offline')
+        return
       }
+      useUi.getState().setConnectionState('connecting')
+      const token = currentAccessToken()
+      unsubscribeRealtime = subscribePostallEvents({
+        supabaseUrl,
+        publishableKey,
+        accessToken: token ?? '',
+        onSignal: () => {
+          void recoverOnce()
+        },
+        onStatus: (subscribed) => {
+          if (stopped) return
+          if (subscribed) {
+            stopPolling()
+            useUi.getState().setConnectionState('live')
+            void recoverOnce()
+            return
+          }
+          useUi.getState().setConnectionState('degraded')
+          startPolling()
+          void recoverOnce()
+        },
+      })
     }
 
     const refreshNow = () => {
       if (stopped) return
-      reconnectImmediately = true
-      wakeReconnect?.()
-      void recoverOnce().finally(() => {
-        if (!stopped) streamController?.abort()
-      })
+      void recoverOnce()
     }
-    const onOnline = () => refreshNow()
+    const onOnline = () => {
+      connectRealtime()
+    }
     const onOffline = () => {
       useUi.getState().setConnectionState('offline')
-      streamController?.abort()
+      unsubscribeRealtime?.()
+      stopPolling()
     }
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refreshNow()
     }
+    const onMockSignal = () => {
+      void recoverOnce()
+    }
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)
     document.addEventListener('visibilitychange', onVisibility)
-    void run()
+    window.addEventListener('postall:change-signal', onMockSignal)
+    connectRealtime()
 
     return () => {
       stopped = true
-      streamController?.abort()
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
-      wakeReconnect?.()
+      unsubscribeRealtime?.()
+      stopPolling()
       pendingInvalidations.clear()
       window.removeEventListener('online', onOnline)
       window.removeEventListener('offline', onOffline)
       document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('postall:change-signal', onMockSignal)
     }
-  }, [api, enabled, queryClient, signedIn])
+  }, [api, enabled, publishableKey, queryClient, signedIn, supabaseUrl])
 }

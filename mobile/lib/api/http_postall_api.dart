@@ -4,10 +4,10 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
+import '../realtime.dart';
 import 'errors.dart';
 import 'generated/models.dart';
 import 'postall_api.dart';
-import 'sse.dart';
 
 /// アクセストークンを返す。未サインインなら null。
 typedef TokenProvider = Future<String?> Function();
@@ -19,9 +19,13 @@ class HttpPostAllApi implements PostAllApi {
   HttpPostAllApi({
     required String Function() baseUrl,
     required TokenProvider token,
+    required String Function() supabaseUrl,
+    required String Function() publishableKey,
     Dio? dio,
   })  : _baseUrl = baseUrl,
         _token = token,
+        _supabaseUrl = supabaseUrl,
+        _publishableKey = publishableKey,
         _dio = dio ?? Dio() {
     _dio.options.validateStatus = (_) => true;
     _dio.options.receiveDataWhenStatusError = true;
@@ -29,6 +33,8 @@ class HttpPostAllApi implements PostAllApi {
 
   final String Function() _baseUrl;
   final TokenProvider _token;
+  final String Function() _supabaseUrl;
+  final String Function() _publishableKey;
   final Dio _dio;
 
   String _url(String path) => '${_baseUrl().replaceAll(RegExp(r'/$'), '')}$path';
@@ -268,27 +274,53 @@ class HttpPostAllApi implements PostAllApi {
   }
 
   @override
-  Stream<ChangeEvent> streamEvents({String? lastEventId}) async* {
-    final options = await _options(responseType: ResponseType.stream);
-    options.headers!['Accept'] = 'text/event-stream';
-    if (lastEventId != null) options.headers!['Last-Event-ID'] = lastEventId;
+  Stream<void> watchChangeSignals() {
+    final controller = StreamController<void>.broadcast();
+    PostallRealtime? realtime;
+    Timer? poll;
 
-    final Response<dynamic> response;
-    try {
-      response = await _dio.getUri<dynamic>(Uri.parse(_url('/v1/events/stream')), options: options);
-    } on DioException catch (error) {
-      throw NetworkException(error.message ?? 'イベントストリームへ接続できません');
-    }
-    final status = response.statusCode ?? 0;
-    if (status < 200 || status >= 300) {
-      throw ApiException(status, 'http_error', 'イベントストリームへ接続できません');
+    void startPolling() {
+      poll ??= Timer.periodic(const Duration(seconds: 15), (_) {
+        if (!controller.isClosed) controller.add(null);
+      });
     }
 
-    final body = response.data as ResponseBody;
-    await for (final message in parseSseStream(body.stream)) {
-      final decoded = _asJson(message.data);
-      if (decoded is Map<String, Object?>) yield ChangeEvent.fromJson(decoded);
+    void stopPolling() {
+      poll?.cancel();
+      poll = null;
     }
+
+    Future<void> connect() async {
+      final token = await _token() ?? '';
+      realtime = PostallRealtime(
+        supabaseUrl: _supabaseUrl(),
+        publishableKey: _publishableKey(),
+        accessToken: token,
+        onSignal: () {
+          if (!controller.isClosed) controller.add(null);
+        },
+        onStatus: (subscribed) {
+          if (controller.isClosed) return;
+          if (subscribed) {
+            stopPolling();
+            controller.add(null);
+            return;
+          }
+          startPolling();
+        },
+      );
+      realtime!.connect();
+    }
+
+    controller
+      ..onListen = () {
+        unawaited(connect());
+      }
+      ..onCancel = () async {
+        stopPolling();
+        await realtime?.disconnect();
+      };
+    return controller.stream;
   }
 
   @override

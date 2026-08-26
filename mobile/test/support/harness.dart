@@ -108,12 +108,15 @@ Future<ProviderContainer> pumpApp(
       child: MaterialApp(home: child),
     ),
   );
-  await tester.pumpAndSettle();
+  // 不確定インジケータが残ると pumpAndSettle は終わらないので、固定回数だけ進める。
+  for (var i = 0; i < 20; i++) {
+    await tester.pump();
+  }
   return container;
 }
 
 /// 設定が揃っている状態（サインインボタンを押せる）。
-List<Override> withCognitoSettings() => [
+List<Override> withSupabaseSettings() => [
   settingsProvider.overrideWith(_ConfiguredSettings.new),
 ];
 
@@ -121,7 +124,7 @@ class _ConfiguredSettings extends SettingsNotifier {
   @override
   AppSettings build() => const AppSettings(
     apiBaseUrl: 'https://example.invalid',
-    cognitoDomain: 'auth.example.invalid',
-    cognitoClientId: 'client',
+    supabaseUrl: 'https://auth.example.invalid',
+    supabasePublishableKey: 'publishable-key',
   );
 }

@@ -21,7 +21,7 @@ func TestReactionPrimaryKeyPreventsDuplicateUserEmojiOnPost(t *testing.T) {
 	ctx := context.Background()
 	var userID, postID, emojiID string
 	if err := pool.QueryRow(ctx, `
-		insert into users (cognito_sub) values ('reaction-user') returning id
+		insert into users (auth_subject) values ('reaction-user') returning id
 	`).Scan(&userID); err != nil {
 		t.Fatal(err)
 	}

@@ -157,7 +157,7 @@ func searchTestServer(t *testing.T) (http.Handler, string, string) {
 		_, _ = w.Write(jwks)
 	}))
 	t.Cleanup(jwksServer.Close)
-	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "client-1", jwksServer.Client())
+	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "authenticated", jwksServer.Client())
 	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier})
 	if err != nil {
 		t.Fatal(err)

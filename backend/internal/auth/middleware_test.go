@@ -14,7 +14,7 @@ type memoryUsers struct {
 	bySub map[string]string
 }
 
-func (m *memoryUsers) UpsertByCognitoSub(_ context.Context, sub string) (string, error) {
+func (m *memoryUsers) ResolveByAuthSubject(_ context.Context, sub string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.bySub == nil {
@@ -29,7 +29,7 @@ func (m *memoryUsers) UpsertByCognitoSub(_ context.Context, sub string) (string,
 }
 
 func TestMiddlewareRejectsMissingToken(t *testing.T) {
-	v := NewVerifierFromURL("http://127.0.0.1:1/jwks", "https://issuer.example", "client-1", nil)
+	v := NewVerifierFromURL("http://127.0.0.1:1/jwks", "https://issuer.example", "authenticated", nil)
 	h := Middleware(v, &memoryUsers{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))

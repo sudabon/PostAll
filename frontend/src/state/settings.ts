@@ -5,15 +5,15 @@ export type ThemePref = 'light' | 'dark' | 'system'
 
 export type Settings = {
   apiBaseUrl: string
-  cognitoDomain: string
-  cognitoClientId: string
+  supabaseUrl: string
+  supabasePublishableKey: string
   theme: ThemePref
 }
 
 const defaults: Settings = {
   apiBaseUrl: import.meta.env.VITE_API_BASE_URL ?? '',
-  cognitoDomain: import.meta.env.VITE_COGNITO_DOMAIN ?? '',
-  cognitoClientId: import.meta.env.VITE_COGNITO_CLIENT_ID ?? '',
+  supabaseUrl: import.meta.env.VITE_SUPABASE_URL ?? '',
+  supabasePublishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? '',
   theme: 'system',
 }
 
@@ -35,10 +35,10 @@ export async function loadSettings(adapter: PlatformAdapter) {
 
 export function watchSettings(adapter: PlatformAdapter) {
   return useSettings.subscribe((state) => {
-    const { apiBaseUrl, cognitoDomain, cognitoClientId, theme } = state
+    const { apiBaseUrl, supabaseUrl, supabasePublishableKey, theme } = state
     void adapter.setItem(
       'settings',
-      JSON.stringify({ apiBaseUrl, cognitoDomain, cognitoClientId, theme }),
+      JSON.stringify({ apiBaseUrl, supabaseUrl, supabasePublishableKey, theme }),
     )
   })
 }

@@ -10,6 +10,8 @@ final apiProvider = Provider<PostAllApi>((ref) {
   return HttpPostAllApi(
     baseUrl: () => ref.read(settingsProvider).apiBaseUrl,
     token: () => ref.read(authControllerProvider.notifier).accessToken(),
+    supabaseUrl: () => ref.read(settingsProvider).supabaseUrl,
+    publishableKey: () => ref.read(settingsProvider).supabasePublishableKey,
   );
 });
 

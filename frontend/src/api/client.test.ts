@@ -29,25 +29,6 @@ describe('ApiClient', () => {
     expect(headers.get('Authorization')).toBe('Bearer token-1')
   })
 
-  it('opens an authenticated SSE stream without exposing credentials in the URL', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(''))
-    vi.stubGlobal('fetch', fetchMock)
-    const api = new ApiClient(() => 'https://api.example', async () => 'secret-token')
-    const controller = new AbortController()
-
-    await api.streamEvents('42', controller.signal)
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.example/v1/events/stream',
-      expect.objectContaining({ method: 'GET', signal: controller.signal }),
-    )
-    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers
-    expect(headers.get('Authorization')).toBe('Bearer secret-token')
-    expect(headers.get('Accept')).toBe('text/event-stream')
-    expect(headers.get('Last-Event-ID')).toBe('42')
-    expect(fetchMock.mock.calls[0]?.[0]).not.toContain('secret-token')
-  })
-
   it('uses an event cursor for diff recovery', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ events: [], nextAfter: '42', hasMore: false }), { status: 200 }),

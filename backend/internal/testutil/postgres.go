@@ -2,8 +2,6 @@ package testutil
 
 import (
 	"context"
-	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -13,25 +11,15 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+const pgroongaImage = "groonga/pgroonga:4.0.8-alpine-16"
+
 func PostgresURL(t *testing.T) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	t.Cleanup(cancel)
-	_, sourceFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve testutil source path")
-	}
-	postgresContext := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "infra", "postgres"))
 
 	ctr, err := postgres.Run(ctx,
-		"",
-		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
-			Context:    postgresContext,
-			Dockerfile: "Dockerfile",
-			Repo:       "postall-postgres-test",
-			Tag:        "16-bigm",
-			KeepImage:  true,
-		}),
+		pgroongaImage,
 		postgres.WithDatabase("postall"),
 		postgres.WithUsername("postall"),
 		postgres.WithPassword("postall"),

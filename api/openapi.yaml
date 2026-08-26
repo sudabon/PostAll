@@ -426,27 +426,6 @@ paths:
                 $ref: "#/components/schemas/ChangeEventPage"
         default:
           $ref: "#/components/responses/Error"
-  /v1/events/stream:
-    get:
-      operationId: streamChangeEvents
-      tags: [events]
-      summary: 変更イベントを Server-Sent Events で購読する
-      parameters:
-        - name: Last-Event-ID
-          in: header
-          schema:
-            type: string
-            pattern: '^[0-9]+$'
-          description: 再送を開始する直前のイベント ID。
-      responses:
-        "200":
-          description: id、event、data フィールドを持つ変更イベントストリーム
-          content:
-            text/event-stream:
-              schema:
-                type: string
-        default:
-          $ref: "#/components/responses/Error"
 components:
   securitySchemes:
     bearerAuth:

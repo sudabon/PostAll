@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/sudabon/PostAll/backend/internal/blob"
 	"github.com/sudabon/PostAll/backend/internal/store"
 )
 
@@ -39,7 +40,7 @@ type SyncResult struct {
 	Issues    []SyncIssue
 }
 
-func (s *Service) Sync(ctx context.Context, dir string) (SyncResult, error) {
+func (s *Service) Sync(ctx context.Context, dir string, objects blob.Store) (SyncResult, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("read emoji directory: %w", err)
@@ -62,13 +63,17 @@ func (s *Service) Sync(ctx context.Context, dir string) (SyncResult, error) {
 			continue
 		}
 
-		checksum, err := fileChecksum(filepath.Join(dir, name))
+		path := filepath.Join(dir, name)
+		checksum, err := fileChecksum(path)
 		if err != nil {
 			return result, fmt.Errorf("checksum %s: %w", name, err)
 		}
 		existing, err := s.q.GetEmojiByShortcode(ctx, shortcode)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
+			if err := putEmojiObject(ctx, objects, path, name); err != nil {
+				return result, fmt.Errorf("upload emoji %s: %w", shortcode, err)
+			}
 			if _, err := s.q.InsertEmoji(ctx, store.InsertEmojiParams{
 				Shortcode:  shortcode,
 				StorageKey: name,
@@ -82,6 +87,9 @@ func (s *Service) Sync(ctx context.Context, dir string) (SyncResult, error) {
 		case existing.Checksum == checksum && existing.StorageKey == name:
 			result.Unchanged++
 		default:
+			if err := putEmojiObject(ctx, objects, path, name); err != nil {
+				return result, fmt.Errorf("upload emoji %s: %w", shortcode, err)
+			}
 			if _, err := s.q.UpdateEmoji(ctx, store.UpdateEmojiParams{
 				StorageKey: name,
 				Checksum:   checksum,
@@ -111,4 +119,20 @@ func fileChecksum(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func putEmojiObject(ctx context.Context, objects blob.Store, path, key string) error {
+	if objects == nil {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	return objects.Put(ctx, key, "image/png", f, info.Size())
 }

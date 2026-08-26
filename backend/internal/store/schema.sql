@@ -2,7 +2,7 @@ create extension if not exists pgcrypto;
 
 create table users (
     id          uuid primary key default gen_random_uuid(),
-    cognito_sub text not null unique,
+    auth_subject text not null unique,
     created_at  timestamptz not null default now(),
     updated_at  timestamptz not null default now()
 );
@@ -102,10 +102,10 @@ create table reactions (
     primary key (post_id, emoji_id, user_id)
 );
 
-create extension if not exists pg_bigm;
+create extension if not exists pgroonga;
 
-create index posts_body_bigm
-    on posts using gin (lower(body) gin_bigm_ops);
+create index posts_body_pgroonga
+    on posts using pgroonga (body pgroonga_text_regexp_ops_v2);
 
 create table change_events (
     id             bigint generated always as identity primary key,

@@ -2,8 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// バックエンドとの接続状態。Flutter の ConnectionState と名前が衝突しないようにしてある。
 ///
-/// - [online]: SSE が繋がっている
-/// - [degraded]: API へは届くが SSE が切れている（復帰時の差分取得で追う）
+/// - [online]: Realtime が繋がっている
+/// - [degraded]: API へは届くが Realtime が切れている（復帰時の差分取得で追う）
 /// - [offline]: API へ届かない。変更操作を止め、古いデータを最新として見せない
 enum BackendConnection { online, degraded, offline }
 

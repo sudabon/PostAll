@@ -12,37 +12,39 @@ import 'providers.dart';
 import 'thread.dart';
 import 'timeline.dart';
 
-const _firstReconnectDelay = Duration(seconds: 1);
-const _maxReconnectDelay = Duration(seconds: 30);
-
-/// SSE の購読と、切断中に発生した差分の取り込み（design.md D13）。
+/// Realtime の合図と、切断中に発生した差分の取り込み（design.md D13）。
 ///
-/// iOS はバックグラウンドで接続が切れるため、SSE を唯一の同期手段にしない。
+/// iOS はバックグラウンドで接続が切れるため、Realtime を唯一の同期手段にしない。
 /// 復帰時は `GET /v1/events?after=` でまとめて取り直す。
 class ChangeSync {
-  ChangeSync(this._ref) {
-    _lifecycle = AppLifecycleListener(onResume: resume);
-  }
+  ChangeSync(this._ref);
 
   final Ref _ref;
-  late final AppLifecycleListener _lifecycle;
+  AppLifecycleListener? _lifecycle;
 
-  StreamSubscription<ChangeEvent>? _subscription;
+  StreamSubscription<void>? _subscription;
   Timer? _reconnectTimer;
-  Duration _reconnectDelay = _firstReconnectDelay;
   String? _lastEventId;
   bool _stopped = false;
   bool _recovering = false;
+  bool _resuming = false;
 
   /// 直近に取り込んだイベント ID。テストと表示のために公開する。
   String? get lastEventId => _lastEventId;
 
   void start() {
     _stopped = false;
+    _lifecycle ??= AppLifecycleListener(
+      onResume: () {
+        if (_stopped) return;
+        unawaited(resume());
+      },
+    );
     _connect();
+    unawaited(_recover());
   }
 
-  /// 購読と再接続タイマーを止める。二重に呼んでも安全。
+  /// 購読とポーリングを止める。二重に呼んでも安全。
   void dispose() {
     if (_stopped) return;
     _stopped = true;
@@ -50,49 +52,47 @@ class ChangeSync {
     _reconnectTimer = null;
     unawaited(_subscription?.cancel());
     _subscription = null;
-    _lifecycle.dispose();
+    _lifecycle?.dispose();
+    _lifecycle = null;
   }
 
   /// バックグラウンドから戻ったとき、差分を取り込んでから購読し直す
   /// （mobile-shell spec「復帰時に差分を取得する」）。
   Future<void> resume() async {
-    if (_stopped) return;
-    await _subscription?.cancel();
-    _subscription = null;
-    final recovered = await _recover();
-    if (recovered) _connect();
+    if (_stopped || _resuming) return;
+    _resuming = true;
+    try {
+      await _recover();
+    } finally {
+      _resuming = false;
+    }
   }
 
   void _connect() {
     if (_stopped) return;
     _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     final api = _ref.read(apiProvider);
-    _subscription = api
-        .streamEvents(lastEventId: _lastEventId)
-        .listen(
-          (event) {
-            _ref
-                .read(connectionProvider.notifier)
-                .set(BackendConnection.online);
-            _reconnectDelay = _firstReconnectDelay;
-            _apply(event);
-          },
-          onError: (Object _) => _scheduleReconnect(),
-          onDone: _scheduleReconnect,
-          cancelOnError: true,
-        );
+    _subscription = api.watchChangeSignals().listen(
+      (_) {
+        _ref.read(connectionProvider.notifier).set(BackendConnection.online);
+        unawaited(_recover());
+      },
+      onError: (Object _) => _onDisconnected(),
+      cancelOnError: true,
+    );
   }
 
-  void _scheduleReconnect() {
+  void _onDisconnected() {
     if (_stopped) return;
     _subscription = null;
     _ref.read(connectionProvider.notifier).set(BackendConnection.degraded);
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(_reconnectDelay, () async {
-      if (await _recover()) _connect();
+    _reconnectTimer = Timer(const Duration(seconds: 1), () {
+      if (_stopped) return;
+      unawaited(_recover());
+      _connect();
     });
-    final next = _reconnectDelay * 2;
-    _reconnectDelay = next > _maxReconnectDelay ? _maxReconnectDelay : next;
   }
 
   /// 切断中の差分をまとめて取り込む。API へ届かなければ offline にする。
@@ -111,7 +111,6 @@ class ChangeSync {
         if (!page.hasMore) break;
       }
       _lastEventId = cursor;
-      _ref.read(connectionProvider.notifier).set(BackendConnection.degraded);
       return true;
     } on Object {
       _ref.read(connectionProvider.notifier).set(BackendConnection.offline);
