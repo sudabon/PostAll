@@ -1,26 +1,40 @@
 import { useEffect } from 'react'
 import { useQueryClient, type QueryKey } from '@tanstack/react-query'
 import type { ChangeEvent } from '@/api/client'
-import { parseSseStream } from '@/api/sse'
 import { useAuth } from '@/auth/AuthProvider'
+import { accessTokenForRequest } from '@/auth/session'
+import { subscribePostallEvents } from '@/lib/realtime'
+import { usePlatform } from '@/platform'
+import { useSettings } from '@/state/settings'
 import { useUi } from '@/state/ui'
 
-const firstReconnectDelay = 1_000
-const maxReconnectDelay = 30_000
+const pollIntervalDegraded = 15_000
+const pollIntervalLive = 60_000
+const realtimeRetryBase = 1_000
+const realtimeRetryMax = 30_000
+
+function realtimeRetryDelay(attempt: number): number {
+  return Math.min(realtimeRetryBase * 2 ** attempt, realtimeRetryMax)
+}
 
 export function useChangeSync(enabled = true) {
   const { api, signedIn } = useAuth()
+  const platform = usePlatform()
   const queryClient = useQueryClient()
+  const supabaseUrl = useSettings((s) => s.supabaseUrl)
+  const publishableKey = useSettings((s) => s.supabasePublishableKey)
 
   useEffect(() => {
     if (!enabled || !signedIn) return
     let stopped = false
     let lastEventId: string | null = null
-    let streamController: AbortController | null = null
-    let reconnectTimer: number | null = null
-    let wakeReconnect: (() => void) | null = null
+    let pollTimer: number | null = null
+    let pollIntervalMs: number | null = null
     let recovery: Promise<boolean> | null = null
-    let reconnectImmediately = false
+    let unsubscribeRealtime: (() => void) | null = null
+    let realtimeRetryTimer: number | null = null
+    let realtimeRetryAttempt = 0
+    let realtimeGeneration = 0
     const pendingInvalidations = new Map<string, QueryKey>()
     let invalidationQueued = false
 
@@ -40,18 +54,17 @@ export function useChangeSync(enabled = true) {
       queueMicrotask(flushInvalidations)
     }
 
+    const reloadDisplayedData = () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['channels'] }),
+      queryClient.invalidateQueries({ queryKey: ['posts'] }),
+      queryClient.invalidateQueries({ queryKey: ['thread'] }),
+    ])
+
     const advanceCursor = (event: ChangeEvent): boolean => {
       if (!/^[0-9]+$/.test(event.id)) return false
       if (lastEventId !== null && BigInt(event.id) <= BigInt(lastEventId)) return false
       lastEventId = event.id
       return true
-    }
-
-    const applySyncWatermark = (event: ChangeEvent) => {
-      if (event.channelId || event.postId || event.threadRootId || !advanceCursor(event)) return
-      queueInvalidation('channels', ['channels'])
-      queueInvalidation('posts', ['posts'])
-      queueInvalidation('thread', ['thread'])
     }
 
     const applyEvent = (event: ChangeEvent) => {
@@ -72,6 +85,22 @@ export function useChangeSync(enabled = true) {
       }
     }
 
+    const stopPolling = () => {
+      if (pollTimer === null) return
+      window.clearInterval(pollTimer)
+      pollTimer = null
+      pollIntervalMs = null
+    }
+
+    const startPolling = (interval: number) => {
+      if (pollTimer !== null && pollIntervalMs === interval) return
+      stopPolling()
+      pollIntervalMs = interval
+      pollTimer = window.setInterval(() => {
+        void recoverOnce()
+      }, interval)
+    }
+
     const recoverChanges = async (): Promise<boolean> => {
       if (!navigator.onLine) {
         useUi.getState().setConnectionState('offline')
@@ -84,27 +113,35 @@ export function useChangeSync(enabled = true) {
         return false
       }
       if (stopped) return false
-      useUi.getState().setConnectionState('degraded')
       try {
-        let cursor = lastEventId ?? '0'
+        const isInitial = lastEventId === null
+        let cursor = lastEventId ?? 'latest'
         while (!stopped) {
           const page = await api.listEvents(cursor, 200)
-          for (const event of page.events) applyEvent(event)
+          if (page.resetRequired) {
+            if (/^[0-9]+$/.test(page.nextAfter)) lastEventId = page.nextAfter
+            await reloadDisplayedData()
+            return !stopped
+          }
+          if (!isInitial) {
+            for (const event of page.events) applyEvent(event)
+          }
           if (/^[0-9]+$/.test(page.nextAfter) && (lastEventId === null || BigInt(page.nextAfter) > BigInt(lastEventId))) {
             lastEventId = page.nextAfter
           }
           cursor = page.nextAfter
           if (!page.hasMore) break
         }
-        if (!stopped) {
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['channels'] }),
-            queryClient.invalidateQueries({ queryKey: ['posts'] }),
-            queryClient.invalidateQueries({ queryKey: ['thread'] }),
-          ])
+        if (!stopped && isInitial) {
+          await reloadDisplayedData()
         }
         return !stopped
-      } catch {
+      } catch (err) {
+        console.warn('change sync recover failed', err)
+        if (!stopped) {
+          useUi.getState().setConnectionState('degraded')
+          startPolling(pollIntervalDegraded)
+        }
         return false
       }
     }
@@ -117,89 +154,98 @@ export function useChangeSync(enabled = true) {
       return recovery
     }
 
-    const waitBeforeReconnect = (delay: number) => new Promise<void>((resolve) => {
-      wakeReconnect = () => {
-        if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
-        reconnectTimer = null
-        wakeReconnect = null
-        resolve()
-      }
-      reconnectTimer = window.setTimeout(() => wakeReconnect?.(), delay)
-    })
+    const stopRealtimeRetry = () => {
+      if (realtimeRetryTimer === null) return
+      window.clearTimeout(realtimeRetryTimer)
+      realtimeRetryTimer = null
+    }
 
-    const run = async () => {
-      let delay = firstReconnectDelay
-      useUi.getState().setConnectionState('connecting')
-      while (!stopped) {
-        if (recovery) await recovery
-        reconnectImmediately = false
-        if (!navigator.onLine) {
-          useUi.getState().setConnectionState('offline')
-          await waitBeforeReconnect(delay)
-          delay = Math.min(delay * 2, maxReconnectDelay)
-          continue
-        }
-        streamController = new AbortController()
-        try {
-          const stream = await api.streamEvents(lastEventId, streamController.signal)
-          if (stopped) return
-          useUi.getState().setConnectionState('live')
-          delay = firstReconnectDelay
-          await parseSseStream(stream, (message) => {
-            try {
-              const event = JSON.parse(message.data) as ChangeEvent
-              if (message.id && message.id !== event.id) return
-              if (message.event === 'postall.sync') {
-                applySyncWatermark(event)
-                return
-              }
-              applyEvent(event)
-            } catch {
-              // Ignore one malformed frame and keep the durable stream alive.
-            }
-          }, streamController.signal)
-          if (stopped) return
-        } catch {
-          if (stopped) return
-        }
-        await recoverOnce()
-        if (stopped) return
-        if (reconnectImmediately) continue
-        await waitBeforeReconnect(delay)
-        delay = Math.min(delay * 2, maxReconnectDelay)
+    const scheduleRealtimeRetry = () => {
+      if (realtimeRetryTimer !== null || !navigator.onLine) return
+      const delay = realtimeRetryDelay(realtimeRetryAttempt)
+      realtimeRetryAttempt += 1
+      realtimeRetryTimer = window.setTimeout(() => {
+        realtimeRetryTimer = null
+        connectRealtime()
+      }, delay)
+    }
+
+    function connectRealtime() {
+      stopRealtimeRetry()
+      const generation = ++realtimeGeneration
+      unsubscribeRealtime?.()
+      unsubscribeRealtime = null
+      if (!navigator.onLine) {
+        useUi.getState().setConnectionState('offline')
+        return
       }
+      if (pollTimer === null) useUi.getState().setConnectionState('connecting')
+      unsubscribeRealtime = subscribePostallEvents({
+        supabaseUrl,
+        publishableKey,
+        getAccessToken: () => accessTokenForRequest(platform),
+        onSignal: () => {
+          if (stopped || generation !== realtimeGeneration) return
+          void recoverOnce()
+        },
+        onStatus: (subscribed, permanent) => {
+          if (stopped || generation !== realtimeGeneration) return
+          if (subscribed) {
+            realtimeRetryAttempt = 0
+            stopRealtimeRetry()
+            startPolling(pollIntervalLive)
+            useUi.getState().setConnectionState('live')
+            void recoverOnce()
+            return
+          }
+          useUi.getState().setConnectionState('degraded')
+          startPolling(pollIntervalDegraded)
+          void recoverOnce()
+          if (!permanent) scheduleRealtimeRetry()
+        },
+      })
     }
 
     const refreshNow = () => {
       if (stopped) return
-      reconnectImmediately = true
-      wakeReconnect?.()
-      void recoverOnce().finally(() => {
-        if (!stopped) streamController?.abort()
-      })
+      void recoverOnce()
     }
-    const onOnline = () => refreshNow()
+    const onOnline = () => {
+      realtimeRetryAttempt = 0
+      connectRealtime()
+    }
     const onOffline = () => {
+      realtimeGeneration += 1
       useUi.getState().setConnectionState('offline')
-      streamController?.abort()
+      unsubscribeRealtime?.()
+      unsubscribeRealtime = null
+      stopRealtimeRetry()
+      stopPolling()
     }
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refreshNow()
     }
+    const onMockSignal = () => {
+      void recoverOnce()
+    }
+    const mockSignalsEnabled = import.meta.env.VITE_E2E === 'true'
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)
     document.addEventListener('visibilitychange', onVisibility)
-    void run()
+    if (mockSignalsEnabled) window.addEventListener('postall:change-signal', onMockSignal)
+    connectRealtime()
 
     return () => {
       stopped = true
-      streamController?.abort()
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
-      wakeReconnect?.()
+      realtimeGeneration += 1
+      unsubscribeRealtime?.()
+      stopRealtimeRetry()
+      stopPolling()
       pendingInvalidations.clear()
       window.removeEventListener('online', onOnline)
       window.removeEventListener('offline', onOffline)
       document.removeEventListener('visibilitychange', onVisibility)
+      if (mockSignalsEnabled) window.removeEventListener('postall:change-signal', onMockSignal)
     }
-  }, [api, enabled, queryClient, signedIn])
+  }, [api, enabled, platform, publishableKey, queryClient, signedIn, supabaseUrl])
 }

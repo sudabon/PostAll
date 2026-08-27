@@ -2,14 +2,16 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
+	"errors"
 	"net/http"
 )
 
 type contextKey struct{}
 
 type Principal struct {
-	UserID     string
-	CognitoSub string
+	UserID      string
+	AuthSubject string
 }
 
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
@@ -22,13 +24,13 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 }
 
 type UserStore interface {
-	UpsertByCognitoSub(ctx context.Context, sub string) (userID string, err error)
+	ResolveByAuthSubject(ctx context.Context, sub string) (userID string, err error)
 }
 
 func Middleware(v *Verifier, users UserStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/health" || r.URL.Path == "/ready" {
+			if skipAuth(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -39,6 +41,10 @@ func Middleware(v *Verifier, users UserStore) func(http.Handler) http.Handler {
 			raw := BearerToken(r.Header.Get("Authorization"))
 			claims, err := v.Verify(r.Context(), raw)
 			if err != nil {
+				if errors.Is(err, ErrJWKSUnavailable) {
+					writeJSON(w, http.StatusServiceUnavailable, `{"code":"unavailable","message":"認可情報を検証できませんでした"}`)
+					return
+				}
 				writeUnauthorized(w)
 				return
 			}
@@ -46,15 +52,20 @@ func Middleware(v *Verifier, users UserStore) func(http.Handler) http.Handler {
 				writeJSON(w, http.StatusServiceUnavailable, `{"code":"unavailable","message":"データベースに接続できません"}`)
 				return
 			}
-			userID, err := users.UpsertByCognitoSub(r.Context(), claims.Subject)
+			userID, err := users.ResolveByAuthSubject(r.Context(), claims.Subject)
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, `{"code":"unavailable","message":"ユーザーを登録できませんでした"}`)
 				return
 			}
-			ctx := WithPrincipal(r.Context(), Principal{UserID: userID, CognitoSub: claims.Subject})
+			ctx := WithPrincipal(r.Context(), Principal{UserID: userID, AuthSubject: claims.Subject})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func skipAuth(path string) bool {
+	return path == "/health" || path == "/ready" ||
+		path == "/internal/attachments/reap" || path == "/internal/events/prune"
 }
 
 func writeUnauthorized(w http.ResponseWriter) {
@@ -65,4 +76,15 @@ func writeJSON(w http.ResponseWriter, status int, body string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(body))
+}
+
+func BearerMatches(header, secret string) bool {
+	if secret == "" {
+		return false
+	}
+	want := "Bearer " + secret
+	if subtle.ConstantTimeCompare([]byte(header), []byte(want)) == 1 {
+		return true
+	}
+	return false
 }

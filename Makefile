@@ -1,4 +1,4 @@
-.PHONY: test lint generate typecheck test-sse-proxy
+.PHONY: test lint generate typecheck
 
 test:
 	cd backend && go test ./...
@@ -21,6 +21,3 @@ generate:
 		echo "api/openapi.yaml は未作成"; \
 		exit 1; \
 	fi
-
-test-sse-proxy:
-	infra/scripts/verify-sse-proxy.sh

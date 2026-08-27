@@ -1,18 +1,16 @@
 package httpapi_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sudabon/PostAll/backend/internal/auth"
+	"github.com/sudabon/PostAll/backend/internal/blob"
 	"github.com/sudabon/PostAll/backend/internal/httpapi"
 	"github.com/sudabon/PostAll/backend/internal/testutil"
 )
@@ -40,7 +38,7 @@ func TestEmojiCatalogAndReactionLifecycle(t *testing.T) {
 	}))
 	t.Cleanup(jwksServer.Close)
 
-	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "client-1", jwksServer.Client())
+	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "authenticated", jwksServer.Client())
 	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier})
 	if err != nil {
 		t.Fatal(err)
@@ -143,14 +141,11 @@ func TestEmojiImageDelivery(t *testing.T) {
 	}))
 	t.Cleanup(jwksServer.Close)
 
-	emojiDir := t.TempDir()
-	png := []byte("\x89PNG\r\n\x1a\npostall-test")
-	if err := os.WriteFile(filepath.Join(emojiDir, "shipit.png"), png, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mem := blob.NewMemory()
+	mem.PutObject("shipit.png", []byte("\x89PNG\r\n\x1a\npostall-test"))
 
-	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "client-1", jwksServer.Client())
-	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier, EmojiDir: emojiDir})
+	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "authenticated", jwksServer.Client())
+	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier, EmojiBlob: mem})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,19 +173,42 @@ func TestEmojiImageDelivery(t *testing.T) {
 	req.Header.Set("Authorization", authz)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusFound {
 		t.Fatalf("image = %d %s", rec.Code, rec.Body.Bytes())
 	}
-	if got := rec.Header().Get("Content-Type"); got != "image/png" {
-		t.Fatalf("content type = %q", got)
+	if got := rec.Header().Get("Location"); got != "memory://get/shipit.png" {
+		t.Fatalf("location = %q", got)
 	}
-	if !bytes.Equal(rec.Body.Bytes(), png) {
-		t.Fatalf("image body = %q", rec.Body.Bytes())
+	if got := rec.Header().Get("Cache-Control"); got != "private, max-age=60" {
+		t.Fatalf("cache-control = %q", got)
+	}
+
+	cached := httptest.NewRequest(http.MethodGet, "/v1/emojis/shipit/image", nil)
+	cached.Header.Set("Authorization", authz)
+	cached.Header.Set("If-None-Match", `"sum-1"`)
+	cachedRec := httptest.NewRecorder()
+	h.ServeHTTP(cachedRec, cached)
+	if cachedRec.Code != http.StatusNotModified {
+		t.Fatalf("etag = %d", cachedRec.Code)
 	}
 
 	missing := doJSON(t, h, http.MethodGet, "/v1/emojis/missing/image", authz, nil)
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("missing image = %d %s", missing.Code, missing.Body)
+	}
+
+	missingCached := httptest.NewRequest(http.MethodGet, "/v1/emojis/missing/image", nil)
+	missingCached.Header.Set("Authorization", authz)
+	missingCached.Header.Set("If-None-Match", `"sum-2"`)
+	missingCachedRec := httptest.NewRecorder()
+	h.ServeHTTP(missingCachedRec, missingCached)
+	if missingCachedRec.Code != http.StatusNotFound {
+		t.Fatalf("missing cached image = %d %s", missingCachedRec.Code, missingCachedRec.Body)
+	}
+
+	unknown := doJSON(t, h, http.MethodGet, "/v1/emojis/unknown/image", authz, nil)
+	if unknown.Code != http.StatusNotFound {
+		t.Fatalf("unknown shortcode = %d %s", unknown.Code, unknown.Body)
 	}
 }
 

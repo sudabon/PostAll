@@ -4,10 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -41,50 +38,32 @@ func (s *Server) GetEmojiImage(w http.ResponseWriter, r *http.Request, shortcode
 		writeAppError(w, r, err)
 		return
 	}
-	if filepath.Base(item.StorageKey) != item.StorageKey || strings.ToLower(filepath.Ext(item.StorageKey)) != ".png" {
-		writeEmojiImageNotFound(w)
-		return
-	}
-
-	root, err := os.OpenRoot(s.emojiDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			writeEmojiImageNotFound(w)
-			return
-		}
-		writeInternal(w, r, err)
-		return
-	}
-	defer root.Close()
-	file, err := root.Open(item.StorageKey)
-	if err != nil {
-		if os.IsNotExist(err) {
-			writeEmojiImageNotFound(w)
-			return
-		}
-		writeInternal(w, r, err)
-		return
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		writeInternal(w, r, err)
-		return
-	}
-	if !info.Mode().IsRegular() {
-		writeEmojiImageNotFound(w)
-		return
-	}
-
 	etag := strconv.Quote(item.Checksum)
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.Header().Set("ETag", etag)
+	if s.emojiBlobs == nil {
+		writeEmojiImageNotFound(w)
+		return
+	}
+	exists, _, err := s.emojiBlobs.Head(r.Context(), item.StorageKey)
+	if err != nil {
+		writeInternal(w, r, err)
+		return
+	}
+	if !exists {
+		writeEmojiImageNotFound(w)
+		return
+	}
 	if r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	http.ServeContent(w, r, item.StorageKey, info.ModTime(), file)
+	location, err := s.emojiBlobs.PresignGet(r.Context(), item.StorageKey, item.StorageKey)
+	if err != nil {
+		writeInternal(w, r, err)
+		return
+	}
+	http.Redirect(w, r, location, http.StatusFound)
 }
 
 func (s *Server) AddReaction(w http.ResponseWriter, r *http.Request, postId api.PostId, emojiId api.EmojiId) {

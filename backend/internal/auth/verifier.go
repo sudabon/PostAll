@@ -2,6 +2,9 @@ package auth
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
@@ -19,20 +22,20 @@ import (
 )
 
 var (
-	ErrUnauthorized = errors.New("unauthorized")
-	ErrUnknownKID   = errors.New("unknown key id")
+	ErrUnauthorized    = errors.New("unauthorized")
+	ErrUnknownKID      = errors.New("unknown key id")
+	ErrJWKSUnavailable = errors.New("jwks unavailable")
 )
 
 const (
+	defaultJWKSTimeout               = 8 * time.Second
 	defaultUnknownKIDTTL             = time.Minute
 	defaultUnknownKIDRefreshCooldown = 5 * time.Second
 	defaultMaxUnknownKIDs            = 256
 )
 
 type Claims struct {
-	Subject  string
-	ClientID string
-	TokenUse string
+	Subject string
 }
 
 type Verifier struct {
@@ -42,7 +45,7 @@ type Verifier struct {
 	client   *http.Client
 
 	mu                    sync.RWMutex
-	keys                  map[string]*rsa.PublicKey
+	keys                  map[string]crypto.PublicKey
 	unknownKIDs           map[string]time.Time
 	lastUnknownKIDRefresh time.Time
 	unknownKIDTTL         time.Duration
@@ -52,34 +55,30 @@ type Verifier struct {
 	refreshGroup          singleflight.Group
 }
 
-func NewVerifier(region, userPoolID, clientID string, client *http.Client) *Verifier {
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
-	}
-	return &Verifier{
-		jwksURL:            fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s/.well-known/jwks.json", region, userPoolID),
-		issuer:             fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", region, userPoolID),
-		audience:           clientID,
-		client:             client,
-		keys:               map[string]*rsa.PublicKey{},
-		unknownKIDs:        map[string]time.Time{},
-		unknownKIDTTL:      defaultUnknownKIDTTL,
-		unknownKIDCooldown: defaultUnknownKIDRefreshCooldown,
-		maxUnknownKIDs:     defaultMaxUnknownKIDs,
-		now:                time.Now,
-	}
+func NewSupabaseVerifier(supabaseURL string, client *http.Client) *Verifier {
+	base := strings.TrimRight(supabaseURL, "/")
+	return NewVerifierFromURL(
+		base+"/auth/v1/.well-known/jwks.json",
+		base+"/auth/v1",
+		"authenticated",
+		client,
+	)
 }
 
 func NewVerifierFromURL(jwksURL, issuer, audience string, client *http.Client) *Verifier {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = &http.Client{Timeout: defaultJWKSTimeout}
+	} else if client.Timeout == 0 {
+		clone := *client
+		clone.Timeout = defaultJWKSTimeout
+		client = &clone
 	}
 	return &Verifier{
 		jwksURL:            jwksURL,
 		issuer:             issuer,
 		audience:           audience,
 		client:             client,
-		keys:               map[string]*rsa.PublicKey{},
+		keys:               map[string]crypto.PublicKey{},
 		unknownKIDs:        map[string]time.Time{},
 		unknownKIDTTL:      defaultUnknownKIDTTL,
 		unknownKIDCooldown: defaultUnknownKIDRefreshCooldown,
@@ -101,6 +100,9 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Claims, error) {
 		return Claims{}, ErrUnauthorized
 	}
 	if err := v.refreshForUnknownKID(ctx, unknown.kid); err != nil {
+		if errors.Is(err, ErrJWKSUnavailable) {
+			return Claims{}, err
+		}
 		return Claims{}, ErrUnauthorized
 	}
 	claims, err = v.parse(raw)
@@ -124,7 +126,7 @@ func (e *unknownKIDError) Unwrap() error {
 
 func (v *Verifier) parse(raw string) (Claims, error) {
 	token, err := jwt.Parse(raw, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+		if t.Method != jwt.SigningMethodES256 && t.Method != jwt.SigningMethodRS256 {
 			return nil, ErrUnauthorized
 		}
 		kid, _ := t.Header["kid"].(string)
@@ -138,7 +140,7 @@ func (v *Verifier) parse(raw string) (Claims, error) {
 			return key, nil
 		}
 		return nil, &unknownKIDError{kid: kid}
-	}, jwt.WithIssuer(v.issuer), jwt.WithExpirationRequired(), jwt.WithIssuedAt())
+	}, jwt.WithIssuer(v.issuer), jwt.WithAudience(v.audience), jwt.WithExpirationRequired(), jwt.WithIssuedAt())
 	if err != nil {
 		var unknown *unknownKIDError
 		if errors.As(err, &unknown) {
@@ -154,27 +156,11 @@ func (v *Verifier) parse(raw string) (Claims, error) {
 	if sub == "" {
 		return Claims{}, ErrUnauthorized
 	}
-	tokenUse, _ := mapClaims["token_use"].(string)
-	switch tokenUse {
-	case "id":
-		aud, _ := mapClaims["aud"].(string)
-		if aud == "" {
-			if list, ok := mapClaims["aud"].([]any); ok && len(list) > 0 {
-				aud, _ = list[0].(string)
-			}
-		}
-		if aud != v.audience {
-			return Claims{}, ErrUnauthorized
-		}
-	case "access":
-		cid, _ := mapClaims["client_id"].(string)
-		if cid != v.audience {
-			return Claims{}, ErrUnauthorized
-		}
-	default:
+	role, _ := mapClaims["role"].(string)
+	if role != "authenticated" {
 		return Claims{}, ErrUnauthorized
 	}
-	return Claims{Subject: sub, ClientID: v.audience, TokenUse: tokenUse}, nil
+	return Claims{Subject: sub}, nil
 }
 
 func (v *Verifier) refreshForUnknownKID(ctx context.Context, kid string) error {
@@ -204,7 +190,7 @@ func (v *Verifier) refreshForUnknownKID(ctx context.Context, kid string) error {
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("%w: %v", ErrJWKSUnavailable, ctx.Err())
 	case outcome := <-result:
 		return outcome.Err
 	}
@@ -263,8 +249,12 @@ type jwksDoc struct {
 type jwk struct {
 	Kid string `json:"kid"`
 	Kty string `json:"kty"`
+	Crv string `json:"crv"`
+	X   string `json:"x"`
+	Y   string `json:"y"`
 	N   string `json:"n"`
 	E   string `json:"e"`
+	Alg string `json:"alg"`
 }
 
 func (v *Verifier) refresh(ctx context.Context) error {
@@ -274,7 +264,7 @@ func (v *Verifier) refresh(ctx context.Context) error {
 	}
 	resp, err := v.client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrJWKSUnavailable, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -288,16 +278,25 @@ func (v *Verifier) refresh(ctx context.Context) error {
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return err
 	}
-	next := make(map[string]*rsa.PublicKey, len(doc.Keys))
+	next := make(map[string]crypto.PublicKey, len(doc.Keys))
 	for _, k := range doc.Keys {
-		if k.Kty != "RSA" || k.Kid == "" {
+		if k.Kid == "" {
 			continue
 		}
-		pub, err := rsaPublicKey(k.N, k.E)
-		if err != nil {
-			continue
+		switch k.Kty {
+		case "EC":
+			pub, err := ecdsaPublicKey(k.X, k.Y, k.Crv)
+			if err != nil {
+				continue
+			}
+			next[k.Kid] = pub
+		case "RSA":
+			pub, err := rsaPublicKey(k.N, k.E)
+			if err != nil {
+				continue
+			}
+			next[k.Kid] = pub
 		}
-		next[k.Kid] = pub
 	}
 	if len(next) == 0 {
 		return errors.New("empty jwks")
@@ -320,15 +319,36 @@ func rsaPublicKey(nB64, eB64 string) (*rsa.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	n := new(big.Int).SetBytes(nb)
-	e := 0
+	var eInt int
 	for _, b := range eb {
-		e = e<<8 + int(b)
+		eInt = eInt<<8 | int(b)
 	}
-	if e == 0 {
-		return nil, errors.New("invalid exponent")
+	if eInt == 0 {
+		return nil, errors.New("invalid rsa exponent")
 	}
-	return &rsa.PublicKey{N: n, E: e}, nil
+	return &rsa.PublicKey{
+		N: new(big.Int).SetBytes(nb),
+		E: eInt,
+	}, nil
+}
+
+func ecdsaPublicKey(xB64, yB64, crv string) (*ecdsa.PublicKey, error) {
+	if crv != "" && crv != "P-256" {
+		return nil, fmt.Errorf("unsupported curve %s", crv)
+	}
+	xb, err := base64.RawURLEncoding.DecodeString(xB64)
+	if err != nil {
+		return nil, err
+	}
+	yb, err := base64.RawURLEncoding.DecodeString(yB64)
+	if err != nil {
+		return nil, err
+	}
+	return &ecdsa.PublicKey{
+		Curve: elliptic.P256(),
+		X:     new(big.Int).SetBytes(xb),
+		Y:     new(big.Int).SetBytes(yb),
+	}, nil
 }
 
 func BearerToken(header string) string {

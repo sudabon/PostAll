@@ -30,6 +30,8 @@ func TestEmojiSyncCommandRunsWithoutStartingHTTPServer(t *testing.T) {
 		"DATABASE_URL="+databaseURL,
 		"EMOJI_DIR="+dir,
 		"LISTEN_ADDR=bad-address",
+		// バケット未設定は既定でエラー。DB のみ同期する意図は明示フラグで示す。
+		"EMOJI_SKIP_STORAGE=1",
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -50,5 +52,30 @@ func TestEmojiSyncCommandRunsWithoutStartingHTTPServer(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("emoji count = %d, want 1", count)
+	}
+}
+
+func TestEmojiSyncFailsWhenStorageBucketIsMissing(t *testing.T) {
+	databaseURL := testutil.PostgresURL(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ok.png"), []byte("png"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "run", ".", "emoji-sync")
+	cmd.Env = append(os.Environ(),
+		"DATABASE_URL="+databaseURL,
+		"EMOJI_DIR="+dir,
+		"EMOJI_S3_BUCKET=",
+		"EMOJI_SKIP_STORAGE=",
+	)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("emoji-sync succeeded without EMOJI_S3_BUCKET: %s", output)
+	}
+	if !strings.Contains(string(output), "EMOJI_S3_BUCKET is required") {
+		t.Fatalf("output = %s", output)
 	}
 }

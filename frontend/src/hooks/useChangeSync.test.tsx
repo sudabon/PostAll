@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChangeEvent } from '@/api/client'
@@ -7,9 +7,14 @@ import { useUi } from '@/state/ui'
 import { useChangeSync } from './useChangeSync'
 
 const mocks = vi.hoisted(() => ({
-  streamEvents: vi.fn(),
   listEvents: vi.fn(),
   getHealth: vi.fn(),
+  onSignal: null as null | (() => void),
+  onStatus: null as null | ((subscribed: boolean) => void),
+  autoSubscribe: true,
+  subscribeCalls: 0,
+  getAccessToken: vi.fn(),
+  platform: { kind: 'fake' },
 }))
 
 vi.mock('@/auth/AuthProvider', () => ({
@@ -19,29 +24,57 @@ vi.mock('@/auth/AuthProvider', () => ({
   }),
 }))
 
+vi.mock('@/auth/session', () => ({
+  accessTokenForRequest: mocks.getAccessToken,
+}))
+
+vi.mock('@/platform', () => ({
+  usePlatform: () => mocks.platform,
+}))
+
+vi.mock('@/lib/realtime', () => ({
+  subscribePostallEvents: (input: {
+    getAccessToken?: () => Promise<string | null>
+    onSignal: () => void
+    onStatus: (subscribed: boolean) => void
+  }) => {
+    mocks.subscribeCalls += 1
+    mocks.onSignal = input.onSignal
+    mocks.onStatus = input.onStatus
+    if (input.getAccessToken) void input.getAccessToken()
+    if (mocks.autoSubscribe) queueMicrotask(() => input.onStatus(true))
+    return () => {}
+  },
+}))
+
 beforeEach(() => {
-  mocks.streamEvents.mockReset()
   mocks.listEvents.mockReset()
   mocks.getHealth.mockReset()
+  mocks.onSignal = null
+  mocks.onStatus = null
+  mocks.autoSubscribe = true
+  mocks.subscribeCalls = 0
+  mocks.getAccessToken.mockReset()
+  mocks.getAccessToken.mockResolvedValue('access-token')
+  mocks.getHealth.mockResolvedValue({ status: 'ok', database: 'ok' })
+  mocks.listEvents.mockResolvedValue({ events: [], nextAfter: '0', hasMore: false })
   useUi.getState().setConnectionState('connecting')
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
 describe('useChangeSync', () => {
-  it('reloads all displayed query families after the initial sync watermark', async () => {
-    const sync = event({ id: '12', eventType: 'post.updated' })
-    mocks.streamEvents.mockResolvedValue(pendingSseStream([
-      { id: sync.id, event: 'postall.sync', data: sync },
-    ]))
+  it('reloads all displayed query families after realtime subscribe', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
 
     const { unmount } = renderHook(() => useChangeSync(true), { wrapper: wrapper(queryClient) })
 
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3))
+    expect(mocks.listEvents).toHaveBeenCalledWith('latest', 200)
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['channels'] })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts'] })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['thread'] })
@@ -63,14 +96,25 @@ describe('useChangeSync', () => {
         postId: '55555555-5555-5555-5555-555555555555',
       }),
     ]
-    mocks.streamEvents.mockResolvedValue(pendingEventStream(frames))
+    // 初回の回収は履歴の読み飛ばし（全 invalidate 一回）なので、細粒度の
+    // invalidate を検証するには 2 回目以降のシグナルを起こす必要がある。
+    mocks.listEvents.mockResolvedValue({ events: [], nextAfter: '4', hasMore: false })
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
 
     const { unmount } = renderHook(() => useChangeSync(true), { wrapper: wrapper(queryClient) })
 
     await waitFor(() => expect(useUi.getState().connectionState).toBe('live'))
-    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(5))
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3))
+    invalidate.mockClear()
+
+    mocks.listEvents.mockResolvedValue({ events: frames, nextAfter: '7', hasMore: false })
+    await act(async () => {
+      mocks.onSignal?.()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalled())
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['channels'] })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts', channelId] })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['thread', rootId] })
@@ -79,8 +123,7 @@ describe('useChangeSync', () => {
     unmount()
   })
 
-  it('marks mutations unavailable when both the stream and health check fail', async () => {
-    mocks.streamEvents.mockRejectedValue(new TypeError('network down'))
+  it('marks mutations unavailable when both the notification path and health check fail', async () => {
     mocks.getHealth.mockRejectedValue(new TypeError('network down'))
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
@@ -91,12 +134,9 @@ describe('useChangeSync', () => {
     unmount()
   })
 
-  it('recovers missed changes and reconnects when the browser comes online', async () => {
+  it('recovers missed changes when the browser comes online', async () => {
     let online = true
     vi.spyOn(navigator, 'onLine', 'get').mockImplementation(() => online)
-    mocks.streamEvents.mockImplementation(async () => pendingEventStream([]))
-    mocks.getHealth.mockResolvedValue({ status: 'ok', database: 'ok' })
-    mocks.listEvents.mockResolvedValue({ events: [], nextAfter: '0', hasMore: false })
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
     const { unmount } = renderHook(() => useChangeSync(true), { wrapper: wrapper(queryClient) })
@@ -108,9 +148,61 @@ describe('useChangeSync', () => {
     online = true
     window.dispatchEvent(new Event('online'))
 
-    await waitFor(() => expect(mocks.listEvents).toHaveBeenCalledWith('0', 200), { timeout: 2_500 })
-    await waitFor(() => expect(mocks.streamEvents).toHaveBeenCalledTimes(2), { timeout: 2_500 })
+    await waitFor(() => expect(mocks.listEvents).toHaveBeenCalledWith('latest', 200), { timeout: 2_500 })
     expect(useUi.getState().connectionState).toBe('live')
+    unmount()
+  })
+
+  it('fully reloads and advances to the watermark when the event cursor expired', async () => {
+    mocks.listEvents.mockResolvedValue({ events: [], nextAfter: '4', hasMore: false })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+
+    const { unmount } = renderHook(() => useChangeSync(true), { wrapper: wrapper(queryClient) })
+    await waitFor(() => expect(mocks.listEvents).toHaveBeenCalledWith('latest', 200))
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3))
+    invalidate.mockClear()
+
+    mocks.listEvents.mockResolvedValue({
+      events: [],
+      nextAfter: '20',
+      hasMore: false,
+      resetRequired: true,
+    })
+    await act(async () => {
+      mocks.onSignal?.()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3))
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['channels'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['thread'] })
+
+    mocks.listEvents.mockClear()
+    mocks.listEvents.mockResolvedValue({ events: [], nextAfter: '20', hasMore: false })
+    await act(async () => {
+      mocks.onSignal?.()
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(mocks.listEvents).toHaveBeenCalledWith('20', 200))
+    unmount()
+  })
+
+  it('polls while degraded and reconnects with a fresh token after backoff', async () => {
+    vi.useFakeTimers()
+    mocks.autoSubscribe = false
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+    const { unmount } = renderHook(() => useChangeSync(true), { wrapper: wrapper(queryClient) })
+    expect(mocks.subscribeCalls).toBe(1)
+
+    act(() => mocks.onStatus?.(false))
+    expect(useUi.getState().connectionState).toBe('degraded')
+    await act(() => vi.advanceTimersByTimeAsync(1_000))
+
+    expect(mocks.subscribeCalls).toBe(2)
+    expect(mocks.getAccessToken).toHaveBeenCalledTimes(2)
     unmount()
   })
 })
@@ -120,30 +212,6 @@ function event(partial: Partial<ChangeEvent> & Pick<ChangeEvent, 'id' | 'eventTy
     createdAt: '2026-08-23T00:00:00Z',
     ...partial,
   }
-}
-
-function pendingEventStream(events: ChangeEvent[]): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder()
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const item of events) {
-        controller.enqueue(encoder.encode(`id: ${item.id}\nevent: ${item.eventType}\ndata: ${JSON.stringify(item)}\n\n`))
-      }
-    },
-  })
-}
-
-function pendingSseStream(messages: { id: string; event: string; data: ChangeEvent }[]): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder()
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const message of messages) {
-        controller.enqueue(encoder.encode(
-          `id: ${message.id}\nevent: ${message.event}\ndata: ${JSON.stringify(message.data)}\n\n`,
-        ))
-      }
-    },
-  })
 }
 
 function wrapper(client: QueryClient) {

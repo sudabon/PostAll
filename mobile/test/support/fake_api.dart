@@ -10,7 +10,7 @@ import 'package:postall/api/postall_api.dart';
 ///
 /// 実装は本物と同じ観測可能な振る舞い（昇順・keyset・論理削除の除外・
 /// 同一階層での名前の一意性）だけを再現する。
-class FakeApi implements PostAllApi {
+class FakeApi implements PostAllApi, RealtimeStatusSource {
   FakeApi({
     List<Channel>? channels,
     List<Post>? posts,
@@ -25,14 +25,26 @@ class FakeApi implements PostAllApi {
   final List<Emoji> emojis;
   bool healthy;
 
-  /// SSE が繋がっているか。false の間は購読が即座に終わり、クライアントは
+  /// Realtime が繋がっているか。false の間は合図を出さず、クライアントは
   /// `listEvents` による差分取得へ退避する（iOS のバックグラウンドを模す）。
-  bool streamConnected = true;
+  bool _streamConnected = true;
 
-  /// 発行したイベント。SSE の購読者へ配り、`listEvents` でも返す。
-  final _events = StreamController<ChangeEvent>.broadcast();
+  bool get streamConnected => _streamConnected;
+
+  set streamConnected(bool connected) {
+    if (_streamConnected == connected) return;
+    _streamConnected = connected;
+    if (!_realtimeStatuses.isClosed) {
+      _realtimeStatuses.add(connected);
+    }
+  }
+
+  /// 発行したイベント。購読者へ合図を配り、`listEvents` でも返す。
+  final _signals = StreamController<void>.broadcast();
+  final _realtimeStatuses = StreamController<bool>.broadcast(sync: true);
   final _log = <ChangeEvent>[];
   var _nextEventId = 0;
+  bool _resetRequiredOnNextList = false;
 
   /// 呼び出しの記録。テストが「どう呼ばれたか」を確認するために使う。
   final calls = <String>[];
@@ -44,7 +56,10 @@ class FakeApi implements PostAllApi {
   String _id() =>
       '00000000-0000-4000-8000-${(_nextId++).toString().padLeft(12, '0')}';
 
-  void dispose() => _events.close();
+  void dispose() {
+    _signals.close();
+    _realtimeStatuses.close();
+  }
 
   @override
   Future<Health> getHealth() async {
@@ -368,6 +383,23 @@ class FakeApi implements PostAllApi {
   }) async {
     calls.add('listEvents:after=$after');
     if (!healthy) throw NetworkException('接続できません');
+    final latest = _log.isEmpty ? '0' : _log.last.id;
+    if (after == 'latest') {
+      return ChangeEventPage(
+        events: const [],
+        nextAfter: latest,
+        hasMore: false,
+      );
+    }
+    if (_resetRequiredOnNextList) {
+      _resetRequiredOnNextList = false;
+      return ChangeEventPage(
+        events: const [],
+        nextAfter: latest,
+        hasMore: false,
+        resetRequired: true,
+      );
+    }
     final since = BigInt.parse(after);
     final pending = _log
         .where((e) => BigInt.parse(e.id) > since)
@@ -381,13 +413,33 @@ class FakeApi implements PostAllApi {
   }
 
   @override
-  Stream<ChangeEvent> streamEvents({String? lastEventId}) {
-    calls.add('streamEvents:last=$lastEventId');
-    if (!streamConnected) return const Stream<ChangeEvent>.empty();
-    return _events.stream;
+  Stream<bool> watchRealtimeStatus() => Stream<bool>.multi((controller) {
+    controller.add(streamConnected);
+    final subscription = _realtimeStatuses.stream.listen(
+      controller.add,
+      onError: controller.addError,
+      onDone: controller.close,
+    );
+    controller.onCancel = subscription.cancel;
+  });
+
+  @override
+  Stream<void> watchChangeSignals() {
+    calls.add('watchChangeSignals');
+    return _signals.stream;
   }
 
-  /// サーバ発の変更を記録し、購読中のクライアントへ配る。
+  /// Realtime ではなくフォールバックのポーリングから届く合図を再現する。
+  void emitPollingSignal() {
+    if (!_signals.isClosed) _signals.add(null);
+  }
+
+  /// 次の差分取得で保持期限切れを返す。
+  void expireEventCursor() {
+    _resetRequiredOnNextList = true;
+  }
+
+  /// サーバ発の変更を記録し、購読中のクライアントへ合図を送る。
   ///
   /// 切断中に起きた変更も [listEvents] から取り出せるよう、常に記録する。
   ChangeEvent emit(
@@ -405,7 +457,7 @@ class FakeApi implements PostAllApi {
       createdAt: DateTime.now(),
     );
     _log.add(event);
-    _events.add(event);
+    if (streamConnected) _signals.add(null);
     return event;
   }
 

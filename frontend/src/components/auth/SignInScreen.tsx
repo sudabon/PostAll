@@ -6,7 +6,7 @@ import { useUi } from '@/state/ui'
 export function SignInScreen() {
   const { signIn } = useAuth()
   const settings = useSettings()
-  const missing = !settings.cognitoDomain || !settings.cognitoClientId
+  const missing = !settings.supabaseUrl || !settings.supabasePublishableKey
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background p-8 text-foreground">
@@ -14,7 +14,7 @@ export function SignInScreen() {
       <p className="text-muted-foreground">サインインしてメモを開きます</p>
       {missing ? (
         <p className="max-w-md text-center text-sm text-destructive">
-          Cognito のドメインとクライアント ID を設定してください。
+          Supabase のプロジェクト URL と publishable key を設定してください。
         </p>
       ) : null}
       <div className="flex gap-3">

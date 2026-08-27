@@ -7,34 +7,38 @@ import 'package:shared_preferences/shared_preferences.dart';
 class AppSettings {
   const AppSettings({
     required this.apiBaseUrl,
-    required this.cognitoDomain,
-    required this.cognitoClientId,
+    required this.supabaseUrl,
+    required this.supabasePublishableKey,
   });
 
   static const defaults = AppSettings(
     apiBaseUrl: String.fromEnvironment('POSTALL_API_BASE_URL', defaultValue: 'https://memo.sudabon.com'),
-    cognitoDomain: String.fromEnvironment('POSTALL_COGNITO_DOMAIN'),
-    cognitoClientId: String.fromEnvironment('POSTALL_COGNITO_CLIENT_ID'),
+    supabaseUrl: String.fromEnvironment('POSTALL_SUPABASE_URL'),
+    supabasePublishableKey: String.fromEnvironment('POSTALL_SUPABASE_PUBLISHABLE_KEY'),
   );
 
   final String apiBaseUrl;
-  final String cognitoDomain;
-  final String cognitoClientId;
+  final String supabaseUrl;
+  final String supabasePublishableKey;
 
-  /// Hosted UI へ遷移できるだけの設定が揃っているか（design.md D20）。
-  bool get canSignIn => cognitoDomain.isNotEmpty && cognitoClientId.isNotEmpty;
+  /// 認可画面へ遷移できるだけの設定が揃っているか（design.md D20）。
+  bool get canSignIn => supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty;
 
-  AppSettings copyWith({String? apiBaseUrl, String? cognitoDomain, String? cognitoClientId}) =>
+  AppSettings copyWith({
+    String? apiBaseUrl,
+    String? supabaseUrl,
+    String? supabasePublishableKey,
+  }) =>
       AppSettings(
         apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
-        cognitoDomain: cognitoDomain ?? this.cognitoDomain,
-        cognitoClientId: cognitoClientId ?? this.cognitoClientId,
+        supabaseUrl: supabaseUrl ?? this.supabaseUrl,
+        supabasePublishableKey: supabasePublishableKey ?? this.supabasePublishableKey,
       );
 }
 
 const _apiBaseUrlKey = 'settings.apiBaseUrl';
-const _cognitoDomainKey = 'settings.cognitoDomain';
-const _cognitoClientIdKey = 'settings.cognitoClientId';
+const _supabaseUrlKey = 'settings.supabaseUrl';
+const _supabasePublishableKeyKey = 'settings.supabasePublishableKey';
 
 class SettingsNotifier extends Notifier<AppSettings> {
   @override
@@ -42,22 +46,27 @@ class SettingsNotifier extends Notifier<AppSettings> {
     final prefs = ref.watch(sharedPreferencesProvider);
     return AppSettings(
       apiBaseUrl: prefs.getString(_apiBaseUrlKey) ?? AppSettings.defaults.apiBaseUrl,
-      cognitoDomain: prefs.getString(_cognitoDomainKey) ?? AppSettings.defaults.cognitoDomain,
-      cognitoClientId: prefs.getString(_cognitoClientIdKey) ?? AppSettings.defaults.cognitoClientId,
+      supabaseUrl: prefs.getString(_supabaseUrlKey) ?? AppSettings.defaults.supabaseUrl,
+      supabasePublishableKey:
+          prefs.getString(_supabasePublishableKeyKey) ?? AppSettings.defaults.supabasePublishableKey,
     );
   }
 
-  Future<void> update({String? apiBaseUrl, String? cognitoDomain, String? cognitoClientId}) async {
+  Future<void> update({
+    String? apiBaseUrl,
+    String? supabaseUrl,
+    String? supabasePublishableKey,
+  }) async {
     final next = state.copyWith(
       apiBaseUrl: apiBaseUrl,
-      cognitoDomain: cognitoDomain,
-      cognitoClientId: cognitoClientId,
+      supabaseUrl: supabaseUrl,
+      supabasePublishableKey: supabasePublishableKey,
     );
     state = next;
     final prefs = ref.read(sharedPreferencesProvider);
     await prefs.setString(_apiBaseUrlKey, next.apiBaseUrl);
-    await prefs.setString(_cognitoDomainKey, next.cognitoDomain);
-    await prefs.setString(_cognitoClientIdKey, next.cognitoClientId);
+    await prefs.setString(_supabaseUrlKey, next.supabaseUrl);
+    await prefs.setString(_supabasePublishableKeyKey, next.supabasePublishableKey);
   }
 }
 

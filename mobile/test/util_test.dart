@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:postall/api/sse.dart';
 import 'package:postall/auth/pkce.dart';
 import 'package:postall/state/timeline.dart';
 import 'package:postall/ui/widgets/mermaid_view.dart';
@@ -105,34 +104,6 @@ void main() {
     });
   });
 
-  group('SSE', () {
-    test('CRLF をまたぐチャンクでも 1 件として組み立てる', () async {
-      final chunks = [
-        utf8.encode('id: 1\r'),
-        utf8.encode('\nevent: post.created\ndata: {"a":1}\n\n'),
-      ];
-
-      final messages = await parseSseStream(
-        Stream.fromIterable(chunks),
-      ).toList();
-
-      expect(messages, hasLength(1));
-      expect(messages.single.id, '1');
-      expect(messages.single.event, 'post.created');
-      expect(messages.single.data, '{"a":1}');
-    });
-
-    test('コメント行を無視し、複数行の data を連結する', () async {
-      final chunks = [utf8.encode(': keep-alive\ndata: a\ndata: b\n\n')];
-
-      final messages = await parseSseStream(
-        Stream.fromIterable(chunks),
-      ).toList();
-
-      expect(messages.single.data, 'a\nb');
-    });
-  });
-
   group('タイムライン', () {
     test('同時刻はポスト ID で安定して並ぶ', () {
       final at = DateTime.utc(2026, 3, 1, 9);
@@ -221,15 +192,23 @@ void main() {
 
     test('authorize URL に PKCE のパラメータを載せる', () {
       final url = authorizeUrl(
-        domain: 'auth.example.invalid',
-        clientId: 'client',
+        supabaseUrl: 'https://auth.example.invalid',
         redirectUri: 'postall://auth/callback',
         challenge: 'challenge',
       );
 
       expect(url.queryParameters['code_challenge_method'], 'S256');
-      expect(url.queryParameters['redirect_uri'], 'postall://auth/callback');
-      expect(url.queryParameters['response_type'], 'code');
+      expect(url.queryParameters['redirect_to'], 'postall://auth/callback');
+      expect(url.queryParameters['provider'], 'github');
+      expect(url.path, '/auth/v1/authorize');
+
+      final explicit = authorizeUrl(
+        supabaseUrl: 'https://auth.example.invalid',
+        redirectUri: 'postall://auth/callback',
+        challenge: 'challenge',
+        provider: 'gitlab',
+      );
+      expect(explicit.queryParameters['provider'], 'gitlab');
     });
 
     test('expires_in から失効時刻を決める', () {

@@ -36,20 +36,20 @@ class AuthController extends AsyncNotifier<AuthState> {
     return AuthState(tokens: tokens);
   }
 
-  CognitoAuth _cognito() {
+  SupabaseAuth _auth() {
     final settings = ref.read(settingsProvider);
-    return ref.read(cognitoFactoryProvider)(settings);
+    return ref.read(supabaseAuthFactoryProvider)(settings);
   }
 
   Future<void> signIn() async {
     final settings = ref.read(settingsProvider);
     if (!settings.canSignIn) {
-      state = AsyncData(_value.copyWith(error: 'Cognito の接続設定が未入力です'));
+      state = AsyncData(_value.copyWith(error: 'Supabase の接続設定が未入力です'));
       return;
     }
     state = AsyncData(_value.copyWith(busy: true, clearError: true));
     try {
-      final tokens = await _cognito().signIn();
+      final tokens = await _auth().signIn();
       await ref.read(tokenStoreProvider).write(tokens);
       state = AsyncData(AuthState(tokens: tokens));
     } on SignInCancelled {
@@ -62,7 +62,9 @@ class AuthController extends AsyncNotifier<AuthState> {
   Future<void> signOut() async {
     final settings = ref.read(settingsProvider);
     state = AsyncData(_value.copyWith(busy: true, clearError: true));
-    if (settings.canSignIn) await _cognito().signOut();
+    if (settings.canSignIn) {
+      await _auth().signOut(accessToken: _value.tokens?.accessToken);
+    }
     await ref.read(tokenStoreProvider).clear();
     state = const AsyncData(AuthState());
   }
@@ -81,8 +83,8 @@ class AuthController extends AsyncNotifier<AuthState> {
       return null;
     }
     try {
-      final refreshed = await _cognito().refresh(refreshToken);
-      // Cognito は refresh_token を返さないことがあるため、手元の値を残す。
+      final refreshed = await _auth().refresh(refreshToken);
+      // GoTrue は refresh_token を返さないことがあるため、手元の値を残す。
       final merged = TokenSet(
         accessToken: refreshed.accessToken,
         idToken: refreshed.idToken ?? current.idToken,
@@ -92,8 +94,12 @@ class AuthController extends AsyncNotifier<AuthState> {
       await ref.read(tokenStoreProvider).write(merged);
       state = AsyncData(_value.copyWith(tokens: merged));
       return merged.accessToken;
+    } on TokenRequestFailure catch (error) {
+      if (error.status == 400 || error.status == 401) {
+        await _forgetTokens();
+      }
+      return null;
     } on Exception {
-      await _forgetTokens();
       return null;
     }
   }
@@ -119,10 +125,10 @@ final authControllerProvider =
 
 final tokenStoreProvider = Provider<TokenStore>((ref) => KeychainTokenStore());
 
-/// テストで Hosted UI を差し替えられるようにする。
-final cognitoFactoryProvider = Provider<CognitoAuth Function(AppSettings)>(
-  (ref) => (settings) => CognitoAuth(
-        domain: settings.cognitoDomain,
-        clientId: settings.cognitoClientId,
+/// テストで認可画面を差し替えられるようにする。
+final supabaseAuthFactoryProvider = Provider<SupabaseAuth Function(AppSettings)>(
+  (ref) => (settings) => SupabaseAuth(
+        supabaseUrl: settings.supabaseUrl,
+        publishableKey: settings.supabasePublishableKey,
       ),
 );

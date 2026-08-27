@@ -48,11 +48,6 @@ mobile/.flutter-plugins
 mobile/.flutter-plugins-dependencies
 mobile/build/
 
-# TLS material (generated)
-infra/certs/*.pem
-# pg_bigm は Dockerfile が upstream から取得する。手元に残った clone は追跡しない。
-infra/postgres/pg_bigm/
-
 # OS
 .DS_Store
 

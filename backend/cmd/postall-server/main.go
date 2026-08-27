@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sudabon/PostAll/backend/internal/blob"
 	"github.com/sudabon/PostAll/backend/internal/emoji"
 	"github.com/sudabon/PostAll/backend/internal/httpapi"
 	"github.com/sudabon/PostAll/backend/internal/migrate"
@@ -17,16 +21,23 @@ import (
 )
 
 func main() {
-	addr := env("LISTEN_ADDR", ":8080")
 	databaseURL := os.Getenv("DATABASE_URL")
-
-	if databaseURL != "" {
-		if err := migrate.Up(databaseURL); err != nil {
-			log.Fatalf("migrations: %v", err)
-		}
-	}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "migrate":
+			if databaseURL == "" {
+				log.Fatal("migrate: DATABASE_URL is required")
+			}
+			if err := migrate.Up(databaseURL); err != nil {
+				log.Fatalf("migrations: %v", err)
+			}
+			return
+		case "migrate-check":
+			if err := requireCurrentMigrations(databaseURL); err != nil {
+				log.Fatalf("migrate-check: %v", err)
+			}
+			log.Print("migrate-check: database schema is current")
+			return
 		case "emoji-sync":
 			if databaseURL == "" {
 				log.Fatal("emoji-sync: DATABASE_URL is required")
@@ -40,18 +51,22 @@ func main() {
 		}
 	}
 
+	addr := listenAddr()
 	handler, err := httpapi.New(httpapi.Config{
-		DatabaseURL:       databaseURL,
-		AWSRegion:         os.Getenv("AWS_REGION"),
-		CognitoUserPoolID: os.Getenv("AWS_COGNITO_USER_POOL_ID"),
-		CognitoClientID:   os.Getenv("AWS_COGNITO_CLIENT_ID"),
-		S3Bucket:          os.Getenv("S3_BUCKET"),
-		EmojiDir:          env("EMOJI_DIR", "../emoji"),
-		ReaperInterval:    15 * time.Minute,
+		DatabaseURL: databaseURL,
+		SupabaseURL: os.Getenv("SUPABASE_URL"),
+		S3Endpoint:  os.Getenv("S3_ENDPOINT"),
+		S3Region:    env("S3_REGION", "auto"),
+		S3Bucket:    os.Getenv("S3_BUCKET"),
+		S3AccessKey: firstEnv("S3_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID"),
+		S3SecretKey: firstEnv("S3_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"),
+		EmojiBucket: os.Getenv("EMOJI_S3_BUCKET"),
+		CronSecret:  os.Getenv("CRON_SECRET"),
 	})
 	if err != nil {
 		log.Fatalf("init server: %v", err)
 	}
+	defer handler.Close()
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -77,14 +92,54 @@ func main() {
 	}
 }
 
+func requireCurrentMigrations(databaseURL string) error {
+	if databaseURL == "" {
+		return fmt.Errorf("DATABASE_URL is required")
+	}
+	pending, err := migrate.Pending(databaseURL)
+	if err != nil {
+		return err
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("pending database migrations: %s; run the migrate workflow first", strings.Join(pending, ", "))
+	}
+	return nil
+}
+
 func runEmojiSync(ctx context.Context, databaseURL, dir string) error {
-	pool, err := pgxpool.New(ctx, databaseURL)
+	poolCfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return err
+	}
+	poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
-	result, err := emoji.NewService(store.New(pool)).Sync(ctx, dir)
+	bucket := os.Getenv("EMOJI_S3_BUCKET")
+	skipStorage := os.Getenv("EMOJI_SKIP_STORAGE") == "1"
+	if bucket == "" && !skipStorage {
+		return fmt.Errorf("emoji-sync: EMOJI_S3_BUCKET is required")
+	}
+
+	var objects blob.Store
+	if bucket != "" {
+		s3store, err := blob.NewS3(ctx, blob.S3Config{
+			Endpoint:  os.Getenv("S3_ENDPOINT"),
+			Region:    env("S3_REGION", "auto"),
+			Bucket:    bucket,
+			AccessKey: firstEnv("S3_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID"),
+			SecretKey: firstEnv("S3_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"),
+		})
+		if err != nil {
+			return err
+		}
+		objects = s3store
+	}
+
+	result, err := emoji.NewService(store.New(pool)).Sync(ctx, dir, objects)
 	if err != nil {
 		return err
 	}
@@ -106,4 +161,13 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+	}
+	return ""
 }

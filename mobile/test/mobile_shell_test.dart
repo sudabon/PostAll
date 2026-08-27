@@ -408,11 +408,14 @@ void main() {
         child: const HomeShell(),
       );
       container.read(openThreadProvider.notifier).open(root.id);
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump();
+      expect(api.calls, contains('listEvents:after=latest'));
       api.calls.clear();
 
       api.emit('post.updated');
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump();
 
       expect(api.calls, contains('listChannels'));
       expect(
@@ -430,7 +433,7 @@ void main() {
               channels: [channel(1, name: 'general')],
               posts: [post(10, channelId: testId(1), body: '最初')],
             )
-            // バックグラウンドでは SSE が切れている（design.md D13 のトレードオフ）。
+            // バックグラウンドでは Realtime が切れている（design.md D13 のトレードオフ）。
             ..streamConnected = false;
       addTearDown(api.dispose);
 
@@ -442,14 +445,16 @@ void main() {
         child: const HomeShell(),
       );
 
-      // 見ていない間にサーバ側でポストが増えた。SSE が切れているので届かない。
+      // 見ていない間にサーバ側でポストが増えた。Realtime が切れているので届かない。
       await api.createPost(testId(1), '不在中の投稿');
       await tester.pump();
       expect(find.text('不在中の投稿'), findsNothing);
 
       // 復帰で差分をまとめて取り直す。
       await container.read(changeSyncProvider)!.resume();
-      await tester.pumpAndSettle();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump();
+      }
 
       expect(api.calls.where((c) => c.startsWith('listEvents')), isNotEmpty);
       expect(find.text('不在中の投稿'), findsOneWidget);
@@ -457,9 +462,61 @@ void main() {
       // 再接続待ちのタイマーを残したままテストを終えない。
       container.read(changeSyncProvider)!.dispose();
     });
+
+    testWidgets('Scenario: 変更履歴の保持期限を超えた復帰で全体を取り直す', (tester) async {
+      final api = FakeApi(
+        channels: [channel(1, name: 'general')],
+        posts: [post(10, channelId: testId(1), body: '最初')],
+      )..streamConnected = false;
+      addTearDown(api.dispose);
+
+      final container = await pumpApp(
+        tester,
+        api: api,
+        size: _narrow,
+        prefs: {'channels.selected': testId(1)},
+        child: const HomeShell(),
+      );
+
+      await api.createPost(testId(1), '保持期限後の投稿');
+      api.expireEventCursor();
+      await container.read(changeSyncProvider)!.resume();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump();
+      }
+
+      expect(find.text('保持期限後の投稿'), findsOneWidget);
+      expect(container.read(changeSyncProvider)!.lastEventId, '1');
+      container.read(changeSyncProvider)!.dispose();
+    });
   });
 
   group('接続状態', () {
+    testWidgets('Realtime 失敗中はポーリング成功後も degraded のまま', (tester) async {
+      final api = FakeApi(
+        channels: [channel(1, name: 'general')],
+        posts: [post(10, channelId: testId(1))],
+      )..streamConnected = false;
+      addTearDown(api.dispose);
+
+      final container = await pumpApp(
+        tester,
+        api: api,
+        size: _narrow,
+        prefs: {'channels.selected': testId(1)},
+        child: const HomeShell(),
+      );
+      expect(container.read(connectionProvider), BackendConnection.degraded);
+
+      api.emitPollingSignal();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump();
+      }
+
+      expect(container.read(connectionProvider), BackendConnection.degraded);
+      container.read(changeSyncProvider)!.dispose();
+    });
+
     testWidgets('接続断中は投稿できない', (tester) async {
       final api = FakeApi(
         channels: [channel(1, name: 'general')],

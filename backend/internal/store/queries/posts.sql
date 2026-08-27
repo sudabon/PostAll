@@ -1,6 +1,6 @@
 -- name: InsertPost :one
 insert into posts (channel_id, thread_root_id, author_id, body)
-values (sqlc.arg('channel_id'), sqlc.narg('thread_root_id'), sqlc.arg('author_id'), sqlc.arg('body'))
+values (sqlc.arg('channel_id'), sqlc.narg('thread_root_id')::uuid, sqlc.arg('author_id'), sqlc.arg('body'))
 returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at;
 
 -- name: GetPost :one

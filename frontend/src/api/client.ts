@@ -145,14 +145,6 @@ export class ApiClient {
     return this.request<ChangeEventPage>(`/v1/events?${query.toString()}`)
   }
 
-  async streamEvents(lastEventId: string | null, signal: AbortSignal) {
-    const headers = new Headers({ Accept: 'text/event-stream' })
-    if (lastEventId) headers.set('Last-Event-ID', lastEventId)
-    const response = await this.fetchResponse('/v1/events/stream', { headers, signal })
-    if (!response.body) throw new Error('イベントストリームの本文がありません')
-    return response.body
-  }
-
   startUpload(input: {
     fileName: string
     contentType: string

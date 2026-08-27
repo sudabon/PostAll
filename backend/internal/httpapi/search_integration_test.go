@@ -109,7 +109,7 @@ func TestSearchPostsFiltersThreadsAndPaginates(t *testing.T) {
 	if err := pool.QueryRow(context.Background(), `
 		select exists (
 			select 1 from pg_indexes
-			where indexname = 'posts_body_bigm' and indexdef like '%lower(body)%'
+			where indexname = 'posts_body_pgroonga' and indexdef like '%pgroonga_text_regexp_ops_v2%'
 		)
 	`).Scan(&indexed); err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func searchTestServer(t *testing.T) (http.Handler, string, string) {
 		_, _ = w.Write(jwks)
 	}))
 	t.Cleanup(jwksServer.Close)
-	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "client-1", jwksServer.Client())
+	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "authenticated", jwksServer.Client())
 	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier})
 	if err != nil {
 		t.Fatal(err)

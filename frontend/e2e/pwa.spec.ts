@@ -22,26 +22,39 @@ test.describe('pwa', () => {
     expect(body).toMatch(/cleanupOutdatedCaches/)
   })
 
-  test('keeps the PKCE verifier when browser sign-in returns to the callback', async ({ page, context }) => {
+  test('keeps the PKCE verifier when browser sign-in returns to the callback', async ({ page }) => {
     let tokenBody: string | null = null
     await page.addInitScript(() => {
       localStorage.setItem('postall:settings', JSON.stringify({
         apiBaseUrl: '',
-        cognitoDomain: 'auth.example.test',
-        cognitoClientId: 'pwa-client',
+        supabaseUrl: 'https://auth.example.test',
+        supabasePublishableKey: 'pwa-anon-key',
         theme: 'system',
       }))
     })
-    await page.route('https://auth.example.test/oauth2/authorize**', async (route) => {
+    await page.goto('/')
+    const origin = new URL(page.url()).origin
+    await page.route('https://auth.example.test/auth/v1/authorize**', async (route) => {
       const authorize = new URL(route.request().url())
-      const redirectUri = authorize.searchParams.get('redirect_uri')
-      expect(redirectUri).toBe(`${new URL(page.url()).origin}/auth/callback`)
+      const redirectUri = authorize.searchParams.get('redirect_to')
+      expect(redirectUri).toBe(`${origin}/auth/callback`)
       await route.fulfill({
         status: 302,
         headers: { location: `${redirectUri}?code=authorization-code` },
       })
     })
-    await page.route('https://auth.example.test/oauth2/token', async (route) => {
+    await page.route('https://auth.example.test/auth/v1/token**', async (route) => {
+      if (route.request().method() === 'OPTIONS') {
+        await route.fulfill({
+          status: 204,
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'content-type, apikey',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          },
+        })
+        return
+      }
       tokenBody = route.request().postData()
       await route.fulfill({
         status: 200,
@@ -53,8 +66,12 @@ test.describe('pwa', () => {
     await page.route('**/health', (route) => route.fulfill({ json: { status: 'ok', database: 'ok' } }))
     await page.route('**/v1/**', async (route) => {
       const url = new URL(route.request().url())
-      if (url.pathname === '/v1/events/stream') {
-        await route.fulfill({ contentType: 'text/event-stream', body: ': connected\n\n' })
+      if (!url.pathname.startsWith('/v1/')) {
+        await route.fallback()
+        return
+      }
+      if (url.pathname === '/v1/events') {
+        await route.fulfill({ json: { events: [], nextAfter: '0', hasMore: false } })
         return
       }
       if (url.pathname === '/v1/channels') {
@@ -69,13 +86,12 @@ test.describe('pwa', () => {
     })
 
     await page.goto('/')
+    await expect(page.getByTestId('sign-in-button')).toBeEnabled()
     await page.getByTestId('sign-in-button').click()
-    await expect.poll(() => context.pages().length).toBe(1)
     await expect.poll(() => tokenBody).not.toBeNull()
-    const tokenParams = new URLSearchParams(tokenBody ?? '')
-    expect(tokenParams.get('code')).toBe('authorization-code')
-    expect(tokenParams.get('code_verifier')).toBeTruthy()
-    expect(tokenParams.get('grant_type')).toBe('authorization_code')
+    const tokenJson = JSON.parse(tokenBody ?? '{}') as { auth_code?: string; code_verifier?: string }
+    expect(tokenJson.auth_code).toBe('authorization-code')
+    expect(tokenJson.code_verifier).toBeTruthy()
     await expect(page.getByTestId('sign-in-button')).toHaveCount(0)
     await expect(page.getByTestId('channel-tree')).toBeVisible()
   })

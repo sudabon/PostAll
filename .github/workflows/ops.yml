@@ -1,0 +1,105 @@
+name: ops
+
+concurrency:
+  group: ops-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"
+    - cron: "15 3 * * *"
+
+jobs:
+  reap:
+    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 */6 * * *') || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reap pending attachments (keep-alive)
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          curl --fail-with-body -sS --max-time 120 --retry 2 --retry-connrefused -X POST \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL%/}/internal/attachments/reap"
+
+  prune-events:
+    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 */6 * * *') || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune expired change events
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          curl --fail-with-body -sS --max-time 120 --retry 2 --retry-connrefused -X POST \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL%/}/internal/events/prune"
+
+  db-dump:
+    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '15 3 * * *') || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: supabase/setup-cli@v1
+        with:
+          version: "2.116.0"
+      - name: Dump and encrypt database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DUMP_PASSPHRASE: ${{ secrets.DUMP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          plain="$RUNNER_TEMP/postall.dump.sql"
+          compressed="$RUNNER_TEMP/postall.dump.sql.gz"
+          encrypted="$GITHUB_WORKSPACE/postall.dump.sql.gz.gpg"
+          trap 'rm -f "$plain" "$compressed"' EXIT
+          : "${DUMP_PASSPHRASE:?DUMP_PASSPHRASE secret is required}"
+          supabase db dump \
+            --db-url "$DATABASE_URL" \
+            --data-only \
+            --schema public \
+            --use-copy \
+            --exclude public.goose_db_version \
+            -f "$plain"
+          min_bytes=1024
+          plain_bytes=$(stat -c '%s' "$plain")
+          if (( plain_bytes < min_bytes )); then
+            echo "Plain dump is ${plain_bytes} bytes; minimum is ${min_bytes}." >&2
+            exit 1
+          fi
+          copy_count=$(grep -c '^COPY ' "$plain" || true)
+          if (( copy_count == 0 )); then
+            echo "Plain dump has no COPY statements." >&2
+            exit 1
+          fi
+          gzip -9 -c "$plain" > "$compressed"
+          printf '%s' "$DUMP_PASSPHRASE" | gpg \
+            --batch \
+            --yes \
+            --pinentry-mode loopback \
+            --passphrase-fd 0 \
+            --symmetric \
+            --cipher-algo AES256 \
+            --output "$encrypted" \
+            "$compressed"
+          max_bytes=$((10 * 1024 * 1024))
+          actual_bytes=$(stat -c '%s' "$encrypted")
+          if (( actual_bytes > max_bytes )); then
+            echo "Encrypted dump is ${actual_bytes} bytes; maximum is ${max_bytes}." >&2
+            rm -f "$encrypted"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postall-db-dump-${{ github.run_id }}
+          path: postall.dump.sql.gz.gpg
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

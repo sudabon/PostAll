@@ -3,11 +3,11 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
-	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -33,7 +33,7 @@ func TestAuthenticationAndChannelHierarchy(t *testing.T) {
 	}))
 	t.Cleanup(jwksSrv.Close)
 
-	verifier := auth.NewVerifierFromURL(jwksSrv.URL, "https://issuer.example", "client-1", jwksSrv.Client())
+	verifier := auth.NewVerifierFromURL(jwksSrv.URL, "https://issuer.example", "authenticated", jwksSrv.Client())
 	h, err := httpapi.New(httpapi.Config{DatabaseURL: url, Verifier: verifier})
 	if err != nil {
 		t.Fatal(err)
@@ -57,8 +57,8 @@ func TestAuthenticationAndChannelHierarchy(t *testing.T) {
 	}
 
 	bad := mintClaims(t, key, kid, jwt.MapClaims{
-		"iss": "https://other.example", "sub": "user-sub", "token_use": "access",
-		"client_id": "client-1", "exp": time.Now().Add(time.Hour).Unix(),
+		"iss": "https://other.example", "sub": "user-sub", "aud": "authenticated",
+		"role": "authenticated", "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
 	})
 	req = httptest.NewRequest(http.MethodGet, "/v1/channels", nil)
 	req.Header.Set("Authorization", "Bearer "+bad)
@@ -69,8 +69,8 @@ func TestAuthenticationAndChannelHierarchy(t *testing.T) {
 	}
 
 	expired := mintClaims(t, key, kid, jwt.MapClaims{
-		"iss": "https://issuer.example", "sub": "user-sub", "token_use": "access",
-		"client_id": "client-1", "exp": time.Now().Add(-time.Hour).Unix(),
+		"iss": "https://issuer.example", "sub": "user-sub", "aud": "authenticated",
+		"role": "authenticated", "exp": time.Now().Add(-time.Hour).Unix(), "iat": time.Now().Add(-2 * time.Hour).Unix(),
 	})
 	req = httptest.NewRequest(http.MethodGet, "/v1/channels", nil)
 	req.Header.Set("Authorization", "Bearer "+expired)
@@ -154,11 +154,11 @@ func TestAuthenticationAndChannelHierarchy(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 	var userID uuid.UUID
-	if err := pool.QueryRow(context.Background(), `select id from users where cognito_sub = $1`, "user-sub").Scan(&userID); err != nil {
+	if err := pool.QueryRow(context.Background(), `select id from users where auth_subject = $1`, "user-sub").Scan(&userID); err != nil {
 		t.Fatal(err)
 	}
 	var count int
-	if err := pool.QueryRow(context.Background(), `select count(*) from users where cognito_sub = $1`, "user-sub").Scan(&count); err != nil {
+	if err := pool.QueryRow(context.Background(), `select count(*) from users where auth_subject = $1`, "user-sub").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
@@ -307,39 +307,43 @@ func assertErrorCode(t *testing.T, raw []byte, want string) {
 	}
 }
 
-func testRSA(t *testing.T) (*rsa.PrivateKey, []byte, string) {
+func testRSA(t *testing.T) (*ecdsa.PrivateKey, []byte, string) {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	kid := base64.RawURLEncoding.EncodeToString(key.N.Bytes()[:8])
+	x := key.X.FillBytes(make([]byte, 32))
+	y := key.Y.FillBytes(make([]byte, 32))
+	kid := base64.RawURLEncoding.EncodeToString(x[:8])
 	jwks, _ := json.Marshal(map[string]any{
 		"keys": []map[string]string{{
 			"kid": kid,
-			"kty": "RSA",
-			"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
-			"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+			"kty": "EC",
+			"crv": "P-256",
+			"alg": "ES256",
+			"x":   base64.RawURLEncoding.EncodeToString(x),
+			"y":   base64.RawURLEncoding.EncodeToString(y),
 		}},
 	})
 	return key, jwks, kid
 }
 
-func mint(t *testing.T, key *rsa.PrivateKey, kid, sub string) string {
+func mint(t *testing.T, key *ecdsa.PrivateKey, kid, sub string) string {
 	t.Helper()
 	return mintClaims(t, key, kid, jwt.MapClaims{
-		"iss":       "https://issuer.example",
-		"sub":       sub,
-		"token_use": "access",
-		"client_id": "client-1",
-		"exp":       time.Now().Add(time.Hour).Unix(),
-		"iat":       time.Now().Unix(),
+		"iss":  "https://issuer.example",
+		"sub":  sub,
+		"aud":  "authenticated",
+		"role": "authenticated",
+		"exp":  time.Now().Add(time.Hour).Unix(),
+		"iat":  time.Now().Unix(),
 	})
 }
 
-func mintClaims(t *testing.T, key *rsa.PrivateKey, kid string, claims jwt.MapClaims) string {
+func mintClaims(t *testing.T, key *ecdsa.PrivateKey, kid string, claims jwt.MapClaims) string {
 	t.Helper()
-	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 	tok.Header["kid"] = kid
 	s, err := tok.SignedString(key)
 	if err != nil {

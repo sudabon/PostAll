@@ -10,7 +10,7 @@ select
 from posts p
 join channels c on c.id = p.channel_id
 where p.deleted_at is null
-  and lower(p.body) like likequery(lower(sqlc.arg('search_query')))
+  and p.body ilike sqlc.arg('search_query')::text escape '\'
   and (sqlc.narg('channel_id')::uuid is null or p.channel_id = sqlc.narg('channel_id')::uuid)
   and (sqlc.narg('created_from')::timestamptz is null or p.created_at >= sqlc.narg('created_from')::timestamptz)
   and (sqlc.narg('created_to')::timestamptz is null or p.created_at <= sqlc.narg('created_to')::timestamptz)
@@ -29,7 +29,7 @@ select
 from posts p
 join channels c on c.id = p.channel_id
 where p.deleted_at is null
-  and lower(p.body) like likequery(lower(sqlc.arg('search_query')))
+  and p.body ilike sqlc.arg('search_query')::text escape '\'
   and (sqlc.narg('channel_id')::uuid is null or p.channel_id = sqlc.narg('channel_id')::uuid)
   and (sqlc.narg('created_from')::timestamptz is null or p.created_at >= sqlc.narg('created_from')::timestamptz)
   and (sqlc.narg('created_to')::timestamptz is null or p.created_at <= sqlc.narg('created_to')::timestamptz)

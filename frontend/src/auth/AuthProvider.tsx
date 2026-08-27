@@ -47,9 +47,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const verifier = await platform.getSecret(PKCE_VERIFIER_KEY)
       if (!verifier) return
       const tokens = await exchangeCode({
-        domain: useSettings.getState().cognitoDomain,
-        clientId: useSettings.getState().cognitoClientId,
-        redirectUri,
+        supabaseUrl: useSettings.getState().supabaseUrl,
+        publishableKey: useSettings.getState().supabasePublishableKey,
         code,
         verifier,
       })
@@ -83,10 +82,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async () => {
     const { verifier, challenge } = await generatePkce()
     await platform.setSecret(PKCE_VERIFIER_KEY, verifier)
-    const { cognitoDomain, cognitoClientId } = useSettings.getState()
+    const { supabaseUrl } = useSettings.getState()
     const url = authorizeUrl({
-      domain: cognitoDomain,
-      clientId: cognitoClientId,
+      supabaseUrl,
       redirectUri,
       challenge,
     })

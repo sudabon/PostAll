@@ -15,8 +15,8 @@ function SettingsForm() {
   const { signedIn, signOut } = useAuth()
   const settings = useSettings()
   const [apiBaseUrl, setApiBaseUrl] = useState(settings.apiBaseUrl)
-  const [cognitoDomain, setCognitoDomain] = useState(settings.cognitoDomain)
-  const [cognitoClientId, setCognitoClientId] = useState(settings.cognitoClientId)
+  const [supabaseUrl, setSupabaseUrl] = useState(settings.supabaseUrl)
+  const [supabasePublishableKey, setSupabasePublishableKey] = useState(settings.supabasePublishableKey)
   const [theme, setTheme] = useState<ThemePref>(settings.theme)
 
   return (
@@ -33,20 +33,20 @@ function SettingsForm() {
           />
         </label>
         <label className="mb-3 block text-sm">
-          Cognito ドメイン
+          Supabase プロジェクト URL
           <input
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2"
-            value={cognitoDomain}
-            onChange={(e) => setCognitoDomain(e.target.value)}
-            placeholder="xxx.auth.ap-northeast-1.amazoncognito.com"
+            value={supabaseUrl}
+            onChange={(e) => setSupabaseUrl(e.target.value)}
+            placeholder="https://xxxx.supabase.co"
           />
         </label>
         <label className="mb-3 block text-sm">
-          Cognito クライアント ID
+          Supabase publishable key
           <input
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2"
-            value={cognitoClientId}
-            onChange={(e) => setCognitoClientId(e.target.value)}
+            value={supabasePublishableKey}
+            onChange={(e) => setSupabasePublishableKey(e.target.value)}
           />
         </label>
         <label className="mb-4 block text-sm">
@@ -81,7 +81,7 @@ function SettingsForm() {
           <Button
             type="button"
             onClick={() => {
-              useSettings.getState().update({ apiBaseUrl, cognitoDomain, cognitoClientId, theme })
+              useSettings.getState().update({ apiBaseUrl, supabaseUrl, supabasePublishableKey, theme })
               useUi.getState().setSettingsOpen(false)
             }}
           >

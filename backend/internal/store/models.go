@@ -36,6 +36,11 @@ type ChangeEvent struct {
 	CreatedAt    time.Time
 }
 
+type ChangeEventRetention struct {
+	Singleton     bool
+	PrunedThrough int64
+}
+
 type Channel struct {
 	ID        uuid.UUID
 	ParentID  *uuid.UUID
@@ -73,8 +78,8 @@ type Reaction struct {
 }
 
 type User struct {
-	ID         uuid.UUID
-	CognitoSub string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID          uuid.UUID
+	AuthSubject string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }

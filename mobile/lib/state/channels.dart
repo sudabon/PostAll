@@ -6,7 +6,7 @@ import 'auth.dart';
 import 'providers.dart';
 import 'settings.dart';
 
-/// チャネル階層。SSE の channel.* イベントで再取得する。
+/// チャネル階層。channel.* イベントで再取得する。
 class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
   @override
   Future<List<Channel>> build() async {

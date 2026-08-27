@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/change_events.dart';
 import '../api/generated/models.dart';
+import '../api/postall_api.dart';
 import 'auth.dart';
 import 'channels.dart';
 import 'connection.dart';
@@ -12,87 +13,144 @@ import 'providers.dart';
 import 'thread.dart';
 import 'timeline.dart';
 
-const _firstReconnectDelay = Duration(seconds: 1);
-const _maxReconnectDelay = Duration(seconds: 30);
-
-/// SSE の購読と、切断中に発生した差分の取り込み（design.md D13）。
+/// Realtime の合図と、切断中に発生した差分の取り込み（design.md D13）。
 ///
-/// iOS はバックグラウンドで接続が切れるため、SSE を唯一の同期手段にしない。
+/// iOS はバックグラウンドで接続が切れるため、Realtime を唯一の同期手段にしない。
 /// 復帰時は `GET /v1/events?after=` でまとめて取り直す。
 class ChangeSync {
-  ChangeSync(this._ref) {
-    _lifecycle = AppLifecycleListener(onResume: resume);
-  }
+  ChangeSync(this._ref);
 
   final Ref _ref;
-  late final AppLifecycleListener _lifecycle;
+  AppLifecycleListener? _lifecycle;
 
-  StreamSubscription<ChangeEvent>? _subscription;
+  StreamSubscription<void>? _subscription;
+  StreamSubscription<bool>? _statusSubscription;
   Timer? _reconnectTimer;
-  Duration _reconnectDelay = _firstReconnectDelay;
+  bool? _realtimeSubscribed;
+  int _connectionGeneration = 0;
   String? _lastEventId;
   bool _stopped = false;
   bool _recovering = false;
+  bool _resuming = false;
+  Duration _reconnectDelay = _reconnectDelayInitial;
+
+  static const _reconnectDelayInitial = Duration(seconds: 1);
+  static const _reconnectDelayMax = Duration(seconds: 30);
 
   /// 直近に取り込んだイベント ID。テストと表示のために公開する。
   String? get lastEventId => _lastEventId;
 
   void start() {
     _stopped = false;
+    _lifecycle ??= AppLifecycleListener(
+      onResume: () {
+        if (_stopped) return;
+        unawaited(resume());
+      },
+    );
     _connect();
+    unawaited(_recover());
   }
 
-  /// 購読と再接続タイマーを止める。二重に呼んでも安全。
+  /// 購読とポーリングを止める。二重に呼んでも安全。
   void dispose() {
     if (_stopped) return;
     _stopped = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _connectionGeneration++;
     unawaited(_subscription?.cancel());
     _subscription = null;
-    _lifecycle.dispose();
+    unawaited(_statusSubscription?.cancel());
+    _statusSubscription = null;
+    _lifecycle?.dispose();
+    _lifecycle = null;
   }
 
   /// バックグラウンドから戻ったとき、差分を取り込んでから購読し直す
   /// （mobile-shell spec「復帰時に差分を取得する」）。
   Future<void> resume() async {
-    if (_stopped) return;
-    await _subscription?.cancel();
-    _subscription = null;
-    final recovered = await _recover();
-    if (recovered) _connect();
+    if (_stopped || _resuming) return;
+    _resuming = true;
+    try {
+      await _recover();
+    } finally {
+      _resuming = false;
+    }
   }
 
   void _connect() {
     if (_stopped) return;
+    final generation = ++_connectionGeneration;
     _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    unawaited(_subscription?.cancel());
+    unawaited(_statusSubscription?.cancel());
+    _realtimeSubscribed = null;
     final api = _ref.read(apiProvider);
-    _subscription = api
-        .streamEvents(lastEventId: _lastEventId)
-        .listen(
-          (event) {
-            _ref
-                .read(connectionProvider.notifier)
-                .set(BackendConnection.online);
-            _reconnectDelay = _firstReconnectDelay;
-            _apply(event);
-          },
-          onError: (Object _) => _scheduleReconnect(),
-          onDone: _scheduleReconnect,
-          cancelOnError: true,
-        );
+    final statusSource = api is RealtimeStatusSource
+        ? api as RealtimeStatusSource
+        : null;
+    if (statusSource != null) {
+      _statusSubscription = statusSource.watchRealtimeStatus().listen(
+        (subscribed) {
+          if (_stopped || generation != _connectionGeneration) return;
+          _realtimeSubscribed = subscribed;
+          if (subscribed) {
+            _reconnectDelay = _reconnectDelayInitial;
+          }
+          if (!subscribed &&
+              _ref.read(connectionProvider) == BackendConnection.offline) {
+            return;
+          }
+          _ref
+              .read(connectionProvider.notifier)
+              .set(
+                subscribed
+                    ? BackendConnection.online
+                    : BackendConnection.degraded,
+              );
+        },
+        onError: (Object _) {
+          if (generation == _connectionGeneration) _onDisconnected();
+        },
+      );
+    }
+    _subscription = api.watchChangeSignals().listen(
+      (_) {
+        if (_stopped || generation != _connectionGeneration) return;
+        if (_realtimeSubscribed != false) {
+          _ref.read(connectionProvider.notifier).set(BackendConnection.online);
+        }
+        unawaited(_recover());
+      },
+      onError: (Object _) {
+        if (generation == _connectionGeneration) _onDisconnected();
+      },
+      cancelOnError: true,
+    );
   }
 
-  void _scheduleReconnect() {
+  void _onDisconnected() {
     if (_stopped) return;
+    _connectionGeneration++;
     _subscription = null;
+    unawaited(_statusSubscription?.cancel());
+    _statusSubscription = null;
+    _realtimeSubscribed = false;
     _ref.read(connectionProvider.notifier).set(BackendConnection.degraded);
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(_reconnectDelay, () async {
-      if (await _recover()) _connect();
+    final delay = _reconnectDelay;
+    final nextSeconds = (_reconnectDelay.inSeconds * 2).clamp(
+      _reconnectDelayInitial.inSeconds,
+      _reconnectDelayMax.inSeconds,
+    );
+    _reconnectDelay = Duration(seconds: nextSeconds);
+    _reconnectTimer = Timer(delay, () {
+      if (_stopped) return;
+      unawaited(_recover());
+      _connect();
     });
-    final next = _reconnectDelay * 2;
-    _reconnectDelay = next > _maxReconnectDelay ? _maxReconnectDelay : next;
   }
 
   /// 切断中の差分をまとめて取り込む。API へ届かなければ offline にする。
@@ -101,17 +159,34 @@ class ChangeSync {
     _recovering = true;
     try {
       final api = _ref.read(apiProvider);
-      var cursor = _lastEventId ?? '0';
+      final isInitial = _lastEventId == null;
+      var resetRequired = false;
+      var cursor = _lastEventId ?? 'latest';
       while (!_stopped) {
         final page = await api.listEvents(after: cursor, limit: 200);
-        for (final event in page.events) {
-          _apply(event);
+        if (page.resetRequired ?? false) {
+          resetRequired = true;
+          cursor = page.nextAfter;
+          break;
+        }
+        if (!isInitial) {
+          for (final event in page.events) {
+            _apply(event);
+          }
         }
         cursor = page.nextAfter;
         if (!page.hasMore) break;
       }
       _lastEventId = cursor;
-      _ref.read(connectionProvider.notifier).set(BackendConnection.degraded);
+      if (isInitial || resetRequired) _reloadDisplayedData();
+      _reconnectDelay = _reconnectDelayInitial;
+      _ref
+          .read(connectionProvider.notifier)
+          .set(
+            _realtimeSubscribed == true
+                ? BackendConnection.online
+                : BackendConnection.degraded,
+          );
       return true;
     } on Object {
       _ref.read(connectionProvider.notifier).set(BackendConnection.offline);
@@ -130,17 +205,7 @@ class ChangeSync {
     _lastEventId = event.id;
 
     if (event.isSyncWatermark) {
-      unawaited(_ref.read(channelsProvider.notifier).reload());
-      final selectedChannelId = _ref.read(selectedChannelProvider);
-      if (selectedChannelId != null) {
-        unawaited(
-          _ref.read(timelineProvider(selectedChannelId).notifier).reload(),
-        );
-      }
-      final openThreadId = _ref.read(openThreadProvider);
-      if (openThreadId != null) {
-        unawaited(_ref.read(threadProvider(openThreadId).notifier).reload());
-      }
+      _reloadDisplayedData();
       return;
     }
 
@@ -158,6 +223,20 @@ class ChangeSync {
     final threadRootId = event.threadRootId ?? event.postId;
     if (threadRootId != null && _ref.read(openThreadProvider) == threadRootId) {
       unawaited(_ref.read(threadProvider(threadRootId).notifier).reload());
+    }
+  }
+
+  void _reloadDisplayedData() {
+    unawaited(_ref.read(channelsProvider.notifier).reload());
+    final selectedChannelId = _ref.read(selectedChannelProvider);
+    if (selectedChannelId != null) {
+      unawaited(
+        _ref.read(timelineProvider(selectedChannelId).notifier).reload(),
+      );
+    }
+    final openThreadId = _ref.read(openThreadProvider);
+    if (openThreadId != null) {
+      unawaited(_ref.read(threadProvider(openThreadId).notifier).reload());
     }
   }
 }

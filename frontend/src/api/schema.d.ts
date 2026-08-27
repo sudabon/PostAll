@@ -316,23 +316,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/events/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 変更イベントを Server-Sent Events で購読する */
-        get: operations["streamChangeEvents"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -523,6 +506,8 @@ export interface components {
             events: components["schemas"]["ChangeEvent"][];
             nextAfter: string;
             hasMore: boolean;
+            /** @description 指定カーソルが保持期間外で、表示中データの全再取得が必要か。省略時は false */
+            resetRequired?: boolean;
         };
     };
     responses: {
@@ -1045,6 +1030,7 @@ export interface operations {
     listChangeEvents: {
         parameters: {
             query?: {
+                /** @description 数値 ID、または履歴を再生せず現在位置から開始する `latest` */
                 after?: string;
                 limit?: number;
             };
@@ -1061,30 +1047,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChangeEventPage"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    streamChangeEvents: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description 再送を開始する直前のイベント ID。 */
-                "Last-Event-ID"?: string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description id、event、data フィールドを持つ変更イベントストリーム */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": string;
                 };
             };
             default: components["responses"]["Error"];

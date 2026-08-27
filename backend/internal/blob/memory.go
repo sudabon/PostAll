@@ -2,6 +2,7 @@ package blob
 
 import (
 	"context"
+	"io"
 	"sync"
 )
 
@@ -52,6 +53,15 @@ func (m *Memory) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.objects, key)
+	return nil
+}
+
+func (m *Memory) Put(_ context.Context, key, _ string, body io.Reader, _ int64) error {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	m.PutObject(key, data)
 	return nil
 }
 

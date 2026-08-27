@@ -23,8 +23,10 @@ ChangeEventEventType changeEventType(String wireValue) =>
     );
 
 extension ChangeEventSynchronization on ChangeEvent {
-  /// SSE の `postall.sync` フレームは既存デコーダとの互換性を保つため、
-  /// entity ID を持たない `post.updated` として運ぶ。
+  /// entity ID を持たない `post.updated` は「取りこぼしがあり得るので表示中の
+  /// データを取り直せ」という合図として扱う。SSE 廃止後、バックエンドの
+  /// change_events はこの形を作らないが、初期同期・再接続時の全体リロードを
+  /// 起こす経路として残している。
   bool get isSyncWatermark =>
       eventType.wireValue == 'post.updated' &&
       channelId == null &&

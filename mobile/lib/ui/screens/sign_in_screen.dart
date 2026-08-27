@@ -57,7 +57,7 @@ class SignInScreen extends ConsumerWidget {
                   Padding(
                     padding: const EdgeInsets.only(top: 12),
                     child: Text(
-                      'Cognito の接続設定が未入力です',
+                      'Supabase の接続設定が未入力です',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
@@ -88,14 +88,14 @@ class _SettingsDialog extends ConsumerStatefulWidget {
 class _SettingsDialogState extends ConsumerState<_SettingsDialog> {
   late final AppSettings _initial = ref.read(settingsProvider);
   late final _apiBaseUrl = TextEditingController(text: _initial.apiBaseUrl);
-  late final _domain = TextEditingController(text: _initial.cognitoDomain);
-  late final _clientId = TextEditingController(text: _initial.cognitoClientId);
+  late final _supabaseUrl = TextEditingController(text: _initial.supabaseUrl);
+  late final _publishableKey = TextEditingController(text: _initial.supabasePublishableKey);
 
   @override
   void dispose() {
     _apiBaseUrl.dispose();
-    _domain.dispose();
-    _clientId.dispose();
+    _supabaseUrl.dispose();
+    _publishableKey.dispose();
     super.dispose();
   }
 
@@ -103,8 +103,8 @@ class _SettingsDialogState extends ConsumerState<_SettingsDialog> {
     final navigator = Navigator.of(context);
     await ref.read(settingsProvider.notifier).update(
           apiBaseUrl: _apiBaseUrl.text.trim(),
-          cognitoDomain: _domain.text.trim(),
-          cognitoClientId: _clientId.text.trim(),
+          supabaseUrl: _supabaseUrl.text.trim(),
+          supabasePublishableKey: _publishableKey.text.trim(),
         );
     navigator.pop();
   }
@@ -122,12 +122,13 @@ class _SettingsDialogState extends ConsumerState<_SettingsDialog> {
               decoration: const InputDecoration(labelText: 'API のベース URL'),
             ),
             TextField(
-              controller: _domain,
-              decoration: const InputDecoration(labelText: 'Cognito ドメイン'),
+              controller: _supabaseUrl,
+              decoration: const InputDecoration(labelText: 'Supabase のプロジェクト URL'),
             ),
             TextField(
-              controller: _clientId,
-              decoration: const InputDecoration(labelText: 'Cognito クライアント ID'),
+              controller: _publishableKey,
+              decoration: const InputDecoration(labelText: 'Publishable key'),
+              obscureText: true,
             ),
           ],
         ),

@@ -1,11 +1,11 @@
 package auth
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
-	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -26,15 +26,8 @@ func TestVerifyAccessToken(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "client-1", srv.Client())
-	tok := mint(t, key, kid, jwt.MapClaims{
-		"iss":       "https://issuer.example",
-		"sub":       "user-sub",
-		"token_use": "access",
-		"client_id": "client-1",
-		"exp":       time.Now().Add(time.Hour).Unix(),
-		"iat":       time.Now().Unix(),
-	})
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
+	tok := mint(t, key, kid, validClaims("user-sub"))
 
 	got, err := v.Verify(t.Context(), tok)
 	if err != nil {
@@ -57,13 +50,33 @@ func TestRejectsWrongAudience(t *testing.T) {
 		_, _ = w.Write(jwks)
 	}))
 	t.Cleanup(srv.Close)
-	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "client-1", srv.Client())
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
 	tok := mint(t, key, kid, jwt.MapClaims{
-		"iss":       "https://issuer.example",
-		"sub":       "user-sub",
-		"token_use": "access",
-		"client_id": "other",
-		"exp":       time.Now().Add(time.Hour).Unix(),
+		"iss":  "https://issuer.example",
+		"sub":  "user-sub",
+		"aud":  "other",
+		"role": "authenticated",
+		"exp":  time.Now().Add(time.Hour).Unix(),
+		"iat":  time.Now().Unix(),
+	})
+	if _, err := v.Verify(t.Context(), tok); err == nil {
+		t.Fatal("expected rejection")
+	}
+}
+
+func TestRejectsWrongRole(t *testing.T) {
+	key, jwks, kid := testKey(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(jwks)
+	}))
+	t.Cleanup(srv.Close)
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
+	tok := mint(t, key, kid, jwt.MapClaims{
+		"iss":  "https://issuer.example",
+		"sub":  "user-sub",
+		"aud":  "authenticated",
+		"role": "anon",
+		"exp":  time.Now().Add(time.Hour).Unix(),
 	})
 	if _, err := v.Verify(t.Context(), tok); err == nil {
 		t.Fatal("expected rejection")
@@ -76,13 +89,14 @@ func TestRejectsExpired(t *testing.T) {
 		_, _ = w.Write(jwks)
 	}))
 	t.Cleanup(srv.Close)
-	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "client-1", srv.Client())
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
 	tok := mint(t, key, kid, jwt.MapClaims{
-		"iss":       "https://issuer.example",
-		"sub":       "user-sub",
-		"token_use": "access",
-		"client_id": "client-1",
-		"exp":       time.Now().Add(-time.Hour).Unix(),
+		"iss":  "https://issuer.example",
+		"sub":  "user-sub",
+		"aud":  "authenticated",
+		"role": "authenticated",
+		"exp":  time.Now().Add(-time.Hour).Unix(),
+		"iat":  time.Now().Add(-2 * time.Hour).Unix(),
 	})
 	if _, err := v.Verify(t.Context(), tok); err == nil {
 		t.Fatal("expected rejection")
@@ -102,20 +116,14 @@ func TestRefetchesOnUnknownKID(t *testing.T) {
 		_, _ = w.Write(newJWKS)
 	}))
 	t.Cleanup(srv.Close)
-	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "client-1", srv.Client())
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
 
-	oldTok := mint(t, oldKey, oldKID, jwt.MapClaims{
-		"iss": "https://issuer.example", "sub": "a", "token_use": "access",
-		"client_id": "client-1", "exp": time.Now().Add(time.Hour).Unix(),
-	})
+	oldTok := mint(t, oldKey, oldKID, validClaims("a"))
 	if _, err := v.Verify(t.Context(), oldTok); err != nil {
 		t.Fatal(err)
 	}
 
-	newTok := mint(t, newKey, newKID, jwt.MapClaims{
-		"iss": "https://issuer.example", "sub": "b", "token_use": "id",
-		"aud": "client-1", "exp": time.Now().Add(time.Hour).Unix(),
-	})
+	newTok := mint(t, newKey, newKID, validClaims("b"))
 	got, err := v.Verify(t.Context(), newTok)
 	if err != nil {
 		t.Fatal(err)
@@ -140,11 +148,8 @@ func TestConcurrentUnknownKIDRefreshesJWKSOnce(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "client-1", srv.Client())
-	tok := mint(t, unknownKey, "unknown-kid", jwt.MapClaims{
-		"iss": "https://issuer.example", "sub": "attacker", "token_use": "access",
-		"client_id": "client-1", "exp": time.Now().Add(time.Hour).Unix(),
-	})
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
+	tok := mint(t, unknownKey, "unknown-kid", validClaims("attacker"))
 
 	const requests = 20
 	start := make(chan struct{})
@@ -179,18 +184,12 @@ func TestConcurrentRotatedKIDRefreshesOnceAndVerifiesAllTokens(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "client-1", srv.Client())
-	oldToken := mint(t, oldKey, oldKID, jwt.MapClaims{
-		"iss": "https://issuer.example", "sub": "old", "token_use": "access",
-		"client_id": "client-1", "exp": time.Now().Add(time.Hour).Unix(),
-	})
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
+	oldToken := mint(t, oldKey, oldKID, validClaims("old"))
 	if _, err := v.Verify(t.Context(), oldToken); err != nil {
 		t.Fatal(err)
 	}
-	newToken := mint(t, newKey, newKID, jwt.MapClaims{
-		"iss": "https://issuer.example", "sub": "new", "token_use": "access",
-		"client_id": "client-1", "exp": time.Now().Add(time.Hour).Unix(),
-	})
+	newToken := mint(t, newKey, newKID, validClaims("new"))
 
 	const requests = 20
 	start := make(chan struct{})
@@ -225,11 +224,8 @@ func TestRepeatedUnknownKIDUsesNegativeCache(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "client-1", srv.Client())
-	tok := mint(t, unknownKey, "unknown-kid", jwt.MapClaims{
-		"iss": "https://issuer.example", "sub": "attacker", "token_use": "access",
-		"client_id": "client-1", "exp": time.Now().Add(time.Hour).Unix(),
-	})
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
+	tok := mint(t, unknownKey, "unknown-kid", validClaims("attacker"))
 
 	for range 5 {
 		if _, err := v.Verify(t.Context(), tok); err == nil {
@@ -252,14 +248,11 @@ func TestUnknownKIDRefreshCooldownBoundsDistinctMisses(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	now := time.Unix(1_000, 0)
-	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "client-1", srv.Client())
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
 	v.now = func() time.Time { return now }
 	v.unknownKIDCooldown = 10 * time.Second
 	unknownToken := func(kid string) string {
-		return mint(t, unknownKey, kid, jwt.MapClaims{
-			"iss": "https://issuer.example", "sub": "attacker", "token_use": "access",
-			"client_id": "client-1", "exp": time.Now().Add(time.Hour).Unix(),
-		})
+		return mint(t, unknownKey, kid, validClaims("attacker"))
 	}
 
 	_, _ = v.Verify(t.Context(), unknownToken("unknown-a"))
@@ -284,15 +277,12 @@ func TestUnknownKIDNegativeCacheIsBounded(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	now := time.Unix(2_000, 0)
-	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "client-1", srv.Client())
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
 	v.now = func() time.Time { return now }
 	v.unknownKIDCooldown = 0
 	v.maxUnknownKIDs = 2
 	for _, kid := range []string{"unknown-a", "unknown-b", "unknown-c", "unknown-d"} {
-		tok := mint(t, unknownKey, kid, jwt.MapClaims{
-			"iss": "https://issuer.example", "sub": "attacker", "token_use": "access",
-			"client_id": "client-1", "exp": time.Now().Add(time.Hour).Unix(),
-		})
+		tok := mint(t, unknownKey, kid, validClaims("attacker"))
 		_, _ = v.Verify(t.Context(), tok)
 		now = now.Add(time.Second)
 	}
@@ -306,33 +296,81 @@ func TestUnknownKIDNegativeCacheIsBounded(t *testing.T) {
 }
 
 func TestRejectsMissingBearer(t *testing.T) {
-	v := NewVerifierFromURL("http://127.0.0.1:1/jwks", "https://issuer.example", "client-1", nil)
+	v := NewVerifierFromURL("http://127.0.0.1:1/jwks", "https://issuer.example", "authenticated", nil)
 	if _, err := v.Verify(t.Context(), ""); err == nil {
 		t.Fatal("expected rejection")
 	}
 }
 
-func testKey(t *testing.T) (*rsa.PrivateKey, []byte, string) {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+func TestRejectsHMACAlgConfusion(t *testing.T) {
+	key, jwks, kid := testKey(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(jwks)
+	}))
+	t.Cleanup(srv.Close)
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
+	if _, err := v.Verify(t.Context(), mint(t, key, kid, validClaims("user-sub"))); err != nil {
+		t.Fatal(err)
+	}
+
+	hmacTok := jwt.NewWithClaims(jwt.SigningMethodHS256, validClaims("attacker"))
+	hmacTok.Header["kid"] = kid
+	secret := elliptic.Marshal(elliptic.P256(), key.X, key.Y)
+	signed, err := hmacTok.SignedString(secret)
 	if err != nil {
 		t.Fatal(err)
 	}
-	kid := base64.RawURLEncoding.EncodeToString(key.N.Bytes()[:8])
+	if _, err := v.Verify(t.Context(), signed); err == nil {
+		t.Fatal("expected HS256 token signed with JWKS key material to be rejected")
+	}
+
+	noneTok := jwt.NewWithClaims(jwt.SigningMethodNone, validClaims("attacker"))
+	noneTok.Header["kid"] = kid
+	noneSigned, err := noneTok.SignedString(jwt.UnsafeAllowNoneSignatureType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Verify(t.Context(), noneSigned); err == nil {
+		t.Fatal("expected alg none token to be rejected")
+	}
+}
+
+func validClaims(sub string) jwt.MapClaims {
+	return jwt.MapClaims{
+		"iss":  "https://issuer.example",
+		"sub":  sub,
+		"aud":  "authenticated",
+		"role": "authenticated",
+		"exp":  time.Now().Add(time.Hour).Unix(),
+		"iat":  time.Now().Unix(),
+	}
+}
+
+func testKey(t *testing.T) (*ecdsa.PrivateKey, []byte, string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := key.X.FillBytes(make([]byte, 32))
+	y := key.Y.FillBytes(make([]byte, 32))
+	kid := base64.RawURLEncoding.EncodeToString(x[:8])
 	jwks, _ := json.Marshal(map[string]any{
 		"keys": []map[string]string{{
 			"kid": kid,
-			"kty": "RSA",
-			"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
-			"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+			"kty": "EC",
+			"crv": "P-256",
+			"alg": "ES256",
+			"x":   base64.RawURLEncoding.EncodeToString(x),
+			"y":   base64.RawURLEncoding.EncodeToString(y),
 		}},
 	})
 	return key, jwks, kid
 }
 
-func mint(t *testing.T, key *rsa.PrivateKey, kid string, claims jwt.MapClaims) string {
+func mint(t *testing.T, key *ecdsa.PrivateKey, kid string, claims jwt.MapClaims) string {
 	t.Helper()
-	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 	tok.Header["kid"] = kid
 	s, err := tok.SignedString(key)
 	if err != nil {

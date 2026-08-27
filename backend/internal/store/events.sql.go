@@ -7,7 +7,31 @@ package store
 
 import (
 	"context"
+	"time"
 )
+
+const changeEventBounds = `-- name: ChangeEventBounds :one
+select
+    coalesce(max(id), 0)::bigint as latest_id,
+    coalesce((
+        select pruned_through
+        from change_event_retention
+        where singleton
+    ), 0)::bigint as pruned_through
+from change_events
+`
+
+type ChangeEventBoundsRow struct {
+	LatestID      int64
+	PrunedThrough int64
+}
+
+func (q *Queries) ChangeEventBounds(ctx context.Context) (ChangeEventBoundsRow, error) {
+	row := q.db.QueryRow(ctx, changeEventBounds)
+	var i ChangeEventBoundsRow
+	err := row.Scan(&i.LatestID, &i.PrunedThrough)
+	return i, err
+}
 
 const latestChangeEventID = `-- name: LatestChangeEventID :one
 select coalesce(max(id), 0)::bigint
@@ -59,4 +83,39 @@ func (q *Queries) ListChangeEventsAfter(ctx context.Context, arg ListChangeEvent
 		return nil, err
 	}
 	return items, nil
+}
+
+const pruneChangeEventsBefore = `-- name: PruneChangeEventsBefore :one
+with latest as (
+    select coalesce(max(id), 0)::bigint as id
+    from change_events
+), deleted as (
+    delete from change_events
+    using latest
+    where change_events.created_at < $1::timestamptz
+      and change_events.id < latest.id
+    returning change_events.id
+), deleted_max as (
+    select coalesce(max(id), 0)::bigint as id
+    from deleted
+), retention as (
+    insert into change_event_retention (singleton, pruned_through)
+    select true, id from deleted_max
+    on conflict (singleton) do update
+    set pruned_through = greatest(
+        change_event_retention.pruned_through,
+        excluded.pruned_through
+    )
+    returning pruned_through
+)
+select count(*)::bigint
+from deleted
+cross join retention
+`
+
+func (q *Queries) PruneChangeEventsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	row := q.db.QueryRow(ctx, pruneChangeEventsBefore, cutoff)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }

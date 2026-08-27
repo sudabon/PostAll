@@ -41,8 +41,26 @@ func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (Channel, error)
 	return i, err
 }
 
+const getUserByAuthSubject = `-- name: GetUserByAuthSubject :one
+select id, auth_subject, created_at, updated_at
+from users
+where auth_subject = $1
+`
+
+func (q *Queries) GetUserByAuthSubject(ctx context.Context, authSubject string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByAuthSubject, authSubject)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.AuthSubject,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getUserByID = `-- name: GetUserByID :one
-select id, cognito_sub, created_at, updated_at
+select id, auth_subject, created_at, updated_at
 from users
 where id = $1
 `
@@ -52,7 +70,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 	var i User
 	err := row.Scan(
 		&i.ID,
-		&i.CognitoSub,
+		&i.AuthSubject,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -61,7 +79,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 
 const insertChannel = `-- name: InsertChannel :one
 insert into channels (parent_id, name, sort_key)
-values ($1, $2, $3)
+values ($1::uuid, $2, $3)
 returning id, parent_id, name, sort_key, created_at, updated_at
 `
 
@@ -79,6 +97,24 @@ func (q *Queries) InsertChannel(ctx context.Context, arg InsertChannelParams) (C
 		&i.ParentID,
 		&i.Name,
 		&i.SortKey,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertUserByAuthSubject = `-- name: InsertUserByAuthSubject :one
+insert into users (auth_subject)
+values ($1)
+returning id, auth_subject, created_at, updated_at
+`
+
+func (q *Queries) InsertUserByAuthSubject(ctx context.Context, authSubject string) (User, error) {
+	row := q.db.QueryRow(ctx, insertUserByAuthSubject, authSubject)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.AuthSubject,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -121,7 +157,7 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 const listSiblings = `-- name: ListSiblings :many
 select id, parent_id, name, sort_key, created_at, updated_at
 from channels
-where parent_id is not distinct from $1
+where parent_id is not distinct from $1::uuid
 order by sort_key, id
 `
 
@@ -180,7 +216,7 @@ func (q *Queries) RenameChannel(ctx context.Context, arg RenameChannelParams) (C
 
 const updateChannelLocation = `-- name: UpdateChannelLocation :one
 update channels
-set parent_id = $1,
+set parent_id = $1::uuid,
     sort_key = $2,
     updated_at = now()
 where id = $3
@@ -201,25 +237,6 @@ func (q *Queries) UpdateChannelLocation(ctx context.Context, arg UpdateChannelLo
 		&i.ParentID,
 		&i.Name,
 		&i.SortKey,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const upsertUserByCognitoSub = `-- name: UpsertUserByCognitoSub :one
-insert into users (cognito_sub)
-values ($1)
-on conflict (cognito_sub) do update set updated_at = now()
-returning id, cognito_sub, created_at, updated_at
-`
-
-func (q *Queries) UpsertUserByCognitoSub(ctx context.Context, cognitoSub string) (User, error) {
-	row := q.db.QueryRow(ctx, upsertUserByCognitoSub, cognitoSub)
-	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.CognitoSub,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

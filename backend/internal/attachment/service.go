@@ -196,7 +196,7 @@ func (s *Service) Replace(ctx context.Context, q *store.Queries, postID, uploade
 
 func (s *Service) Reap(ctx context.Context) error {
 	if !s.Ready() {
-		return nil
+		return errUnavailable()
 	}
 	if err := s.q.MarkReapableAttachmentsPending(ctx, time.Now().Add(-IncompleteAge)); err != nil {
 		return err

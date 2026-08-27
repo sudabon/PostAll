@@ -24,7 +24,7 @@ select
 from posts p
 join channels c on c.id = p.channel_id
 where p.deleted_at is null
-  and lower(p.body) like likequery(lower($1))
+  and p.body ilike $1::text escape '\'
   and ($2::uuid is null or p.channel_id = $2::uuid)
   and ($3::timestamptz is null or p.created_at >= $3::timestamptz)
   and ($4::timestamptz is null or p.created_at <= $4::timestamptz)
@@ -107,7 +107,7 @@ select
 from posts p
 join channels c on c.id = p.channel_id
 where p.deleted_at is null
-  and lower(p.body) like likequery(lower($1))
+  and p.body ilike $1::text escape '\'
   and ($2::uuid is null or p.channel_id = $2::uuid)
   and ($3::timestamptz is null or p.created_at >= $3::timestamptz)
   and ($4::timestamptz is null or p.created_at <= $4::timestamptz)

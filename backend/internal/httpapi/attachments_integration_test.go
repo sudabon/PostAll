@@ -32,7 +32,7 @@ func TestAttachmentsUploadDownloadAndReap(t *testing.T) {
 	t.Cleanup(jwksSrv.Close)
 
 	mem := blob.NewMemory()
-	verifier := auth.NewVerifierFromURL(jwksSrv.URL, "https://issuer.example", "client-1", jwksSrv.Client())
+	verifier := auth.NewVerifierFromURL(jwksSrv.URL, "https://issuer.example", "authenticated", jwksSrv.Client())
 	h, err := httpapi.New(httpapi.Config{DatabaseURL: dbURL, Verifier: verifier, Blob: mem})
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +175,7 @@ func TestAttachmentReapRetriesFailedObjectDeletion(t *testing.T) {
 	userID := uuid.New()
 	attachmentID := uuid.New()
 	storageKey := "attachments/retry-me"
-	if _, err := pool.Exec(ctx, `insert into users (id, cognito_sub) values ($1, $2)`, userID, "reaper-user"); err != nil {
+	if _, err := pool.Exec(ctx, `insert into users (id, auth_subject) values ($1, $2)`, userID, "reaper-user"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

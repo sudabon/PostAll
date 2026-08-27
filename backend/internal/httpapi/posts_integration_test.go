@@ -25,7 +25,7 @@ func TestPostTimelineAndThreads(t *testing.T) {
 	}))
 	t.Cleanup(jwksSrv.Close)
 
-	verifier := auth.NewVerifierFromURL(jwksSrv.URL, "https://issuer.example", "client-1", jwksSrv.Client())
+	verifier := auth.NewVerifierFromURL(jwksSrv.URL, "https://issuer.example", "authenticated", jwksSrv.Client())
 	h, err := httpapi.New(httpapi.Config{DatabaseURL: url, Verifier: verifier})
 	if err != nil {
 		t.Fatal(err)

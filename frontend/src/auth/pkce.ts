@@ -31,58 +31,78 @@ export function parseTokenResponse(json: Record<string, unknown>): TokenSet {
 }
 
 export function authorizeUrl(input: {
-  domain: string
-  clientId: string
+  supabaseUrl: string
   redirectUri: string
   challenge: string
+  provider?: string
 }): string {
-  const url = new URL(`https://${input.domain}/oauth2/authorize`)
-  url.searchParams.set('response_type', 'code')
-  url.searchParams.set('client_id', input.clientId)
-  url.searchParams.set('redirect_uri', input.redirectUri)
+  const url = new URL(`${input.supabaseUrl.replace(/\/$/, '')}/auth/v1/authorize`)
+  url.searchParams.set('provider', input.provider ?? 'github')
+  url.searchParams.set('redirect_to', input.redirectUri)
   url.searchParams.set('code_challenge', input.challenge)
   url.searchParams.set('code_challenge_method', 'S256')
-  url.searchParams.set('scope', 'openid email')
   return url.toString()
 }
 
 export async function exchangeCode(input: {
-  domain: string
-  clientId: string
-  redirectUri: string
+  supabaseUrl: string
+  publishableKey: string
   code: string
   verifier: string
 }): Promise<TokenSet> {
-  return tokenRequest(input.domain, {
-    grant_type: 'authorization_code',
-    client_id: input.clientId,
-    redirect_uri: input.redirectUri,
-    code: input.code,
+  return tokenRequest(input.supabaseUrl, input.publishableKey, {
+    auth_code: input.code,
     code_verifier: input.verifier,
-  })
+  }, 'pkce')
 }
 
 export async function refreshTokens(input: {
-  domain: string
-  clientId: string
+  supabaseUrl: string
+  publishableKey: string
   refreshToken: string
 }): Promise<TokenSet> {
-  return tokenRequest(input.domain, {
-    grant_type: 'refresh_token',
-    client_id: input.clientId,
+  return tokenRequest(input.supabaseUrl, input.publishableKey, {
     refresh_token: input.refreshToken,
-  })
+  }, 'refresh_token')
 }
 
-async function tokenRequest(domain: string, body: Record<string, string>): Promise<TokenSet> {
-  const res = await fetch(`https://${domain}/oauth2/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(body),
-  })
-  const json = (await res.json()) as Record<string, unknown>
+export class TokenRequestError extends Error {
+  status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'TokenRequestError'
+    this.status = status
+  }
+}
+
+async function tokenRequest(
+  supabaseUrl: string,
+  publishableKey: string,
+  body: Record<string, string>,
+  grantType: 'pkce' | 'refresh_token',
+): Promise<TokenSet> {
+  let res: Response
+  try {
+    res = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/token?grant_type=${grantType}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: publishableKey,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    throw new TokenRequestError(err instanceof Error ? err.message : 'token request failed', 0)
+  }
+  let json: Record<string, unknown> = {}
+  try {
+    json = (await res.json()) as Record<string, unknown>
+  } catch {
+    json = {}
+  }
   if (!res.ok) {
-    throw new Error(String(json.error_description ?? json.error ?? 'token exchange failed'))
+    throw new TokenRequestError(String(json.error_description ?? json.error ?? json.msg ?? 'token exchange failed'), res.status)
   }
   return parseTokenResponse(json)
 }

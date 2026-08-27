@@ -28,7 +28,7 @@ class HomeShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // サインイン中は SSE を購読する。
+    // サインイン中は Realtime を購読する。
     ref.watch(changeSyncProvider);
 
     final channel = ref.watch(resolvedSelectedChannelProvider);

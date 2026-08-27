@@ -406,9 +406,10 @@ paths:
       parameters:
         - name: after
           in: query
+          description: 数値 ID、または履歴を再生せず現在位置から開始する `latest`
           schema:
             type: string
-            pattern: '^[0-9]+$'
+            pattern: '^([0-9]+|latest)$'
             default: "0"
         - name: limit
           in: query
@@ -424,27 +425,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChangeEventPage"
-        default:
-          $ref: "#/components/responses/Error"
-  /v1/events/stream:
-    get:
-      operationId: streamChangeEvents
-      tags: [events]
-      summary: 変更イベントを Server-Sent Events で購読する
-      parameters:
-        - name: Last-Event-ID
-          in: header
-          schema:
-            type: string
-            pattern: '^[0-9]+$'
-          description: 再送を開始する直前のイベント ID。
-      responses:
-        "200":
-          description: id、event、data フィールドを持つ変更イベントストリーム
-          content:
-            text/event-stream:
-              schema:
-                type: string
         default:
           $ref: "#/components/responses/Error"
 components:
@@ -862,5 +842,8 @@ components:
           pattern: '^[0-9]+$'
         hasMore:
           type: boolean
+        resetRequired:
+          type: boolean
+          description: 指定カーソルが保持期間外で、表示中データの全再取得が必要か。省略時は false
 security:
   - bearerAuth: []

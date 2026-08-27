@@ -13,6 +13,7 @@ ChangeEventPage _$ChangeEventPageFromJson(Map<String, dynamic> json) =>
           .toList(),
       nextAfter: json['nextAfter'] as String,
       hasMore: json['hasMore'] as bool,
+      resetRequired: json['resetRequired'] as bool?,
     );
 
 Map<String, dynamic> _$ChangeEventPageToJson(ChangeEventPage instance) =>
@@ -20,4 +21,5 @@ Map<String, dynamic> _$ChangeEventPageToJson(ChangeEventPage instance) =>
       'events': instance.events,
       'nextAfter': instance.nextAfter,
       'hasMore': instance.hasMore,
+      'resetRequired': instance.resetRequired,
     };
