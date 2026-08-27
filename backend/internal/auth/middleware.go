@@ -64,7 +64,8 @@ func Middleware(v *Verifier, users UserStore) func(http.Handler) http.Handler {
 }
 
 func skipAuth(path string) bool {
-	return path == "/health" || path == "/ready" || path == "/internal/attachments/reap"
+	return path == "/health" || path == "/ready" ||
+		path == "/internal/attachments/reap" || path == "/internal/events/prune"
 }
 
 func writeUnauthorized(w http.ResponseWriter) {

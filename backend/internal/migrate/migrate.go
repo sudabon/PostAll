@@ -41,17 +41,38 @@ func Pending(databaseURL string) ([]string, error) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		return nil, err
 	}
-	current, err := goose.GetDBVersion(db)
+	all, err := goose.CollectMigrations(".", 0, goose.MaxVersion)
 	if err != nil {
 		return nil, err
 	}
-	max, err := goose.CollectMigrations(".", 0, goose.MaxVersion)
+	rows, err := db.Query(`
+		select version_id, is_applied
+		from goose_db_version
+		order by id desc
+	`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read migration state: %w", err)
 	}
+	defer rows.Close()
+
+	applied := make(map[int64]bool)
+	for rows.Next() {
+		var version int64
+		var isApplied bool
+		if err := rows.Scan(&version, &isApplied); err != nil {
+			return nil, fmt.Errorf("read migration state: %w", err)
+		}
+		if _, seen := applied[version]; !seen {
+			applied[version] = isApplied
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read migration state: %w", err)
+	}
+
 	var pending []string
-	for _, m := range max {
-		if m.Version > current {
+	for _, m := range all {
+		if !applied[m.Version] {
 			pending = append(pending, m.Source)
 		}
 	}

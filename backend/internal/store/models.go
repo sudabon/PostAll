@@ -36,6 +36,11 @@ type ChangeEvent struct {
 	CreatedAt    time.Time
 }
 
+type ChangeEventRetention struct {
+	Singleton     bool
+	PrunedThrough int64
+}
+
 type Channel struct {
 	ID        uuid.UUID
 	ParentID  *uuid.UUID

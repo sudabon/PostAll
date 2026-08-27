@@ -506,6 +506,8 @@ export interface components {
             events: components["schemas"]["ChangeEvent"][];
             nextAfter: string;
             hasMore: boolean;
+            /** @description 指定カーソルが保持期間外で、表示中データの全再取得が必要か。省略時は false */
+            resetRequired?: boolean;
         };
     };
     responses: {
@@ -1028,6 +1030,7 @@ export interface operations {
     listChangeEvents: {
         parameters: {
             query?: {
+                /** @description 数値 ID、または履歴を再生せず現在位置から開始する `latest` */
                 after?: string;
                 limit?: number;
             };

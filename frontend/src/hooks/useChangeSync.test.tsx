@@ -74,6 +74,7 @@ describe('useChangeSync', () => {
     const { unmount } = renderHook(() => useChangeSync(true), { wrapper: wrapper(queryClient) })
 
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3))
+    expect(mocks.listEvents).toHaveBeenCalledWith('latest', 200)
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['channels'] })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts'] })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['thread'] })
@@ -147,8 +148,44 @@ describe('useChangeSync', () => {
     online = true
     window.dispatchEvent(new Event('online'))
 
-    await waitFor(() => expect(mocks.listEvents).toHaveBeenCalledWith('0', 200), { timeout: 2_500 })
+    await waitFor(() => expect(mocks.listEvents).toHaveBeenCalledWith('latest', 200), { timeout: 2_500 })
     expect(useUi.getState().connectionState).toBe('live')
+    unmount()
+  })
+
+  it('fully reloads and advances to the watermark when the event cursor expired', async () => {
+    mocks.listEvents.mockResolvedValue({ events: [], nextAfter: '4', hasMore: false })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+
+    const { unmount } = renderHook(() => useChangeSync(true), { wrapper: wrapper(queryClient) })
+    await waitFor(() => expect(mocks.listEvents).toHaveBeenCalledWith('latest', 200))
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3))
+    invalidate.mockClear()
+
+    mocks.listEvents.mockResolvedValue({
+      events: [],
+      nextAfter: '20',
+      hasMore: false,
+      resetRequired: true,
+    })
+    await act(async () => {
+      mocks.onSignal?.()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3))
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['channels'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['thread'] })
+
+    mocks.listEvents.mockClear()
+    mocks.listEvents.mockResolvedValue({ events: [], nextAfter: '20', hasMore: false })
+    await act(async () => {
+      mocks.onSignal?.()
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(mocks.listEvents).toHaveBeenCalledWith('20', 200))
     unmount()
   })
 

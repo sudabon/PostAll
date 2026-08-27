@@ -1,5 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {
+    "deploymentEnabled": false
+  },
   "services": {
     "web": {
       "root": "frontend/"
@@ -50,6 +53,10 @@
     {
       "path": "/internal/attachments/reap",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/internal/events/prune",
+      "schedule": "15 4 * * *"
     }
   ]
 }

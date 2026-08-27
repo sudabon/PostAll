@@ -92,12 +92,12 @@
 - [x] 11.1 認証フローの変更に追随する。`app://` によるローカル配信と `postall://` ディープリンク、`safeStorage` によるトークン保管は変更しない
 - [ ] 11.2 パッケージ済みアプリでサインインからタイムライン表示までを実機確認する
 
-## 12. 配信設定とデプロイ工程
+## 12. 配信設定と運用ワークフロー
 
 - [x] 12.1 `vercel.json` に静的アセットのキャッシュ指示（`/assets/*` は immutable、`/sw.js` は `no-cache` + `Service-Worker-Allowed: /`、`/manifest.webmanifest` は `no-cache`）と SPA フォールバックを追加する
 - [ ] 12.2 `/v1/*` の存在しないパスがアプリシェルではなく API のエラー応答を返すことを確認する
-- [x] 12.3 CI にマイグレーション適用ジョブを追加する（ダイレクト接続で実行し、失敗したらデプロイを進めない）
-- [x] 12.4 CI に `emoji-sync` 実行ジョブを追加する
+- [x] 12.3 手動 GitHub Actions にマイグレーション適用ジョブを追加する（Session プール接続で実行し、デプロイとは別に起動する）
+- [x] 12.4 手動マイグレーション成功後に `emoji-sync` を実行するジョブを追加する
 - [ ] 12.5 環境変数（Supabase の URL / キー / 接続文字列、Storage のバケット名と資格情報、Cron のシークレット）を Vercel のプロジェクト設定へ登録する
 - [x] 12.6 Supabase の `realtime.messages` に RLS ポリシーを設定し、認証済みユーザーのみが `postall:events` を購読でき、匿名では購読できないことを確認する。DB 側トリガーの `private` フラグとクライアント側チャンネルの `private` 設定が一致していることを確認する
 - [x] 12.7 GitHub Actions に 6 時間ごとの schedule ジョブを追加し、添付回収の内部エンドポイントを叩く。これが Supabase Free の無操作 pause 回避（keep-alive）も兼ねる
@@ -135,3 +135,14 @@
 - [x] 15.10 E2E 専用 `postall:change-signal` リスナーを development / test mode に限定する
 - [x] 15.11 対象テストを修正ごとに実行し、最後に Go build/vet/test、frontend typecheck/lint/test、Flutter analyze/test、可能なら Docker 統合テストを実行する
 - [x] 15.12 既存 Artifact と repository Actions secrets を確認する（2026-08-27 時点でどちらも 0 件。削除・ローテーション対象なし）
+
+## 16. PR #2 追加確認事項の修正
+
+- [x] 16.1 `GET /v1/events?after=latest` で履歴を再生せず現在の数値カーソルを返し、従来の数値カーソルを維持する
+- [x] 16.2 `change_events` を30日保持とし、最新ウォーターマークを残す共有シークレット保護の整理処理を定期実行する
+- [x] 16.3 保持範囲外・DB復元後の範囲外カーソルに `resetRequired` を返し、Web と iOS が表示中データを全再取得して復旧する
+- [x] 16.4 Vercel の Git 自動デプロイを全ブランチで停止する
+- [x] 16.5 マイグレーション + 絵文字同期と Vercel 本番デプロイを別々の `workflow_dispatch` ワークフローへ分離する
+- [x] 16.6 デプロイ側で未適用マイグレーションを読み取り検査し、DBを変更せずデプロイを拒否する
+- [x] 16.7 README と設計・仕様を手動実行順序、必要 secrets、30日保持の復旧動作へ合わせる
+- [x] 16.8 生成物を更新し、Go / frontend / Flutter の lint・test・build と OpenSpec strict validation を通す

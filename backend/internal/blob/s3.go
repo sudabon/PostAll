@@ -33,8 +33,8 @@ func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
 	if cfg.Bucket == "" {
 		return nil, errors.New("s3 bucket is required")
 	}
-	if cfg.Endpoint != "" && (cfg.AccessKey == "" || cfg.SecretKey == "") {
-		return nil, errors.New("s3 access key and secret are required when endpoint is set")
+	if cfg.AccessKey == "" || cfg.SecretKey == "" {
+		return nil, errors.New("s3 access key and secret are required")
 	}
 	region := cfg.Region
 	if region == "" {

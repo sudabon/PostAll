@@ -145,7 +145,10 @@ export async function installApiMock(page: Page) {
     }
 
     if (url.pathname === '/v1/events' && method === 'GET') {
-      const after = BigInt(url.searchParams.get('after') ?? '0')
+      const requestedAfter = url.searchParams.get('after') ?? '0'
+      const after = requestedAfter === 'latest'
+        ? BigInt(db.events.at(-1)?.id ?? '0')
+        : BigInt(requestedAfter)
       const limit = Math.min(Number(url.searchParams.get('limit') ?? 200), 200)
       const remaining = db.events.filter((event) => BigInt(event.id) > after)
       const events = remaining.slice(0, limit)

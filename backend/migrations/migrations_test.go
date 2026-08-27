@@ -44,6 +44,18 @@ func TestPGroongaDownDropsIndexAndExtension(t *testing.T) {
 	)
 }
 
+func TestChangeEventRetentionStateIsLockedDown(t *testing.T) {
+	contents := strings.ToLower(migration(t, "00015_change_event_retention.sql"))
+	for _, required := range []string{
+		"alter table change_event_retention enable row level security",
+		"revoke all on table change_event_retention",
+	} {
+		if !strings.Contains(contents, required) {
+			t.Errorf("retention migration is missing %q", required)
+		}
+	}
+}
+
 func migration(t *testing.T, name string) string {
 	t.Helper()
 	contents, err := Files.ReadFile(name)

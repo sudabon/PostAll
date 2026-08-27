@@ -131,6 +131,8 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /ready", s.GetHealth)
 	mux.HandleFunc("POST /internal/attachments/reap", s.ReapAttachments)
 	mux.HandleFunc("GET /internal/attachments/reap", s.ReapAttachments)
+	mux.HandleFunc("POST /internal/events/prune", s.PruneChangeEvents)
+	mux.HandleFunc("GET /internal/events/prune", s.PruneChangeEvents)
 	inner := api.HandlerWithOptions(s, api.StdHTTPServerOptions{
 		BaseRouter: mux,
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -177,6 +179,25 @@ func (s *Server) ReapAttachments(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, r, err)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) PruneChangeEvents(w http.ResponseWriter, r *http.Request) {
+	if !auth.BearerMatches(r.Header.Get("Authorization"), s.cronSecret) {
+		writeAPIError(w, http.StatusUnauthorized, "unauthorized", "認可情報を検証できませんでした", nil)
+		return
+	}
+	if s.changes == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "unavailable", "データベースに接続できません", nil)
+		return
+	}
+	count, err := s.changes.PruneExpired(r.Context(), time.Now())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "change event pruning failed", "error", safeLogError(err))
+		writeAppError(w, r, err)
+		return
+	}
+	slog.InfoContext(r.Context(), "change events pruned", "count", count)
 	w.WriteHeader(http.StatusNoContent)
 }
 

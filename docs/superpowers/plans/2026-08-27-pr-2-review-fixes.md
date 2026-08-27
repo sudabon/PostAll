@@ -707,3 +707,77 @@ Expected: OpenSpec and whitespace checks pass; placeholder search returns no mat
 - [x] **Step 6: Review compatibility and report risks**
 
 Confirm existing fixed-token callers still compile, `PostAllApi.watchChangeSignals` is unchanged, API/OpenAPI schemas are untouched, writes survive Realtime failures, and no plaintext dump path is uploaded. Report exact verification results and these operational risks: GitHub OAuth/Dashboard configuration and `DUMP_PASSPHRASE` remain manual, `$0` budget is account-level, encrypted artifacts do not include Supabase Storage, and Realtime failures intentionally degrade to polling.
+
+### Task 8: Bounded change-event recovery
+
+**Files:**
+- Modify: `api/openapi.yaml`
+- Modify: `backend/internal/store/queries/events.sql`
+- Modify: `backend/internal/change/service.go`
+- Modify: `backend/internal/httpapi/events.go`
+- Modify: `backend/internal/httpapi/server.go`
+- Modify: `backend/internal/auth/middleware.go`
+- Modify: `frontend/src/hooks/useChangeSync.ts`
+- Modify: `mobile/lib/state/sync.dart`
+- Modify: generated OpenAPI models and focused tests
+- Modify: `.github/workflows/ops.yml`, `vercel.json`, and `README.md`
+
+**Interfaces:**
+- `GET /v1/events?after=latest` is an additive cursor mode that returns an empty page at the current watermark.
+- `ChangeEventPage.resetRequired` is optional and defaults to false for compatibility.
+- Numeric `after` cursors and existing response fields keep their current behavior.
+
+- [ ] **Step 1: Add failing backend and client regression tests**
+
+Cover the latest watermark, numeric-cursor compatibility, a cursor older than the retained range, a cursor ahead of the database after restore, shared-secret protection for pruning, Web initial recovery, Web reset recovery, and iOS initial recovery.
+
+- [ ] **Step 2: Implement latest bootstrap and expired-cursor detection**
+
+Add a change-event bounds query. `after=latest` returns no historical events and a numeric `nextAfter`. Numeric cursors outside the recoverable range return no events, advance to the current watermark, and set `resetRequired: true`.
+
+- [ ] **Step 3: Retain change events for 30 days**
+
+Add an authenticated internal prune endpoint, delete rows older than 30 days while retaining the newest watermark row, and invoke it from the existing scheduled maintenance workflow and Vercel Cron.
+
+- [ ] **Step 4: Update Web and iOS recovery**
+
+Start each fresh client session with `after=latest`, invalidate/reload displayed data once, and perform the same full refresh when `resetRequired` is true. Continue using event-specific invalidation for ordinary reconnects.
+
+- [ ] **Step 5: Regenerate clients and run focused tests**
+
+Run sqlc, OpenAPI generation for Go/Web/Dart, then the focused Go, Vitest, and Flutter tests.
+
+### Task 9: Separate manual migration and deployment workflows
+
+**Files:**
+- Create: `.github/workflows/migrate.yml`
+- Create: `.github/workflows/deploy.yml`
+- Modify: `.github/workflows/ops.yml`
+- Modify: `vercel.json`
+- Modify: `backend/cmd/postall-server/main.go`
+- Modify: `README.md`
+
+**Interfaces:**
+- Both production operations use `workflow_dispatch` only.
+- Migration and deployment are separate workflow runs; deployment never applies migrations.
+- `migrate-check` is an additive CLI subcommand used as a read-only deployment gate.
+
+- [ ] **Step 1: Add a failing migration-gate test**
+
+Verify the check succeeds on a current schema and reports every pending migration without applying it.
+
+- [ ] **Step 2: Create the manual migration workflow**
+
+Move goose migration and the dependent emoji synchronization out of `ops.yml` into a `workflow_dispatch`-only workflow with database-level concurrency.
+
+- [ ] **Step 3: Disable Vercel Git deployment and create the manual deploy workflow**
+
+Set `git.deploymentEnabled` to false. The separate deployment workflow checks for pending migrations, pulls production settings, builds with a pinned Vercel CLI, and deploys the prebuilt output to production.
+
+- [ ] **Step 4: Preserve scheduled maintenance and document the run order**
+
+Keep attachment reaping, event pruning, and encrypted database dumps scheduled. Document running the migration workflow first and the deploy workflow second for the same Git ref, along with each required secret.
+
+- [ ] **Step 5: Validate workflow structure and complete full verification**
+
+Parse/actionlint the YAML where available, verify triggers and job separation structurally, then run all repository lint, tests, builds, OpenSpec validation, and diff checks.

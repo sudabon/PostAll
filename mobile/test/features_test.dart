@@ -48,8 +48,11 @@ void main() {
       expect(state.posts, hasLength(10));
       expect(state.posts.first.body, 'post 15');
       expect(state.posts.last.body, 'post 24');
-      // 全件取得はしない。
-      expect(api.calls.where((c) => c.startsWith('listPosts')), hasLength(1));
+      // 初期表示後、最新イベント ID を確定した時点でもう一度だけ整合性を
+      // 確認する。どちらも全件取得ではなく最新10件に限定する。
+      final initialLoads = api.calls.where((c) => c.startsWith('listPosts'));
+      expect(initialLoads, hasLength(2));
+      expect(initialLoads, everyElement(contains(':limit=10:')));
     });
 
     testWidgets('10 件未満なら追加取得を要求しない', (tester) async {

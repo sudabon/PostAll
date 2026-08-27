@@ -13,15 +13,6 @@ func (s *Server) ListChangeEvents(w http.ResponseWriter, r *http.Request, params
 		writeAPIError(w, http.StatusServiceUnavailable, "unavailable", "データベースに接続できません", nil)
 		return
 	}
-	after := int64(0)
-	if params.After != nil {
-		parsed, err := strconv.ParseInt(*params.After, 10, 64)
-		if err != nil || parsed < 0 {
-			writeAPIError(w, http.StatusBadRequest, "validation", "イベント ID が不正です", nil)
-			return
-		}
-		after = parsed
-	}
 	limit := 100
 	if params.Limit != nil {
 		limit = *params.Limit
@@ -30,7 +21,29 @@ func (s *Server) ListChangeEvents(w http.ResponseWriter, r *http.Request, params
 		writeAPIError(w, http.StatusBadRequest, "validation", "取得件数が不正です", nil)
 		return
 	}
-
+	after := int64(0)
+	if params.After != nil {
+		if *params.After == "latest" {
+			latest, err := s.changes.LatestID(r.Context())
+			if err != nil {
+				writeInternal(w, r, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, api.ChangeEventPage{
+				Events:        []api.ChangeEvent{},
+				NextAfter:     strconv.FormatInt(latest, 10),
+				HasMore:       false,
+				ResetRequired: boolPointer(false),
+			})
+			return
+		}
+		parsed, err := strconv.ParseInt(*params.After, 10, 64)
+		if err != nil || parsed < 0 {
+			writeAPIError(w, http.StatusBadRequest, "validation", "イベント ID が不正です", nil)
+			return
+		}
+		after = parsed
+	}
 	page, err := s.changes.ListAfter(r.Context(), after, limit)
 	if err != nil {
 		writeInternal(w, r, err)
@@ -41,10 +54,15 @@ func (s *Server) ListChangeEvents(w http.ResponseWriter, r *http.Request, params
 		events = append(events, toAPIChangeEvent(event))
 	}
 	writeJSON(w, http.StatusOK, api.ChangeEventPage{
-		Events:    events,
-		NextAfter: strconv.FormatInt(page.NextAfter, 10),
-		HasMore:   page.HasMore,
+		Events:        events,
+		NextAfter:     strconv.FormatInt(page.NextAfter, 10),
+		HasMore:       page.HasMore,
+		ResetRequired: boolPointer(page.ResetRequired),
 	})
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }
 
 func toAPIChangeEvent(event changeservice.Event) api.ChangeEvent {

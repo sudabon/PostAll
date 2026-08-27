@@ -44,6 +44,7 @@ class FakeApi implements PostAllApi, RealtimeStatusSource {
   final _realtimeStatuses = StreamController<bool>.broadcast(sync: true);
   final _log = <ChangeEvent>[];
   var _nextEventId = 0;
+  bool _resetRequiredOnNextList = false;
 
   /// 呼び出しの記録。テストが「どう呼ばれたか」を確認するために使う。
   final calls = <String>[];
@@ -382,6 +383,23 @@ class FakeApi implements PostAllApi, RealtimeStatusSource {
   }) async {
     calls.add('listEvents:after=$after');
     if (!healthy) throw NetworkException('接続できません');
+    final latest = _log.isEmpty ? '0' : _log.last.id;
+    if (after == 'latest') {
+      return ChangeEventPage(
+        events: const [],
+        nextAfter: latest,
+        hasMore: false,
+      );
+    }
+    if (_resetRequiredOnNextList) {
+      _resetRequiredOnNextList = false;
+      return ChangeEventPage(
+        events: const [],
+        nextAfter: latest,
+        hasMore: false,
+        resetRequired: true,
+      );
+    }
     final since = BigInt.parse(after);
     final pending = _log
         .where((e) => BigInt.parse(e.id) > since)
@@ -414,6 +432,11 @@ class FakeApi implements PostAllApi, RealtimeStatusSource {
   /// Realtime ではなくフォールバックのポーリングから届く合図を再現する。
   void emitPollingSignal() {
     if (!_signals.isClosed) _signals.add(null);
+  }
+
+  /// 次の差分取得で保持期限切れを返す。
+  void expireEventCursor() {
+    _resetRequiredOnNextList = true;
   }
 
   /// サーバ発の変更を記録し、購読中のクライアントへ合図を送る。

@@ -21,9 +21,10 @@ type changeEventJSON struct {
 }
 
 type changeEventPageJSON struct {
-	Events    []changeEventJSON `json:"events"`
-	NextAfter string            `json:"nextAfter"`
-	HasMore   bool              `json:"hasMore"`
+	Events        []changeEventJSON `json:"events"`
+	NextAfter     string            `json:"nextAfter"`
+	HasMore       bool              `json:"hasMore"`
+	ResetRequired bool              `json:"resetRequired"`
 }
 
 func TestEventDiffReturnsDurableOrderedChanges(t *testing.T) {
@@ -71,6 +72,13 @@ func TestEventDiffReturnsDurableOrderedChanges(t *testing.T) {
 	assertEvent(t, all, "reaction.updated", channel.Id.String(), root.Id.String(), "")
 
 	lastID := all[len(all)-1].ID
+	latest := getEventPage(t, h, authz, "/v1/events?after=latest&limit=200")
+	if len(latest.Events) != 0 || latest.HasMore || latest.ResetRequired {
+		t.Fatalf("latest page=%+v", latest)
+	}
+	if latest.NextAfter != lastID {
+		t.Fatalf("latest nextAfter=%q want %q", latest.NextAfter, lastID)
+	}
 	renamed := doJSON(t, h, http.MethodPatch, "/v1/channels/"+channel.Id.String(), authz, map[string]any{"name": "events-renamed"})
 	if renamed.Code != http.StatusOK {
 		t.Fatalf("rename=%d %s", renamed.Code, renamed.Body)
@@ -83,11 +91,50 @@ func TestEventDiffReturnsDurableOrderedChanges(t *testing.T) {
 		t.Fatal("after cursor returned a duplicate event")
 	}
 
+	// 30 日保持によって途中のイベントが失われた状態を再現する。期限切れの
+	// カーソルでは残存イベントだけを返さず、全体再取得を要求する。
+	if _, err := pool.Exec(context.Background(), `
+		with deleted as (
+			delete from change_events
+			where id < (select max(id) from change_events)
+			returning id
+		)
+		insert into change_event_retention (singleton, pruned_through)
+		select true, max(id) from deleted
+		on conflict (singleton) do update
+		set pruned_through = excluded.pruned_through
+	`); err != nil {
+		t.Fatal(err)
+	}
+	expired := getEventPage(t, h, authz, "/v1/events?after="+first.Events[0].ID+"&limit=200")
+	if !expired.ResetRequired || len(expired.Events) != 0 || expired.HasMore {
+		t.Fatalf("expired page=%+v", expired)
+	}
+	if expired.NextAfter != later.Events[0].ID {
+		t.Fatalf("expired nextAfter=%q want %q", expired.NextAfter, later.Events[0].ID)
+	}
+	aheadID, err := strconv.ParseInt(later.Events[0].ID, 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ahead := getEventPage(t, h, authz, "/v1/events?after="+strconv.FormatInt(aheadID+100, 10)+"&limit=200")
+	if !ahead.ResetRequired || ahead.NextAfter != later.Events[0].ID {
+		t.Fatalf("ahead page=%+v", ahead)
+	}
+	legacy := getEventPage(t, h, authz, "/v1/events?after=0&limit=200")
+	if legacy.ResetRequired || len(legacy.Events) != 1 {
+		t.Fatalf("legacy zero cursor=%+v", legacy)
+	}
+
 	for _, after := range []string{"-1", "not-a-number", "9223372036854775808"} {
 		res := doJSON(t, h, http.MethodGet, "/v1/events?after="+after, authz, nil)
 		if res.Code != http.StatusBadRequest {
 			t.Fatalf("after=%q status=%d body=%s", after, res.Code, res.Body)
 		}
+	}
+	invalidLatestLimit := doJSON(t, h, http.MethodGet, "/v1/events?after=latest&limit=201", authz, nil)
+	if invalidLatestLimit.Code != http.StatusBadRequest {
+		t.Fatalf("latest invalid limit=%d body=%s", invalidLatestLimit.Code, invalidLatestLimit.Body)
 	}
 }
 

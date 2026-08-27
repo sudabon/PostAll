@@ -25,7 +25,7 @@ PostAll/
 - Flutter 3.32（iOS シミュレータまたは実機）
 - Supabase CLI（ローカル DB とダンプ）
 - Docker（`supabase start` と `make test` の testcontainers に必須）
-- Vercel CLI（任意。プレビューは Git 連携で足りる）
+- Vercel CLI（ローカル確認用。本番は手動 GitHub Actions が固定版を使用する）
 - 本番: Vercel Hobby + Supabase Free、ドメイン `memo.sudabon.com`
 
 ## ローカル起動
@@ -86,22 +86,32 @@ API（Vercel）:
 | `SUPABASE_URL` | Auth JWKS と issuer |
 | `S3_ENDPOINT` / `S3_REGION` / `S3_BUCKET` / `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | 添付 Storage |
 | `EMOJI_S3_BUCKET` | 絵文字 Storage |
-| `CRON_SECRET` | `POST /internal/attachments/reap` の Bearer |
+| `CRON_SECRET` | `POST /internal/attachments/reap` と `POST /internal/events/prune` の Bearer |
 
 フロント（Vite）: `VITE_SUPABASE_URL`、`VITE_SUPABASE_PUBLISHABLE_KEY`。API ベース URL の既定は空（同一オリジン）。
 
-GitHub Actions（`ops` workflow）の repository secrets:
+GitHub Actions の secrets。`migrate` / `deploy` 用は repository secrets または `production` environment secrets、`ops` 用は repository secrets に登録する:
 
 | Secret | 使うジョブ | 未設定時の挙動 |
 |---|---|---|
-| `DATABASE_URL` | migrate / emoji-sync / db-dump | ジョブが失敗する |
-| `EMOJI_S3_BUCKET` | emoji-sync | emoji-sync が失敗する |
-| `S3_ENDPOINT` / `S3_REGION` / `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | emoji-sync | Storage へのアップロードが失敗する |
-| `APP_URL` | reap | curl が失敗する |
-| `CRON_SECRET` | reap | サーバが 401 を返し reap が失敗する |
-| `DUMP_PASSPHRASE` | db-dump | ジョブが失敗する |
+| `DATABASE_URL` | migrate / deploy の事前検査 / db-dump | ジョブが失敗する |
+| `EMOJI_S3_BUCKET` | migrate の emoji-sync | emoji-sync が失敗する |
+| `S3_ENDPOINT` / `S3_REGION` / `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | migrate の emoji-sync | Storage へのアップロードが失敗する |
+| `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` | deploy | Vercel の設定取得・ビルド・デプロイが失敗する |
+| `APP_URL` | ops の reap / prune-events | curl が失敗する |
+| `CRON_SECRET` | ops の reap / prune-events | サーバが 401 を返し保守処理が失敗する |
+| `DUMP_PASSPHRASE` | ops の db-dump | ジョブが失敗する |
 
-CI のマイグレーション / ダンプは **Session プール**（`*.pooler.supabase.com:5432`）の `DATABASE_URL` を GitHub Actions の secret に置く。Direct（`db.<ref>.supabase.co:5432`）は IPv6 専用で、IPv4 だけのネットワーク（このマシンや GitHub-hosted runner）からは届かない。IPv4 アドオンは不要。
+Actions のマイグレーション / 事前検査 / ダンプは **Session プール**（`*.pooler.supabase.com:5432`）の `DATABASE_URL` を secret に置く。Direct（`db.<ref>.supabase.co:5432`）は IPv6 専用で、IPv4 だけのネットワーク（このマシンや GitHub-hosted runner）からは届かない。IPv4 アドオンは不要。
+
+### 本番マイグレーションとデプロイ
+
+Vercel の Git 自動デプロイは `vercel.json` の `git.deploymentEnabled: false` で全ブランチ停止している。本番反映は GitHub の Actions 画面から、同じ Git ref を選んで次の順に手動実行する。
+
+1. `migrate` workflow を実行する。goose マイグレーションが成功した後だけ `emoji-sync` が動く。
+2. `deploy` workflow を別途実行する。最初に `migrate-check` が未適用版を読み取り検査し、1 件でもあれば DB を変更せず失敗する。その後、Vercel CLI で production 設定を取得し、ビルド済み成果物を本番へデプロイする。
+
+2 つの workflow は互いを自動起動せず、共通の `production-release` concurrency group によって同時実行もしない。スキーマ変更がない版でも `deploy` は手動でのみ開始され、commit の push や PR 作成だけでは Vercel デプロイされない。ローカルで同じ検査を行う場合は `cd backend && DATABASE_URL=... go run ./cmd/postall-server migrate-check` を使う。
 
 ### 暗号化バックアップ
 
@@ -154,8 +164,9 @@ make generate   # OpenAPI からのコード生成。CI で git diff --exit-code
 
 - PostgreSQL は Supabase。全文検索は PGroonga（`pgroonga_text_regexp_ops_v2`）。PGroonga の索引はクラッシュで壊れることがあり、そのときは `REINDEX INDEX posts_body_pgroonga;`（実索引名は `\d posts` で確認）で作り直す。
 - 接続の使い分け: API（Vercel）は Transaction プール（6543）。migrate / `emoji-sync` / `db dump` は Session プール（`pooler.supabase.com:5432`）。Direct は IPv6 のみ。
-- 変更通知は SSE ではなく、DB トリガーの `realtime.send()` → クライアントが `postall:events` を購読 → `GET /v1/events?after=` で差分回収。Realtime が切れたら 15 秒間隔のポーリングへ退避し、指数バックオフで再接続する。ホストでは `realtime.messages` の RLS を goose から作れない場合がある（所有者が `supabase_admin`）。その場合は SQL Editor で `create policy postall_events_select on realtime.messages for select to authenticated using (realtime.topic() = 'postall:events' and extension = 'broadcast');` を実行する。42501 なら Database → Policies で schema `realtime` / table `messages` に、authenticated の SELECT を同じ topic / extension 条件で追加する。`using (true)` は他トピックを購読可能にするため使用しない。
-- 添付回収は Vercel Cron（日次）と GitHub Actions（6 時間ごと）が `POST /internal/attachments/reap` を叩く。後者は Supabase Free の pause 回避（keep-alive）を兼ねる。
+- 変更通知は SSE ではなく、DB トリガーの `realtime.send()` → クライアントが `postall:events` を購読 → `GET /v1/events?after=` で差分回収。初回は `after=latest` で現在位置から開始し、履歴を 0 番から走査しない。Realtime が切れたら 15 秒間隔のポーリングへ退避し、指数バックオフで再接続する。ホストでは `realtime.messages` の RLS を goose から作れない場合がある（所有者が `supabase_admin`）。その場合は SQL Editor で `create policy postall_events_select on realtime.messages for select to authenticated using (realtime.topic() = 'postall:events' and extension = 'broadcast');` を実行する。42501 なら Database → Policies で schema `realtime` / table `messages` に、authenticated の SELECT を同じ topic / extension 条件で追加する。`using (true)` は他トピックを購読可能にするため使用しない。
+- 変更イベントは 30 日保持する。Vercel Cron（日次）と GitHub Actions（6 時間ごと）が `POST /internal/events/prune` を叩き、現在位置用の最新 1 行を残して古い行を削除する。削除済みの最大 ID は `change_event_retention` に記録するため、通常の ID 欠番を期限切れとは誤判定しない。30 日を超えてオフラインだったクライアントや、DB 復元後にカーソルが最新 ID より先になったクライアントには `resetRequired` を返し、表示中データを全再取得して復旧する。
+- 添付回収は Vercel Cron（日次）と GitHub Actions（6 時間ごと）が `POST /internal/attachments/reap` を叩く。GitHub Actions の添付回収と変更イベント整理は Supabase Free の pause 回避（keep-alive）も兼ねる。
 - 日次の `supabase db dump --data-only --schema public` は gzip + GPG AES-256 で暗号化し、Actions のアーティファクトに30日残す。平文 dump はアップロードしない。復元手順と無料枠の停止設定は「暗号化バックアップ」を参照する。Storage の実体はダンプ対象外。
 - 容量の確認: Supabase ダッシュボードの Database → Reports、および Storage のバケット使用量。Free は DB 500 MB・Storage 1 GB。近づいたら Pro への引き上げか添付サイズ上限の引き下げを検討する。
 - iOS の Mermaid 描画は WebView に `mermaid.min.js` を載せる。React 側と同じバンドルを使うため、`frontend` の依存を入れたうえで `make -C mobile assets` を実行してから iOS をビルドする。

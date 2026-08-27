@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,6 +31,12 @@ func main() {
 			if err := migrate.Up(databaseURL); err != nil {
 				log.Fatalf("migrations: %v", err)
 			}
+			return
+		case "migrate-check":
+			if err := requireCurrentMigrations(databaseURL); err != nil {
+				log.Fatalf("migrate-check: %v", err)
+			}
+			log.Print("migrate-check: database schema is current")
 			return
 		case "emoji-sync":
 			if databaseURL == "" {
@@ -83,6 +90,20 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+}
+
+func requireCurrentMigrations(databaseURL string) error {
+	if databaseURL == "" {
+		return fmt.Errorf("DATABASE_URL is required")
+	}
+	pending, err := migrate.Pending(databaseURL)
+	if err != nil {
+		return err
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("pending database migrations: %s; run the migrate workflow first", strings.Join(pending, ", "))
+	}
+	return nil
 }
 
 func runEmojiSync(ctx context.Context, databaseURL, dir string) error {

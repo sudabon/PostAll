@@ -175,6 +175,10 @@ $$;
 
 **通知失敗の観測**: DB 書き込みを Realtime 障害でロールバックしない best-effort 方針は維持するが、トリガーの例外ハンドラは `raise warning` で SQLSTATE とメッセージを記録する。無音の `when others then null` は使わない。
 
+**初期位置と保持期間**: 新しいクライアントセッションは `GET /v1/events?after=latest` で現在のイベント ID だけを取得し、表示中データを通常の一覧 API から1回読み直す。これにより、イベント数に比例して `after=0` のページを走査する初回処理を廃止する。通常の数値カーソルは後方互換のため維持する。
+
+`change_events` は30日保持とし、共有シークレットで保護した `/internal/events/prune` を既存の定期保守から実行する。全件削除すると現在位置を失うため、最新の1行は期間を超えてもウォーターマークとして残す。整理処理が実際に削除した最大 ID は単一行の `change_event_retention.pruned_through` に同じSQL文で記録し、トランザクション順序による通常の identity 欠番と保持期限による欠落を区別する。数値カーソルがこの削除済み範囲より前、またはDB復元後の最新 ID より先を指す場合、API はイベントを部分的に返さず、最新 ID と任意フィールド `resetRequired: true` を返す。Web と iOS は表示中データを全再取得してその最新 ID から同期を再開する。30日以内の通常再接続は従来どおりイベント単位で反映する。
+
 **却下した案**:
 - Postgres Changes（`change_events` テーブルの変更を直接購読）。→ Supabase 自身が Broadcast の方がスケールすると案内しており、また行の内容がそのままクライアントへ届くため payload の統制が効かない。
 - ポーリングのみ。→ 追加依存はゼロだが、反映が遅れ、アイドル時も要求が発生し続ける。Realtime が使える以上、退化させる理由がない。
@@ -238,11 +242,14 @@ $$;
 
 | 処理 | 現在 | 移行後 |
 |---|---|---|
-| goose マイグレーション | プロセス起動ごと（`cmd/postall-server/main.go:23-27`） | デプロイ工程のジョブ。ダイレクト接続で実行し、失敗したら新しい版へ切り替えない |
-| 絵文字同期 | 手動 CLI（`emoji-sync` サブコマンド） | デプロイ工程のジョブ。CLI は残すが実行主体を CI へ移す |
+| goose マイグレーション | プロセス起動ごと（`cmd/postall-server/main.go:23-27`） | 独立した手動 GitHub Actions。Session プール接続で明示実行する |
+| 絵文字同期 | 手動 CLI（`emoji-sync` サブコマンド） | 手動マイグレーション成功後のジョブ。CLI は残す |
+| Vercel デプロイ | Git 連携による自動実行 | 独立した手動 GitHub Actions。未適用マイグレーションがあれば読み取り検査で拒否する |
 | 添付リーパー | 15 分間隔の常駐 goroutine（`internal/httpapi/server.go:84-88`） | Vercel Cron が叩く内部エンドポイント |
 
 添付リーパーの内部エンドポイントは共有シークレットで保護する。`Reap` の本体（`internal/attachment/service.go:197-225`）は冪等で 1 バッチ 100 件の上限を持つため、ロジックはそのまま流用できる。二重起動に対しては、対象マークのクエリ（`internal/store/queries/attachments.sql:49-61`）が既に処理済みを除外するため不整合は生じない。
+
+Vercel の全ブランチ自動デプロイは `vercel.json` の `git.deploymentEnabled: false` で停止する。マイグレーションとデプロイは同じ Git ref を選んで別々に手動実行し、前者から後者を自動起動しない。両 workflow は共通の `production-release` concurrency group を使い、相互に同時実行しない。デプロイの `migrate-check` はDBを変更せず、未適用版があれば失敗するため、運用者はマイグレーションを先に完了させる。これによりDDL失敗時にアプリだけが先行する競合を防ぎつつ、2処理の実行責務を分離する。
 
 **却下した案**: Supabase の `pg_cron` から回収を駆動する。→ S3 互換 API の呼び出しが DB からはできず、Go のロジックを SQL へ書き直すことになる。
 
@@ -274,7 +281,7 @@ $$;
 
 Vercel Hobby の Cron は最短 1 日 1 回・起動精度 ±59 分。一方 Supabase Free は 1 週間 DB アクティビティが無いとプロジェクトが pause される。この 2 つを 1 本の仕掛けで解く。
 
-- 添付回収の内部エンドポイント（共有シークレット保護）を、**GitHub Actions の `schedule` から 6 時間ごとに叩く**。
+- 添付回収と30日を超えた変更イベント整理の内部エンドポイント（共有シークレット保護）を、**GitHub Actions の `schedule` から 6 時間ごとに叩く**。
 - 回収処理は必ず DB へ問い合わせるため、この定期実行がそのまま Supabase の keep-alive になる。
 - Vercel Cron も日次で同じエンドポイントに向けて設定し、Actions が止まった場合の二重化とする。エンドポイントは冪等なので二重起動は無害。
 
@@ -341,25 +348,25 @@ Supabase Free には自動バックアップが無く、pause 後の復帰可能
 **Phase 1: バックエンドのサーバーレス適合**
 
 4. マイグレーションを書き換える（PGroonga、`realtime.send()`、識別子カラムの改名）。
-5. 起動時マイグレーションを削除し、デプロイ工程のジョブへ移す。
+5. 起動時マイグレーションを削除し、独立した手動 GitHub Actions へ移す。
 6. `pgxpool` の明示設定と Supavisor 接続へ切り替える。
 7. SSE エンドポイントと `event_broker` を削除する。
 8. 添付リーパーを Cron エンドポイントへ移す。
 9. `blob.Store` を Supabase Storage 実装へ差し替える。
-10. 絵文字配信を Storage + 302 へ移し、`emoji-sync` をデプロイ工程へ移す。
+10. 絵文字配信を Storage + 302 へ移し、`emoji-sync` を手動マイグレーション後のジョブへ移す。
 11. 検索クエリを PGroonga 用に書き換え、統合テストを PGroonga 入りイメージで通す。
 12. 認証 verifier を Supabase Auth へ差し替える。
 
 **Phase 2: クライアントの追随**
 
 13. `api/openapi.yaml` から `GET /v1/events/stream` を削除し、`make generate` で 3 クライアントの生成物を更新する。
-14. フロントエンド、iOS、Electron の認証・Realtime 購読・設定項目を書き換える。
+14. フロントエンド、iOS、Electron の認証・Realtime 購読・設定項目を書き換え、初期同期を最新ウォーターマーク開始へ変更する。
 
 **Phase 3: 公開と撤去**
 
 15. `vercel.json` にキャッシュ指示と SPA フォールバックを追加する。
-16. CI にマイグレーション適用・絵文字同期・日次エクスポート・6 時間ごとの回収実行を追加する。
-17. Vercel を本番昇格し、`memo.sudabon.com` の DNS を切り替える。切替前に TTL を短くしておく。
+16. マイグレーション + 絵文字同期と Vercel デプロイを別々の手動 Actions にし、日次エクスポート・6 時間ごとの回収とイベント整理を定期 Actions に追加する。
+17. 手動マイグレーション後に手動 Vercel デプロイを実行して本番昇格し、`memo.sudabon.com` の DNS を切り替える。切替前に TTL を短くしておく。
 18. サインイン、投稿、添付のアップロードとダウンロード、検索、他クライアントへの変更反映、絵文字リアクションを 3 クライアントで確認する。
 19. `infra/`、`backend/Dockerfile`、`Makefile` の `test-sse-proxy` を削除し、`README.md` を書き直す。
 20. AWS の Cognito ユーザープールと S3 バケット、および旧 VPS を破棄する。

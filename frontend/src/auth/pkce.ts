@@ -67,12 +67,12 @@ export async function refreshTokens(input: {
 }
 
 export class TokenRequestError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-  ) {
+  status: number
+
+  constructor(message: string, status: number) {
     super(message)
     this.name = 'TokenRequestError'
+    this.status = status
   }
 }
 

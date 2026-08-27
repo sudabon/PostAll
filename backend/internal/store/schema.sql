@@ -129,3 +129,10 @@ create table change_events (
 );
 
 create index change_events_created_at on change_events (created_at);
+
+create table change_event_retention (
+    singleton      boolean primary key default true,
+    pruned_through bigint not null default 0,
+    constraint change_event_retention_singleton check (singleton),
+    constraint change_event_retention_nonnegative check (pruned_through >= 0)
+);

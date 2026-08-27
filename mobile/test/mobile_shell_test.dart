@@ -410,6 +410,7 @@ void main() {
       container.read(openThreadProvider.notifier).open(root.id);
       await tester.pump();
       await tester.pump();
+      expect(api.calls, contains('listEvents:after=latest'));
       api.calls.clear();
 
       api.emit('post.updated');
@@ -459,6 +460,33 @@ void main() {
       expect(find.text('不在中の投稿'), findsOneWidget);
 
       // 再接続待ちのタイマーを残したままテストを終えない。
+      container.read(changeSyncProvider)!.dispose();
+    });
+
+    testWidgets('Scenario: 変更履歴の保持期限を超えた復帰で全体を取り直す', (tester) async {
+      final api = FakeApi(
+        channels: [channel(1, name: 'general')],
+        posts: [post(10, channelId: testId(1), body: '最初')],
+      )..streamConnected = false;
+      addTearDown(api.dispose);
+
+      final container = await pumpApp(
+        tester,
+        api: api,
+        size: _narrow,
+        prefs: {'channels.selected': testId(1)},
+        child: const HomeShell(),
+      );
+
+      await api.createPost(testId(1), '保持期限後の投稿');
+      api.expireEventCursor();
+      await container.read(changeSyncProvider)!.resume();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump();
+      }
+
+      expect(find.text('保持期限後の投稿'), findsOneWidget);
+      expect(container.read(changeSyncProvider)!.lastEventId, '1');
       container.read(changeSyncProvider)!.dispose();
     });
   });

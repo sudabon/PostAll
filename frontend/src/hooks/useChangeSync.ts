@@ -54,6 +54,12 @@ export function useChangeSync(enabled = true) {
       queueMicrotask(flushInvalidations)
     }
 
+    const reloadDisplayedData = () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['channels'] }),
+      queryClient.invalidateQueries({ queryKey: ['posts'] }),
+      queryClient.invalidateQueries({ queryKey: ['thread'] }),
+    ])
+
     const advanceCursor = (event: ChangeEvent): boolean => {
       if (!/^[0-9]+$/.test(event.id)) return false
       if (lastEventId !== null && BigInt(event.id) <= BigInt(lastEventId)) return false
@@ -109,9 +115,14 @@ export function useChangeSync(enabled = true) {
       if (stopped) return false
       try {
         const isInitial = lastEventId === null
-        let cursor = lastEventId ?? '0'
+        let cursor = lastEventId ?? 'latest'
         while (!stopped) {
           const page = await api.listEvents(cursor, 200)
+          if (page.resetRequired) {
+            if (/^[0-9]+$/.test(page.nextAfter)) lastEventId = page.nextAfter
+            await reloadDisplayedData()
+            return !stopped
+          }
           if (!isInitial) {
             for (const event of page.events) applyEvent(event)
           }
@@ -122,11 +133,7 @@ export function useChangeSync(enabled = true) {
           if (!page.hasMore) break
         }
         if (!stopped && isInitial) {
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['channels'] }),
-            queryClient.invalidateQueries({ queryKey: ['posts'] }),
-            queryClient.invalidateQueries({ queryKey: ['thread'] }),
-          ])
+          await reloadDisplayedData()
         }
         return !stopped
       } catch (err) {

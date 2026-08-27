@@ -7,6 +7,13 @@ import (
 	"testing"
 )
 
+func TestNewS3RejectsImplicitCredentialChain(t *testing.T) {
+	_, err := NewS3(context.Background(), S3Config{Bucket: "attachments"})
+	if err == nil {
+		t.Fatal("NewS3 succeeded without explicit credentials")
+	}
+}
+
 func TestPresignPutIncludesContentLengthInSignature(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewS3(ctx, S3Config{

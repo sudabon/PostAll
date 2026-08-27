@@ -159,16 +159,26 @@ class ChangeSync {
     _recovering = true;
     try {
       final api = _ref.read(apiProvider);
-      var cursor = _lastEventId ?? '0';
+      final isInitial = _lastEventId == null;
+      var resetRequired = false;
+      var cursor = _lastEventId ?? 'latest';
       while (!_stopped) {
         final page = await api.listEvents(after: cursor, limit: 200);
-        for (final event in page.events) {
-          _apply(event);
+        if (page.resetRequired ?? false) {
+          resetRequired = true;
+          cursor = page.nextAfter;
+          break;
+        }
+        if (!isInitial) {
+          for (final event in page.events) {
+            _apply(event);
+          }
         }
         cursor = page.nextAfter;
         if (!page.hasMore) break;
       }
       _lastEventId = cursor;
+      if (isInitial || resetRequired) _reloadDisplayedData();
       _reconnectDelay = _reconnectDelayInitial;
       _ref
           .read(connectionProvider.notifier)
@@ -195,17 +205,7 @@ class ChangeSync {
     _lastEventId = event.id;
 
     if (event.isSyncWatermark) {
-      unawaited(_ref.read(channelsProvider.notifier).reload());
-      final selectedChannelId = _ref.read(selectedChannelProvider);
-      if (selectedChannelId != null) {
-        unawaited(
-          _ref.read(timelineProvider(selectedChannelId).notifier).reload(),
-        );
-      }
-      final openThreadId = _ref.read(openThreadProvider);
-      if (openThreadId != null) {
-        unawaited(_ref.read(threadProvider(openThreadId).notifier).reload());
-      }
+      _reloadDisplayedData();
       return;
     }
 
@@ -223,6 +223,20 @@ class ChangeSync {
     final threadRootId = event.threadRootId ?? event.postId;
     if (threadRootId != null && _ref.read(openThreadProvider) == threadRootId) {
       unawaited(_ref.read(threadProvider(threadRootId).notifier).reload());
+    }
+  }
+
+  void _reloadDisplayedData() {
+    unawaited(_ref.read(channelsProvider.notifier).reload());
+    final selectedChannelId = _ref.read(selectedChannelProvider);
+    if (selectedChannelId != null) {
+      unawaited(
+        _ref.read(timelineProvider(selectedChannelId).notifier).reload(),
+      );
+    }
+    final openThreadId = _ref.read(openThreadProvider);
+    if (openThreadId != null) {
+      unawaited(_ref.read(threadProvider(openThreadId).notifier).reload());
     }
   }
 }
