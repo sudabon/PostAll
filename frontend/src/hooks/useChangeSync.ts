@@ -2,15 +2,23 @@ import { useEffect } from 'react'
 import { useQueryClient, type QueryKey } from '@tanstack/react-query'
 import type { ChangeEvent } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
-import { currentAccessToken } from '@/auth/session'
+import { accessTokenForRequest } from '@/auth/session'
 import { subscribePostallEvents } from '@/lib/realtime'
+import { usePlatform } from '@/platform'
 import { useSettings } from '@/state/settings'
 import { useUi } from '@/state/ui'
 
 const pollInterval = 15_000
+const realtimeRetryBase = 1_000
+const realtimeRetryMax = 30_000
+
+function realtimeRetryDelay(attempt: number): number {
+  return Math.min(realtimeRetryBase * 2 ** attempt, realtimeRetryMax)
+}
 
 export function useChangeSync(enabled = true) {
   const { api, signedIn } = useAuth()
+  const platform = usePlatform()
   const queryClient = useQueryClient()
   const supabaseUrl = useSettings((s) => s.supabaseUrl)
   const publishableKey = useSettings((s) => s.supabasePublishableKey)
@@ -22,6 +30,9 @@ export function useChangeSync(enabled = true) {
     let pollTimer: number | null = null
     let recovery: Promise<boolean> | null = null
     let unsubscribeRealtime: (() => void) | null = null
+    let realtimeRetryTimer: number | null = null
+    let realtimeRetryAttempt = 0
+    let realtimeGeneration = 0
     const pendingInvalidations = new Map<string, QueryKey>()
     let invalidationQueued = false
 
@@ -123,24 +134,45 @@ export function useChangeSync(enabled = true) {
       pollTimer = null
     }
 
-    const connectRealtime = () => {
+    const stopRealtimeRetry = () => {
+      if (realtimeRetryTimer === null) return
+      window.clearTimeout(realtimeRetryTimer)
+      realtimeRetryTimer = null
+    }
+
+    const scheduleRealtimeRetry = () => {
+      if (realtimeRetryTimer !== null || !navigator.onLine) return
+      const delay = realtimeRetryDelay(realtimeRetryAttempt)
+      realtimeRetryAttempt += 1
+      realtimeRetryTimer = window.setTimeout(() => {
+        realtimeRetryTimer = null
+        connectRealtime()
+      }, delay)
+    }
+
+    function connectRealtime() {
+      stopRealtimeRetry()
+      const generation = ++realtimeGeneration
       unsubscribeRealtime?.()
+      unsubscribeRealtime = null
       if (!navigator.onLine) {
         useUi.getState().setConnectionState('offline')
         return
       }
-      useUi.getState().setConnectionState('connecting')
-      const token = currentAccessToken()
+      if (pollTimer === null) useUi.getState().setConnectionState('connecting')
       unsubscribeRealtime = subscribePostallEvents({
         supabaseUrl,
         publishableKey,
-        accessToken: token ?? '',
+        getAccessToken: () => accessTokenForRequest(platform),
         onSignal: () => {
+          if (stopped || generation !== realtimeGeneration) return
           void recoverOnce()
         },
         onStatus: (subscribed) => {
-          if (stopped) return
+          if (stopped || generation !== realtimeGeneration) return
           if (subscribed) {
+            realtimeRetryAttempt = 0
+            stopRealtimeRetry()
             stopPolling()
             useUi.getState().setConnectionState('live')
             void recoverOnce()
@@ -149,6 +181,7 @@ export function useChangeSync(enabled = true) {
           useUi.getState().setConnectionState('degraded')
           startPolling()
           void recoverOnce()
+          scheduleRealtimeRetry()
         },
       })
     }
@@ -158,11 +191,15 @@ export function useChangeSync(enabled = true) {
       void recoverOnce()
     }
     const onOnline = () => {
+      realtimeRetryAttempt = 0
       connectRealtime()
     }
     const onOffline = () => {
+      realtimeGeneration += 1
       useUi.getState().setConnectionState('offline')
       unsubscribeRealtime?.()
+      unsubscribeRealtime = null
+      stopRealtimeRetry()
       stopPolling()
     }
     const onVisibility = () => {
@@ -171,21 +208,24 @@ export function useChangeSync(enabled = true) {
     const onMockSignal = () => {
       void recoverOnce()
     }
+    const mockSignalsEnabled = import.meta.env.DEV || import.meta.env.MODE === 'test'
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)
     document.addEventListener('visibilitychange', onVisibility)
-    window.addEventListener('postall:change-signal', onMockSignal)
+    if (mockSignalsEnabled) window.addEventListener('postall:change-signal', onMockSignal)
     connectRealtime()
 
     return () => {
       stopped = true
+      realtimeGeneration += 1
       unsubscribeRealtime?.()
+      stopRealtimeRetry()
       stopPolling()
       pendingInvalidations.clear()
       window.removeEventListener('online', onOnline)
       window.removeEventListener('offline', onOffline)
       document.removeEventListener('visibilitychange', onVisibility)
-      window.removeEventListener('postall:change-signal', onMockSignal)
+      if (mockSignalsEnabled) window.removeEventListener('postall:change-signal', onMockSignal)
     }
-  }, [api, enabled, publishableKey, queryClient, signedIn, supabaseUrl])
+  }, [api, enabled, platform, publishableKey, queryClient, signedIn, supabaseUrl])
 }

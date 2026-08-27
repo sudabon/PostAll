@@ -179,6 +179,9 @@ func TestEmojiImageDelivery(t *testing.T) {
 	if got := rec.Header().Get("Location"); got != "memory://get/shipit.png" {
 		t.Fatalf("location = %q", got)
 	}
+	if got := rec.Header().Get("Cache-Control"); got != "private, max-age=60" {
+		t.Fatalf("cache-control = %q", got)
+	}
 
 	cached := httptest.NewRequest(http.MethodGet, "/v1/emojis/shipit/image", nil)
 	cached.Header.Set("Authorization", authz)
@@ -192,6 +195,15 @@ func TestEmojiImageDelivery(t *testing.T) {
 	missing := doJSON(t, h, http.MethodGet, "/v1/emojis/missing/image", authz, nil)
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("missing image = %d %s", missing.Code, missing.Body)
+	}
+
+	missingCached := httptest.NewRequest(http.MethodGet, "/v1/emojis/missing/image", nil)
+	missingCached.Header.Set("Authorization", authz)
+	missingCached.Header.Set("If-None-Match", `"sum-2"`)
+	missingCachedRec := httptest.NewRecorder()
+	h.ServeHTTP(missingCachedRec, missingCached)
+	if missingCachedRec.Code != http.StatusNotFound {
+		t.Fatalf("missing cached image = %d %s", missingCachedRec.Code, missingCachedRec.Body)
 	}
 
 	unknown := doJSON(t, h, http.MethodGet, "/v1/emojis/unknown/image", authz, nil)

@@ -199,7 +199,16 @@ void main() {
 
       expect(url.queryParameters['code_challenge_method'], 'S256');
       expect(url.queryParameters['redirect_to'], 'postall://auth/callback');
+      expect(url.queryParameters['provider'], 'github');
       expect(url.path, '/auth/v1/authorize');
+
+      final explicit = authorizeUrl(
+        supabaseUrl: 'https://auth.example.invalid',
+        redirectUri: 'postall://auth/callback',
+        challenge: 'challenge',
+        provider: 'gitlab',
+      );
+      expect(explicit.queryParameters['provider'], 'gitlab');
     });
 
     test('expires_in から失効時刻を決める', () {

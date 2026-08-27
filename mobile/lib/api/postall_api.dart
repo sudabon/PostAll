@@ -2,6 +2,14 @@ import 'dart:typed_data';
 
 import 'generated/models.dart';
 
+/// Realtime の接続状態を公開できる API 実装だけが提供する任意 capability。
+///
+/// [PostAllApi.watchChangeSignals] の公開シグネチャは変えず、ポーリング由来の
+/// 合図と Realtime 由来の合図を表示側が区別するために使う。
+abstract interface class RealtimeStatusSource {
+  Stream<bool> watchRealtimeStatus();
+}
+
 /// PostAll バックエンドの抽象。
 ///
 /// メソッド構成は frontend/src/api/client.ts と揃えてある。widget test では

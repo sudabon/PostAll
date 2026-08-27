@@ -1,5 +1,8 @@
 name: ops
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -71,12 +74,46 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
-      - name: Dump database
+      - name: Dump and encrypt database
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: supabase db dump --db-url "$DATABASE_URL" -f postall.dump.sql
+          DUMP_PASSPHRASE: ${{ secrets.DUMP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          plain="$RUNNER_TEMP/postall.dump.sql"
+          compressed="$RUNNER_TEMP/postall.dump.sql.gz"
+          encrypted="$GITHUB_WORKSPACE/postall.dump.sql.gz.gpg"
+          trap 'rm -f "$plain" "$compressed"' EXIT
+          : "${DUMP_PASSPHRASE:?DUMP_PASSPHRASE secret is required}"
+          supabase db dump \
+            --db-url "$DATABASE_URL" \
+            --data-only \
+            --schema public \
+            --use-copy \
+            --exclude public.goose_db_version \
+            -f "$plain"
+          gzip -9 -c "$plain" > "$compressed"
+          printf '%s' "$DUMP_PASSPHRASE" | gpg \
+            --batch \
+            --yes \
+            --pinentry-mode loopback \
+            --passphrase-fd 0 \
+            --symmetric \
+            --cipher-algo AES256 \
+            --output "$encrypted" \
+            "$compressed"
+          max_bytes=$((10 * 1024 * 1024))
+          actual_bytes=$(stat -c '%s' "$encrypted")
+          if (( actual_bytes > max_bytes )); then
+            echo "Encrypted dump is ${actual_bytes} bytes; maximum is ${max_bytes}." >&2
+            rm -f "$encrypted"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: postall-db-dump
-          path: postall.dump.sql
+          name: postall-db-dump-${{ github.run_id }}
+          path: postall.dump.sql.gz.gpg
+          if-no-files-found: error
           retention-days: 30
+          compression-level: 0

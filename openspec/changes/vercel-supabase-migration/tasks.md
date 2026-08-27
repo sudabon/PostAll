@@ -120,3 +120,18 @@
 - [x] 14.3 `README.md` の前提・ローカル起動・AWS リソース表・開発コマンド・運用メモを新しい構成へ書き直す。PGroonga 索引の再作成手順を運用メモに残す
 - [x] 14.4 `.github/workflows/ci.yml` から不要になったジョブや手順を整理する
 - [ ] 14.5 動作確認の完了後、AWS の Cognito ユーザープールと S3 バケット、および旧 VPS を破棄する
+
+## 15. PR #2 レビュー指摘の修正
+
+- [x] 15.1 DB ダンプを gzip 圧縮後に GPG で暗号化し、10 MiB 上限・30 日保持で暗号化済みファイルだけを Artifact へ保存する。復元手順、`DUMP_PASSPHRASE`、Actions storage の `$0` 予算設定を README に記載する
+- [x] 15.2 GitHub OAuth を Supabase Auth で有効化し、Web / Electron / iOS の認可 URLへ `provider=github` を追加する。既存 URL builder の呼び出し互換性を保った回帰テストを追加する
+- [x] 15.3 Supabase Auth の signup を無効化し、同じ検証済みメールの既存ユーザーへ GitHub identity をリンクする初期設定を README に記載する
+- [x] 15.4 Web と iOS の Realtime を非同期 token provider に切り替え、切断時はポーリングを続けながら指数バックオフで最新トークンによる再接続を行う。既存の公開 API は維持する
+- [x] 15.5 iOS で Realtime 購読失敗中の接続状態を `degraded` として表示し、ポーリング成功で `online` に戻さない回帰テストを追加する
+- [x] 15.6 Realtime 通知トリガーの best-effort 例外を PostgreSQL warning に記録し、RLS を `postall:events` の broadcast SELECT だけに限定する。README の手動 SQL も揃える
+- [x] 15.7 PGroonga の一致テストで索引利用を強制・検証し、`_` と `\\` のケースを加える。00008 の Down は `pg_bigm` 索引を復元できない環境で安全に失敗させる
+- [x] 15.8 `emoji-sync` が DB 復元後の欠損オブジェクトを再アップロードする回帰テストを追加する
+- [x] 15.9 絵文字画像の 304 判定を Storage `Head` 後へ移し、302 のキャッシュを署名期限より短い 60 秒にする回帰テストを追加する
+- [x] 15.10 E2E 専用 `postall:change-signal` リスナーを development / test mode に限定する
+- [x] 15.11 対象テストを修正ごとに実行し、最後に Go build/vet/test、frontend typecheck/lint/test、Flutter analyze/test、可能なら Docker 統合テストを実行する
+- [x] 15.12 既存 Artifact と repository Actions secrets を確認する（2026-08-27 時点でどちらも 0 件。削除・ローテーション対象なし）

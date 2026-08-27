@@ -70,7 +70,7 @@ PostAll は現在、単一 VPS 上の 4 コンテナ（Nginx / Certbot / Go API 
 - 機能の追加・変更。UI もデータモデルも本 change では変えない（識別子カラムの改名を除く）。
 - コンテナ構成との両対応。環境変数による実行環境の切り替えは実装しない。
 - マルチリージョン配置、レプリカ、キャッシュ層の導入。
-- 認証方式そのものの変更（パスワード／ソーシャルログインの選択は現行の Cognito 設定を踏襲する）。
+- サインイン UI や PKCE／コールバック方式の再設計。既存の 1 ボタン + PKCE を維持し、移行先で必要な GitHub OAuth provider だけを明示する。
 - Realtime を使った「サーバを介さない直接のデータ購読」。クライアントは引き続き HTTP API 経由でのみ読み書きする。
 - SSE の Vercel 上での成立可能性の検証。成立しない前提で設計する。
 
@@ -137,6 +137,10 @@ PostAll は現在、単一 VPS 上の 4 コンテナ（Nginx / Certbot / Go API 
 
 **索引のサイズ**: PGroonga の索引は対象テキストを索引内にも保持するため、pg_bigm の約 2.3 倍のサイズになる。Supabase Free のデータベース上限は 500 MB で、本文平均 1 KB・数万ポストなら索引込みでも十分収まる。上限に近づいた場合はプランの引き上げが唯一の選択肢になる。
 
+**索引経路の検証**: 検索結果の一致テストでは `enable_seqscan = off` にして PGroonga 索引の利用を強制し、`EXPLAIN` が `posts_body_pgroonga` を使うことを先に確認する。`%`、`_`、`\\` を含む検索語も、索引あり／なしの両経路で同じ結果になることを検証する。
+
+**ロールバック**: 00008 の Down は `pg_bigm` と `posts_body_bigm` を復元してから PGroonga を外す。`pg_bigm` を提供しない Supabase では Down 全体を失敗させ、トランザクションにより PGroonga 索引を残す。索引を一つも持たない中間状態へは遷移させない。
+
 ### D5. 変更通知は Supabase Realtime Broadcast from Database へ置換する
 
 現行のトリガー関数（`backend/migrations/00006_search_events.sql:31-43`）を、`pg_notify` から `realtime.send()` へ差し替える。
@@ -165,7 +169,11 @@ $$;
 - ペイロードを「イベント ID のみ」に絞ることで、Realtime 経路が認可を迂回した情報漏洩経路にならない（`sync-and-storage` の「通知に本文を含めない」）。実データは従来どおり認可済みの HTTP API からしか出ない。
 - クライアント側の差分回収ロジック（取りこぼし補填・順序保証・重複排除）が既に完成しており、そのまま使える。
 
-**認可**: private チャネルとし、`realtime.messages` に RLS ポリシーを置いて認証済みユーザーのみ購読可能にする。クライアントは Supabase Auth のアクセストークンで Realtime へ接続する。
+**認可**: private チャネルとし、`realtime.messages` の SELECT は `realtime.topic() = 'postall:events' and extension = 'broadcast'` を満たす認証済みユーザーだけに許可する。他の Realtime トピックはこのポリシーで購読可能にしない。クライアントは Supabase Auth のアクセストークンで Realtime へ接続する。
+
+**トークン更新と再接続**: Realtime ヘルパへ固定アクセストークンではなく非同期の token provider を渡す。接続・再接続のたびに既存のセッション更新経路から最新トークンを取得し、購読失敗時はポーリングへ退避しながら指数バックオフで Realtime を再接続する。フロントエンドは既存の固定文字列引数も受理し、iOS は既存の `PostAllApi.watchChangeSignals()` を変更せず、別の任意 capability で購読状態を `sync.dart` へ伝えることで公開 API の互換性を保つ。ポーリング中はデータ取得が成功しても接続表示を `degraded` のままにする。
+
+**通知失敗の観測**: DB 書き込みを Realtime 障害でロールバックしない best-effort 方針は維持するが、トリガーの例外ハンドラは `raise warning` で SQLSTATE とメッセージを記録する。無音の `when others then null` は使わない。
 
 **却下した案**:
 - Postgres Changes（`change_events` テーブルの変更を直接購読）。→ Supabase 自身が Broadcast の方がスケールすると案内しており、また行の内容がそのままクライアントへ届くため payload の統制が効かない。
@@ -192,6 +200,10 @@ $$;
 
 **クライアント側**: `frontend/src/auth/pkce.ts`（手書き PKCE）と `mobile/lib/auth/cognito.dart` を Supabase Auth のフローへ書き換える。`postall://auth/callback` は Supabase の Redirect URL 許可リストへ登録して維持し、Electron の `app.setAsDefaultProtocolClient('postall')`（`electron/main.mjs:202-214`）と iOS の `Info.plist` は変更しない。トークンの保管方式（Electron: `safeStorage`、iOS: Keychain、ブラウザ: 非永続）も変更しない。
 
+**サインイン方式**: 既存の 1 ボタン UI を維持し、GitHub OAuth を採用する。3 クライアントの `/auth/v1/authorize` URL に `provider=github` を必ず含め、既存の URL builder 呼び出しは既定値 `github` でソース互換にする。ローカル設定は `[auth.external.github]` の client ID / secret を環境変数参照で有効化し、本番は Supabase Dashboard へ同じ GitHub OAuth App を登録する。
+
+**招待制**: Supabase Auth の新規サインアップと email signup は無効化する。初回ログイン前に管理画面で GitHub の検証済みメールアドレスと同じ確認済みユーザーを作成し、OAuth の自動 identity linking で既存ユーザーへ結び付ける。これにより未登録の GitHub ユーザーは JWT を取得できず、API の既存の「authenticated ロールのみ」という認可モデルを維持できる。
+
 ### D7. オブジェクトストレージは S3 互換エンドポイントで差し替える
 
 `backend/internal/blob/s3.go` の `aws-sdk-go-v2` をそのまま使い、エンドポイントと資格情報を Supabase Storage の S3 互換エンドポイントへ向ける。`PresignPut`（15 分）、`PresignGet`（5 分、`ResponseContentDisposition` 付き）、`Head`、`Delete` の 4 操作はいずれも Supabase Storage がサポートする。
@@ -211,6 +223,8 @@ $$;
 - `emoji-sync` が `emoji/` の png を Supabase Storage の絵文字バケットへアップロードし、DB には従来どおり `shortcode` / `storage_key` / `checksum` のみを記録する（スキーマ変更なし）。
 - `GET /v1/emojis/{shortcode}/image` は認可を検証し、`If-None-Match` が DB の checksum と一致すれば 304 を返す。一致しなければ署名付き GET URL へ 302 リダイレクトする。
 - `backend/internal/httpapi/emojis.go` のローカル FS 配信（`os.OpenRoot` / `http.ServeContent`）を削除する。
+- `emoji-sync` は DB の checksum が一致していても Storage の `Head` を確認し、実体が無ければ再アップロードする。DB 復元後に空の Storage を自己修復できるようにする。
+- 304 判定は Storage の `Head` より後に行う。302 の `Cache-Control` は署名付き URL の 5 分より十分短い 60 秒にし、キャッシュ境界で期限切れ URL を再利用しない。
 
 **理由**: 実体を関数バンドルへ同梱すると、`emoji/` が `backend/` の外にあるため取り込み設定が必要になり、絵文字の追加のたびに API の再デプロイが要る。Storage へ置けば `emoji-sync` の実行だけで反映される。302 にすることで画像バイトが関数を通らない。
 
@@ -277,13 +291,22 @@ Vercel Hobby の Cron は最短 1 日 1 回・起動精度 ±59 分。一方 Sup
 
 Supabase Free には自動バックアップが無く、pause 後の復帰可能期間についても公式の記述に食い違いがある（Studio から 1 年とする記述と、90 日とする Discussion が併存）。プラットフォーム側の保持を当てにしない。
 
-- GitHub Actions の `schedule` で **日次** `supabase db dump` を実行し、成果物を Actions のアーティファクトとして保持する。
+- GitHub Actions の `schedule` で **日次** `supabase db dump --data-only --schema public --use-copy` を実行し、gzip 圧縮後に `DUMP_PASSPHRASE` secret を使って GPG の AES-256 対称暗号で暗号化する。goose 適用済みの空 DB へ戻すため `public.goose_db_version` は除外し、公開リポジトリへ平文ダンプをアップロードしない。
+- 暗号化済みファイルだけを Actions のアーティファクトとして 30 日保持する。1 件を 10 MiB 以下に制限し、超えた場合はアップロードせずジョブを失敗させる。日次実行分の保持量は最大約 300 MiB になる。`workflow_dispatch` の手動実行分も容量へ加算されるため、総量の停止境界は次項の `$0` 予算で担保する。
+- GitHub の Actions storage 予算を `$0` かつ上限到達時に停止する設定にし、アカウント内の他リポジトリや Packages と無料枠を共有していても追加課金を許可しない。この設定はリポジトリ外の手動運用項目として README に残す。
 - 失敗はワークフローの失敗として表面化させ、直前に成功したダンプは消さない。
 - 添付の実体（Storage）は本 change ではエクスポート対象に含めない。数が少なく、失われても本文は残るため。将来 Storage の使用量が増えたら見直す。
 
-**理由**: 「運用対象をアプリケーションコードだけにする」という本 change の動機に対し、手動バックアップは真っ向から反する。自動化されていないバックアップは無いのと同じ。
+**理由**: 「運用対象をアプリケーションコードだけにする」という本 change の動機に対し、手動バックアップは真っ向から反する。自動化されていないバックアップは無いのと同じ。圧縮してから暗号化することで保持量を抑え、GitHub とは別の有料ストレージを追加せず、公開アーティファクトからの情報漏洩も防ぐ。
 
-**却下した案**: Supabase の pause 時に取得されるバックアップに頼る。→ 取得のタイミングを制御できず、Free ではダッシュボードからダウンロードできないという記述もある。
+**却下した案**:
+- Supabase の pause 時に取得されるバックアップに頼る。→ 取得のタイミングを制御できず、Free ではダッシュボードからダウンロードできないという記述もある。
+- Supabase Storage の非公開バケットへ置く。→ 非公開にはできるが DB と同じ障害ドメインになり、1 GB の無料枠を添付と競合する。
+- 外部 S3 へ置く。→ 障害分離は最良だが、追加サービスと従量課金が発生しうるため「追加費用なし」という条件に反する。
+
+### D15. テスト専用の変更合図は本番で登録しない
+
+フロントエンド E2E が使う `postall:change-signal` のグローバルイベント受け口は、Vite の development / test mode でだけ登録する。本番ビルドではリスナー自体を含めず、通常の Supabase Realtime 経路だけを使う。E2E の既存モック方式とアプリの公開 API は変更しない。
 
 ## Risks / Trade-offs
 
@@ -292,6 +315,7 @@ Supabase Free には自動バックアップが無く、pause 後の復帰可能
 - **PGroonga が Supabase Free で有効化できない** → 公式ドキュメントにプラン制限の記載は無いが、「Free で使える」と明記したソースも無い。プロジェクト作成直後に `create extension pgroonga` を試す（tasks 1.2）。使えない場合、選択肢は ①Pro へ引き上げる ②`pg_trgm` に落として最小検索文字数を 3 文字へ引き上げる（`full-text-search` の要件変更が必要）③索引なしの `LIKE` で当面しのぐ、の 3 つ。**この判定は他のすべての作業より前に済ませる。**
 - **Supabase Free のプロジェクトが pause される** → D13 の 6 時間ごとの定期実行で回避する。それでも pause された場合はダッシュボードから Resume する。復帰可能期間について公式の記述が食い違っているため、D14 のエクスポートを最後の保険とする。
 - **Supabase Free のバックアップが無い** → D14 で日次エクスポートを自動化する。復旧時に失われるのは直近のエクスポート以降の変更のみ。
+- **暗号化バックアップが 10 MiB を超える、または Actions の無料枠を使い切る** → 新しい Artifact は保存せずジョブを失敗させ、直前に成功した暗号化ダンプを残す。通知を受けて保持期間短縮または外部ストレージへの移行を判断する。追加課金で自動継続はしない。
 - **Storage 1 GB の上限** → 25 MiB の添付なら 40 ファイル程度で枯渇する。個人メモの添付としては当面足りる見込みだが、使用量の監視を運用メモに残す。上限に近づいたら Pro への引き上げか、添付の最大サイズ引き下げを検討する。
 - **データベース 500 MB の上限** → PGroonga の索引は pg_bigm の約 2.3 倍のサイズになる。本文中心のメモなら数万ポストまで収まる見込み。こちらも監視対象とする。
 - **Supavisor のトランザクションモードで prepared statement 起因のエラーが出る** → sqlc 生成コードは pgx の `Query`/`Exec` を通るため、実行モードの設定で対処できる。統合テストを PgBouncer のトランザクションモードに対して一度通す。
@@ -353,6 +377,8 @@ Supabase Free には自動バックアップが無く、pause 後の復帰可能
 | 既存ユーザーの移行 | **不要**（利用開始前でデータが無い）。データ移送・`sub` 対応付け・既存データへの索引作成をすべて削除した | Migration Plan |
 | ドメイン | **`memo.sudabon.com` を引き継ぐ**。Hobby でもカスタムドメインは 50 個まで使え、TLS は自動発行。iOS の既定 API ベース URL（`mobile/lib/state/settings.dart:15`）は変更不要 | Phase 3 |
 | `PresignPut` の `ContentLength` 署名 | **署名の一致は検証される**（Supabase Storage の SigV4 実装が `content-length` を署名可能ヘッダとして扱う）。ただし宣言値と実バイト数の整合は保証されないため、完了時の `Head` 検証を必ず残す | D7 |
+| Supabase Auth のサインイン方式 | **GitHub OAuth**。既存の 1 ボタン + PKCE を維持し、signup を無効化したうえで、確認済みの既存ユーザーへ同一メールの GitHub identity をリンクする | D6 |
+| DB ダンプの保管 | **gzip + GPG 暗号化済み Artifact**。30 日保持、1 件 10 MiB 上限、Actions storage 予算 `$0`。上限時はバックアップ失敗を許容し、追加課金しない | D14 |
 
 Supabase Free での Storage の S3 アクセスキー発行は、実プロジェクトで発行できることを確認済み。D7（`aws-sdk-go-v2` をそのまま使い、エンドポイントと資格情報だけ差し替える）がそのまま成立する。
 

@@ -10,7 +10,7 @@ import 'package:postall/api/postall_api.dart';
 ///
 /// 実装は本物と同じ観測可能な振る舞い（昇順・keyset・論理削除の除外・
 /// 同一階層での名前の一意性）だけを再現する。
-class FakeApi implements PostAllApi {
+class FakeApi implements PostAllApi, RealtimeStatusSource {
   FakeApi({
     List<Channel>? channels,
     List<Post>? posts,
@@ -27,10 +27,21 @@ class FakeApi implements PostAllApi {
 
   /// Realtime が繋がっているか。false の間は合図を出さず、クライアントは
   /// `listEvents` による差分取得へ退避する（iOS のバックグラウンドを模す）。
-  bool streamConnected = true;
+  bool _streamConnected = true;
+
+  bool get streamConnected => _streamConnected;
+
+  set streamConnected(bool connected) {
+    if (_streamConnected == connected) return;
+    _streamConnected = connected;
+    if (!_realtimeStatuses.isClosed) {
+      _realtimeStatuses.add(connected);
+    }
+  }
 
   /// 発行したイベント。購読者へ合図を配り、`listEvents` でも返す。
   final _signals = StreamController<void>.broadcast();
+  final _realtimeStatuses = StreamController<bool>.broadcast(sync: true);
   final _log = <ChangeEvent>[];
   var _nextEventId = 0;
 
@@ -46,6 +57,7 @@ class FakeApi implements PostAllApi {
 
   void dispose() {
     _signals.close();
+    _realtimeStatuses.close();
   }
 
   @override
@@ -383,9 +395,25 @@ class FakeApi implements PostAllApi {
   }
 
   @override
+  Stream<bool> watchRealtimeStatus() => Stream<bool>.multi((controller) {
+    controller.add(streamConnected);
+    final subscription = _realtimeStatuses.stream.listen(
+      controller.add,
+      onError: controller.addError,
+      onDone: controller.close,
+    );
+    controller.onCancel = subscription.cancel;
+  });
+
+  @override
   Stream<void> watchChangeSignals() {
     calls.add('watchChangeSignals');
     return _signals.stream;
+  }
+
+  /// Realtime ではなくフォールバックのポーリングから届く合図を再現する。
+  void emitPollingSignal() {
+    if (!_signals.isClosed) _signals.add(null);
   }
 
   /// サーバ発の変更を記録し、購読中のクライアントへ合図を送る。

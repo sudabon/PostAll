@@ -77,9 +77,11 @@ Uri authorizeUrl({
   required String supabaseUrl,
   required String redirectUri,
   required String challenge,
+  String provider = 'github',
 }) =>
     Uri.parse('${_trimBase(supabaseUrl)}/auth/v1/authorize').replace(
       queryParameters: {
+        'provider': provider,
         'redirect_to': redirectUri,
         'code_challenge': challenge,
         'code_challenge_method': 'S256',

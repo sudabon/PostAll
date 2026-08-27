@@ -464,6 +464,31 @@ void main() {
   });
 
   group('接続状態', () {
+    testWidgets('Realtime 失敗中はポーリング成功後も degraded のまま', (tester) async {
+      final api = FakeApi(
+        channels: [channel(1, name: 'general')],
+        posts: [post(10, channelId: testId(1))],
+      )..streamConnected = false;
+      addTearDown(api.dispose);
+
+      final container = await pumpApp(
+        tester,
+        api: api,
+        size: _narrow,
+        prefs: {'channels.selected': testId(1)},
+        child: const HomeShell(),
+      );
+      expect(container.read(connectionProvider), BackendConnection.degraded);
+
+      api.emitPollingSignal();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump();
+      }
+
+      expect(container.read(connectionProvider), BackendConnection.degraded);
+      container.read(changeSyncProvider)!.dispose();
+    });
+
     testWidgets('接続断中は投稿できない', (tester) async {
       final api = FakeApi(
         channels: [channel(1, name: 'general')],

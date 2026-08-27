@@ -34,8 +34,10 @@ export function authorizeUrl(input: {
   supabaseUrl: string
   redirectUri: string
   challenge: string
+  provider?: string
 }): string {
   const url = new URL(`${input.supabaseUrl.replace(/\/$/, '')}/auth/v1/authorize`)
+  url.searchParams.set('provider', input.provider ?? 'github')
   url.searchParams.set('redirect_to', input.redirectUri)
   url.searchParams.set('code_challenge', input.challenge)
   url.searchParams.set('code_challenge_method', 'S256')

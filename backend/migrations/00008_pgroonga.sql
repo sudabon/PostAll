@@ -8,5 +8,10 @@ create index posts_body_pgroonga
     on posts using pgroonga (body pgroonga_text_regexp_ops_v2);
 
 -- +goose Down
+create extension if not exists pg_bigm;
+
+create index posts_body_bigm
+    on posts using gin (lower(body) gin_bigm_ops);
+
 drop index if exists posts_body_pgroonga;
 drop extension if exists pgroonga;

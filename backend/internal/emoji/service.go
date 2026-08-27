@@ -85,7 +85,22 @@ func (s *Service) Sync(ctx context.Context, dir string, objects blob.Store) (Syn
 		case err != nil:
 			return result, fmt.Errorf("get emoji %s: %w", shortcode, err)
 		case existing.Checksum == checksum && existing.StorageKey == name:
-			result.Unchanged++
+			if objects == nil {
+				result.Unchanged++
+				continue
+			}
+			exists, _, err := objects.Head(ctx, name)
+			if err != nil {
+				return result, fmt.Errorf("head emoji %s: %w", shortcode, err)
+			}
+			if exists {
+				result.Unchanged++
+				continue
+			}
+			if err := putEmojiObject(ctx, objects, path, name); err != nil {
+				return result, fmt.Errorf("repair emoji %s: %w", shortcode, err)
+			}
+			result.Updated++
 		default:
 			if err := putEmojiObject(ctx, objects, path, name); err != nil {
 				return result, fmt.Errorf("upload emoji %s: %w", shortcode, err)

@@ -7,6 +7,7 @@ export const AUTH_SECRET_KEY = 'auth.tokens'
 export const PKCE_VERIFIER_KEY = 'auth.pkceVerifier'
 
 let tokens: TokenSet | null = null
+let refreshInFlight: Promise<string | null> | null = null
 const listeners = new Set<(signedIn: boolean) => void>()
 
 export function subscribeSignedIn(listener: (signedIn: boolean) => void): () => void {
@@ -35,31 +36,45 @@ export async function loadTokens(platform: PlatformAdapter) {
   rememberTokens(raw ? (JSON.parse(raw) as TokenSet) : null)
 }
 
+export async function accessTokenForRequest(platform: PlatformAdapter): Promise<string | null> {
+  const cur = tokens
+  if (!cur) return null
+  if (cur.expiresAt - Date.now() > 60_000) return cur.accessToken
+  if (refreshInFlight) return refreshInFlight
+
+  const refresh = refreshAccessToken(platform, cur)
+  refreshInFlight = refresh
+  try {
+    return await refresh
+  } finally {
+    if (refreshInFlight === refresh) refreshInFlight = null
+  }
+}
+
+async function refreshAccessToken(platform: PlatformAdapter, cur: TokenSet): Promise<string | null> {
+  const { supabaseUrl, supabasePublishableKey } = useSettings.getState()
+  if (!cur.refreshToken || !supabaseUrl || !supabasePublishableKey) {
+    await persistTokens(platform, null)
+    return null
+  }
+  try {
+    const next = await refreshTokens({
+      supabaseUrl,
+      publishableKey: supabasePublishableKey,
+      refreshToken: cur.refreshToken,
+    })
+    const merged = { ...next, refreshToken: next.refreshToken ?? cur.refreshToken }
+    await persistTokens(platform, merged)
+    return merged.accessToken
+  } catch {
+    await persistTokens(platform, null)
+    return null
+  }
+}
+
 export function createApiClient(platform: PlatformAdapter): ApiClient {
   return new ApiClient(
     () => useSettings.getState().apiBaseUrl.replace(/\/$/, ''),
-    async () => {
-      const cur = tokens
-      if (!cur) return null
-      if (cur.expiresAt - Date.now() > 60_000) return cur.accessToken
-      const { supabaseUrl, supabasePublishableKey } = useSettings.getState()
-      if (!cur.refreshToken || !supabaseUrl || !supabasePublishableKey) {
-        await persistTokens(platform, null)
-        return null
-      }
-      try {
-        const next = await refreshTokens({
-          supabaseUrl,
-          publishableKey: supabasePublishableKey,
-          refreshToken: cur.refreshToken,
-        })
-        const merged = { ...next, refreshToken: next.refreshToken ?? cur.refreshToken }
-        await persistTokens(platform, merged)
-        return merged.accessToken
-      } catch {
-        await persistTokens(platform, null)
-        return null
-      }
-    },
+    () => accessTokenForRequest(platform),
   )
 }

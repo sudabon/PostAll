@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChangeEvent } from '@/api/client'
@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   getHealth: vi.fn(),
   onSignal: null as null | (() => void),
   onStatus: null as null | ((subscribed: boolean) => void),
+  autoSubscribe: true,
+  subscribeCalls: 0,
+  getAccessToken: vi.fn(),
+  platform: { kind: 'fake' },
 }))
 
 vi.mock('@/auth/AuthProvider', () => ({
@@ -22,13 +26,24 @@ vi.mock('@/auth/AuthProvider', () => ({
 
 vi.mock('@/auth/session', () => ({
   currentAccessToken: () => 'access-token',
+  accessTokenForRequest: mocks.getAccessToken,
+}))
+
+vi.mock('@/platform', () => ({
+  usePlatform: () => mocks.platform,
 }))
 
 vi.mock('@/lib/realtime', () => ({
-  subscribePostallEvents: (input: { onSignal: () => void; onStatus: (subscribed: boolean) => void }) => {
+  subscribePostallEvents: (input: {
+    getAccessToken?: () => Promise<string | null>
+    onSignal: () => void
+    onStatus: (subscribed: boolean) => void
+  }) => {
+    mocks.subscribeCalls += 1
     mocks.onSignal = input.onSignal
     mocks.onStatus = input.onStatus
-    queueMicrotask(() => input.onStatus(true))
+    if (input.getAccessToken) void input.getAccessToken()
+    if (mocks.autoSubscribe) queueMicrotask(() => input.onStatus(true))
     return () => {}
   },
 }))
@@ -38,12 +53,17 @@ beforeEach(() => {
   mocks.getHealth.mockReset()
   mocks.onSignal = null
   mocks.onStatus = null
+  mocks.autoSubscribe = true
+  mocks.subscribeCalls = 0
+  mocks.getAccessToken.mockReset()
+  mocks.getAccessToken.mockResolvedValue('access-token')
   mocks.getHealth.mockResolvedValue({ status: 'ok', database: 'ok' })
   mocks.listEvents.mockResolvedValue({ events: [], nextAfter: '0', hasMore: false })
   useUi.getState().setConnectionState('connecting')
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -119,6 +139,23 @@ describe('useChangeSync', () => {
 
     await waitFor(() => expect(mocks.listEvents).toHaveBeenCalledWith('0', 200), { timeout: 2_500 })
     expect(useUi.getState().connectionState).toBe('live')
+    unmount()
+  })
+
+  it('polls while degraded and reconnects with a fresh token after backoff', async () => {
+    vi.useFakeTimers()
+    mocks.autoSubscribe = false
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+    const { unmount } = renderHook(() => useChangeSync(true), { wrapper: wrapper(queryClient) })
+    expect(mocks.subscribeCalls).toBe(1)
+
+    act(() => mocks.onStatus?.(false))
+    expect(useUi.getState().connectionState).toBe('degraded')
+    await act(() => vi.advanceTimersByTimeAsync(1_000))
+
+    expect(mocks.subscribeCalls).toBe(2)
+    expect(mocks.getAccessToken).toHaveBeenCalledTimes(2)
     unmount()
   })
 })

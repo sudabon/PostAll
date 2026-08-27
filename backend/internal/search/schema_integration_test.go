@@ -2,6 +2,7 @@ package search_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -93,10 +94,10 @@ func TestSearchMatchesJapaneseSubstringAndLiterals(t *testing.T) {
 		}
 	}
 
-	assertIDs(t, "都庁", 1)     // 日本語 2 文字・語の途中
-	assertIDs(t, "hello", 1)  // 大文字小文字非依存
+	assertIDs(t, "都庁", 1)    // 日本語 2 文字・語の途中
+	assertIDs(t, "hello", 1) // 大文字小文字非依存
 	assertIDs(t, "WORLD", 1)
-	assertIDs(t, "100%", 1)   // 特殊文字はリテラル
+	assertIDs(t, "100%", 1) // 特殊文字はリテラル
 	assertIDs(t, "complete", 1)
 	assertIDs(t, "xyz", 0)
 }
@@ -123,13 +124,22 @@ func TestPGroongaIndexMatchesPlainLike(t *testing.T) {
 		}
 	}
 
-	queries := []string{"都庁", "hello", "a%b"}
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(conn.Release)
+	t.Cleanup(func() {
+		_, _ = conn.Exec(ctx, `create index if not exists posts_body_pgroonga on posts using pgroonga (body pgroonga_text_regexp_ops_v2)`)
+	})
+
+	queries := []string{"都庁", "hello", "a%b", "b_c", `c\d`}
 	searchBodies := func(pattern string) []string {
 		t.Helper()
-		rows, err := pool.Query(ctx, `
+		rows, err := conn.Query(ctx, `
 			select body
 			from posts
-			where deleted_at is null and body ilike $1
+			where deleted_at is null and body ilike $1 escape '\'
 			order by body
 		`, pattern)
 		if err != nil {
@@ -149,10 +159,45 @@ func TestPGroongaIndexMatchesPlainLike(t *testing.T) {
 		}
 		return bodies
 	}
+	queryPlan := func(pattern string) string {
+		t.Helper()
+		rows, err := conn.Query(ctx, `
+			explain (format text)
+			select body
+			from posts
+			where deleted_at is null and body ilike $1 escape '\'
+		`, pattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var lines []string
+		for rows.Next() {
+			var line string
+			if err := rows.Scan(&line); err != nil {
+				t.Fatal(err)
+			}
+			lines = append(lines, line)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(lines, "\n")
+	}
 	for _, q := range queries {
 		pattern := search.ContainsPattern(q)
+		if _, err := conn.Exec(ctx, `set enable_seqscan = off`); err != nil {
+			t.Fatal(err)
+		}
+		plan := queryPlan(pattern)
+		if !strings.Contains(plan, "posts_body_pgroonga") {
+			t.Fatalf("q=%q did not use posts_body_pgroonga:\n%s", q, plan)
+		}
 		withIndex := searchBodies(pattern)
-		if _, err := pool.Exec(ctx, `drop index posts_body_pgroonga`); err != nil {
+		if _, err := conn.Exec(ctx, `drop index posts_body_pgroonga`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.Exec(ctx, `reset enable_seqscan`); err != nil {
 			t.Fatal(err)
 		}
 		withoutIndex := searchBodies(pattern)
@@ -164,7 +209,7 @@ func TestPGroongaIndexMatchesPlainLike(t *testing.T) {
 				t.Fatalf("q=%q indexed=%v plain=%v", q, withIndex, withoutIndex)
 			}
 		}
-		if _, err := pool.Exec(ctx, `create index posts_body_pgroonga on posts using pgroonga (body pgroonga_text_regexp_ops_v2)`); err != nil {
+		if _, err := conn.Exec(ctx, `create index posts_body_pgroonga on posts using pgroonga (body pgroonga_text_regexp_ops_v2)`); err != nil {
 			t.Fatal(err)
 		}
 	}

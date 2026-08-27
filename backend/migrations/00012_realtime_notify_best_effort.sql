@@ -15,7 +15,7 @@ begin
         );
     exception
         when others then
-            null;
+            raise warning 'postall realtime notification failed (SQLSTATE %): %', sqlstate, sqlerrm;
     end;
     return new;
 end;

@@ -89,11 +89,11 @@ func TestSyncRegistersUpdatesAndSkipsInvalidFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if third.Created != 0 || third.Updated != 0 || third.Unchanged != 2 || third.Skipped != 2 {
+	if third.Created != 0 || third.Updated != 1 || third.Unchanged != 1 || third.Skipped != 2 {
 		t.Fatalf("third sync = %+v", third)
 	}
-	if objects.Has("shipit.png") {
-		t.Fatal("unchanged png was re-uploaded")
+	if !objects.Has("shipit.png") {
+		t.Fatal("missing unchanged png was not repaired")
 	}
 }
 

@@ -39,12 +39,8 @@ func (s *Server) GetEmojiImage(w http.ResponseWriter, r *http.Request, shortcode
 		return
 	}
 	etag := strconv.Quote(item.Checksum)
-	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.Header().Set("ETag", etag)
-	if r.Header.Get("If-None-Match") == etag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
 	if s.emojiBlobs == nil {
 		writeEmojiImageNotFound(w)
 		return
@@ -56,6 +52,10 @@ func (s *Server) GetEmojiImage(w http.ResponseWriter, r *http.Request, shortcode
 	}
 	if !exists {
 		writeEmojiImageNotFound(w)
+		return
+	}
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 	location, err := s.emojiBlobs.PresignGet(r.Context(), item.StorageKey, item.StorageKey)

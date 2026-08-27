@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/change_events.dart';
 import '../api/generated/models.dart';
+import '../api/postall_api.dart';
 import 'auth.dart';
 import 'channels.dart';
 import 'connection.dart';
@@ -23,7 +24,10 @@ class ChangeSync {
   AppLifecycleListener? _lifecycle;
 
   StreamSubscription<void>? _subscription;
+  StreamSubscription<bool>? _statusSubscription;
   Timer? _reconnectTimer;
+  bool? _realtimeSubscribed;
+  int _connectionGeneration = 0;
   String? _lastEventId;
   bool _stopped = false;
   bool _recovering = false;
@@ -50,8 +54,11 @@ class ChangeSync {
     _stopped = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _connectionGeneration++;
     unawaited(_subscription?.cancel());
     _subscription = null;
+    unawaited(_statusSubscription?.cancel());
+    _statusSubscription = null;
     _lifecycle?.dispose();
     _lifecycle = null;
   }
@@ -70,22 +77,56 @@ class ChangeSync {
 
   void _connect() {
     if (_stopped) return;
+    final generation = ++_connectionGeneration;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    unawaited(_subscription?.cancel());
+    unawaited(_statusSubscription?.cancel());
+    _realtimeSubscribed = null;
     final api = _ref.read(apiProvider);
+    final statusSource = api is RealtimeStatusSource
+        ? api as RealtimeStatusSource
+        : null;
+    if (statusSource != null) {
+      _statusSubscription = statusSource.watchRealtimeStatus().listen(
+        (subscribed) {
+          if (_stopped || generation != _connectionGeneration) return;
+          _realtimeSubscribed = subscribed;
+          _ref
+              .read(connectionProvider.notifier)
+              .set(
+                subscribed
+                    ? BackendConnection.online
+                    : BackendConnection.degraded,
+              );
+        },
+        onError: (Object _) {
+          if (generation == _connectionGeneration) _onDisconnected();
+        },
+      );
+    }
     _subscription = api.watchChangeSignals().listen(
       (_) {
-        _ref.read(connectionProvider.notifier).set(BackendConnection.online);
+        if (_stopped || generation != _connectionGeneration) return;
+        if (_realtimeSubscribed != false) {
+          _ref.read(connectionProvider.notifier).set(BackendConnection.online);
+        }
         unawaited(_recover());
       },
-      onError: (Object _) => _onDisconnected(),
+      onError: (Object _) {
+        if (generation == _connectionGeneration) _onDisconnected();
+      },
       cancelOnError: true,
     );
   }
 
   void _onDisconnected() {
     if (_stopped) return;
+    _connectionGeneration++;
     _subscription = null;
+    unawaited(_statusSubscription?.cancel());
+    _statusSubscription = null;
+    _realtimeSubscribed = false;
     _ref.read(connectionProvider.notifier).set(BackendConnection.degraded);
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(const Duration(seconds: 1), () {

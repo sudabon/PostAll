@@ -17,7 +17,10 @@ begin
             on realtime.messages
             for select
             to authenticated
-            using (true);
+            using (
+                realtime.topic() = 'postall:events'
+                and extension = 'broadcast'
+            );
     exception
         when insufficient_privilege then
             raise notice 'skip realtime RLS: current user cannot own realtime.messages';

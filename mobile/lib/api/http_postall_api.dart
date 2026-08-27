@@ -12,21 +12,52 @@ import 'postall_api.dart';
 /// アクセストークンを返す。未サインインなら null。
 typedef TokenProvider = Future<String?> Function();
 
+typedef RealtimeFactory =
+    RealtimeConnection Function({
+      required TokenProvider accessTokenProvider,
+      required void Function() onSignal,
+      required void Function(bool subscribed) onStatus,
+    });
+
+typedef RealtimeRetryDelay = Duration Function(int attempt);
+
+const _realtimeRetryDelays = <Duration>[
+  Duration(seconds: 1),
+  Duration(seconds: 2),
+  Duration(seconds: 4),
+  Duration(seconds: 8),
+  Duration(seconds: 16),
+  Duration(seconds: 30),
+];
+
+Duration defaultRealtimeRetryDelay(int attempt) {
+  final index = attempt < 0
+      ? 0
+      : attempt >= _realtimeRetryDelays.length
+      ? _realtimeRetryDelays.length - 1
+      : attempt;
+  return _realtimeRetryDelays[index];
+}
+
 /// dio による [PostAllApi] の実装。
 ///
 /// 生成モデル（lib/api/generated/models.dart）を境界の型として使う。
-class HttpPostAllApi implements PostAllApi {
+class HttpPostAllApi implements PostAllApi, RealtimeStatusSource {
   HttpPostAllApi({
     required String Function() baseUrl,
     required TokenProvider token,
     required String Function() supabaseUrl,
     required String Function() publishableKey,
+    RealtimeFactory? realtimeFactory,
+    RealtimeRetryDelay realtimeRetryDelay = defaultRealtimeRetryDelay,
     Dio? dio,
-  })  : _baseUrl = baseUrl,
-        _token = token,
-        _supabaseUrl = supabaseUrl,
-        _publishableKey = publishableKey,
-        _dio = dio ?? Dio() {
+  }) : _baseUrl = baseUrl,
+       _token = token,
+       _supabaseUrl = supabaseUrl,
+       _publishableKey = publishableKey,
+       _realtimeFactory = realtimeFactory,
+       _realtimeRetryDelay = realtimeRetryDelay,
+       _dio = dio ?? Dio() {
     _dio.options.validateStatus = (_) => true;
     _dio.options.receiveDataWhenStatusError = true;
   }
@@ -35,7 +66,11 @@ class HttpPostAllApi implements PostAllApi {
   final TokenProvider _token;
   final String Function() _supabaseUrl;
   final String Function() _publishableKey;
+  final RealtimeFactory? _realtimeFactory;
+  final RealtimeRetryDelay _realtimeRetryDelay;
   final Dio _dio;
+  final _realtimeStatuses = StreamController<bool>.broadcast(sync: true);
+  bool _realtimeSubscribed = false;
 
   String _url(String path) => '${_baseUrl().replaceAll(RegExp(r'/$'), '')}$path';
 
@@ -274,10 +309,32 @@ class HttpPostAllApi implements PostAllApi {
   }
 
   @override
+  Stream<bool> watchRealtimeStatus() => Stream<bool>.multi((controller) {
+    controller.add(_realtimeSubscribed);
+    final subscription = _realtimeStatuses.stream.listen(
+      controller.add,
+      onError: controller.addError,
+      onDone: controller.close,
+    );
+    controller.onCancel = subscription.cancel;
+  });
+
+  void _setRealtimeStatus(bool subscribed) {
+    _realtimeSubscribed = subscribed;
+    if (!_realtimeStatuses.isClosed) {
+      _realtimeStatuses.add(subscribed);
+    }
+  }
+
+  @override
   Stream<void> watchChangeSignals() {
     final controller = StreamController<void>.broadcast();
-    PostallRealtime? realtime;
+    RealtimeConnection? realtime;
     Timer? poll;
+    Timer? retry;
+    var retryAttempt = 0;
+    var generation = 0;
+    var cancelled = false;
 
     void startPolling() {
       poll ??= Timer.periodic(const Duration(seconds: 15), (_) {
@@ -290,35 +347,108 @@ class HttpPostAllApi implements PostAllApi {
       poll = null;
     }
 
-    Future<void> connect() async {
-      final token = await _token() ?? '';
-      realtime = PostallRealtime(
-        supabaseUrl: _supabaseUrl(),
-        publishableKey: _publishableKey(),
-        accessToken: token,
-        onSignal: () {
-          if (!controller.isClosed) controller.add(null);
-        },
-        onStatus: (subscribed) {
-          if (controller.isClosed) return;
-          if (subscribed) {
-            stopPolling();
-            controller.add(null);
-            return;
-          }
-          startPolling();
-        },
-      );
-      realtime!.connect();
+    void stopRetry() {
+      retry?.cancel();
+      retry = null;
     }
+
+    late Future<void> Function() connect;
+
+    void scheduleRetry() {
+      if (cancelled || retry != null) return;
+      final delay = _realtimeRetryDelay(retryAttempt++);
+      retry = Timer(delay, () {
+        retry = null;
+        unawaited(connect());
+      });
+    }
+
+    void handleStatus(int connectionGeneration, bool subscribed) {
+      if (cancelled ||
+          controller.isClosed ||
+          connectionGeneration != generation) {
+        return;
+      }
+      _setRealtimeStatus(subscribed);
+      if (subscribed) {
+        retryAttempt = 0;
+        stopRetry();
+        stopPolling();
+        controller.add(null);
+        return;
+      }
+      startPolling();
+      scheduleRetry();
+    }
+
+    connect = () async {
+      stopRetry();
+      final connectionGeneration = ++generation;
+      final previous = realtime;
+      realtime = null;
+      try {
+        await previous?.disconnect();
+      } on Object {
+        // 切断処理の失敗でも、新しい接続とポーリングは継続する。
+      }
+      if (cancelled ||
+          controller.isClosed ||
+          connectionGeneration != generation) {
+        return;
+      }
+      final next =
+          _realtimeFactory?.call(
+            accessTokenProvider: _token,
+            onSignal: () {
+              if (!cancelled &&
+                  !controller.isClosed &&
+                  connectionGeneration == generation) {
+                controller.add(null);
+              }
+            },
+            onStatus: (subscribed) =>
+                handleStatus(connectionGeneration, subscribed),
+          ) ??
+          PostallRealtime(
+            supabaseUrl: _supabaseUrl(),
+            publishableKey: _publishableKey(),
+            accessTokenProvider: _token,
+            onSignal: () {
+              if (!cancelled &&
+                  !controller.isClosed &&
+                  connectionGeneration == generation) {
+                controller.add(null);
+              }
+            },
+            onStatus: (subscribed) =>
+                handleStatus(connectionGeneration, subscribed),
+          );
+      realtime = next;
+      try {
+        next.connect();
+      } on Object {
+        handleStatus(connectionGeneration, false);
+      }
+    };
 
     controller
       ..onListen = () {
+        cancelled = false;
+        retryAttempt = 0;
         unawaited(connect());
       }
       ..onCancel = () async {
+        cancelled = true;
+        generation++;
+        stopRetry();
         stopPolling();
-        await realtime?.disconnect();
+        final current = realtime;
+        realtime = null;
+        try {
+          await current?.disconnect();
+        } on Object {
+          // 購読キャンセルは best effort。タイマーはすでに停止済み。
+        }
       };
     return controller.stream;
   }
