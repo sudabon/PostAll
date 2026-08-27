@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:supabase/supabase.dart';
 
@@ -38,63 +39,65 @@ class PostallRealtime implements RealtimeConnection {
   }
 
   Future<void> _connect(int generation) async {
-    if (supabaseUrl.isEmpty || publishableKey.isEmpty) {
-      onStatus(false);
-      return;
-    }
-    final String? initialToken;
     try {
-      initialToken = await _accessTokenProvider();
-    } on Object {
-      if (generation == _generation) onStatus(false);
-      return;
-    }
-    if (generation != _generation) return;
-    if (initialToken == null || initialToken.isEmpty) {
-      onStatus(false);
-      return;
-    }
-    final client = SupabaseClient(
-      supabaseUrl,
-      publishableKey,
-      authOptions: const AuthClientOptions(autoRefreshToken: false),
-      accessToken: _accessTokenProvider,
-    );
-    if (generation != _generation) {
-      await client.dispose();
-      return;
-    }
-    _client = client;
-    try {
-      await client.realtime.setAuth(initialToken);
-    } on Object {
-      if (generation == _generation) {
-        _client = null;
-        await client.dispose();
+      if (supabaseUrl.isEmpty || publishableKey.isEmpty) {
         onStatus(false);
+        return;
       }
-      return;
-    }
-    if (generation != _generation) {
-      await client.dispose();
-      return;
-    }
-    final channel = client.channel(
-      'postall:events',
-      opts: const RealtimeChannelConfig(private: true),
-    );
-    channel.onBroadcast(
-      event: 'change',
-      callback: (_) {
-        if (generation == _generation) onSignal();
-      },
-    );
-    channel.subscribe((status, [_]) {
+      final String? initialToken;
+      try {
+        initialToken = await _accessTokenProvider();
+      } on Object {
+        if (generation == _generation) onStatus(false);
+        return;
+      }
+      if (generation != _generation) return;
+      if (initialToken == null || initialToken.isEmpty) {
+        onStatus(false);
+        return;
+      }
+      final client = SupabaseClient(
+        supabaseUrl,
+        publishableKey,
+        authOptions: const AuthClientOptions(autoRefreshToken: false),
+        accessToken: _accessTokenProvider,
+      );
+      if (generation != _generation) {
+        await client.dispose();
+        return;
+      }
+      _client = client;
+      if (generation != _generation) {
+        await client.dispose();
+        return;
+      }
+      final channel = client.channel(
+        'postall:events',
+        opts: const RealtimeChannelConfig(private: true),
+      );
+      channel.onBroadcast(
+        event: 'change',
+        callback: (_) {
+          if (generation == _generation) onSignal();
+        },
+      );
+      channel.subscribe((status, [_]) {
+        if (generation == _generation) {
+          onStatus(status == RealtimeSubscribeStatus.subscribed);
+        }
+      });
+      _channel = channel;
+    } on Object catch (error, stack) {
       if (generation == _generation) {
-        onStatus(status == RealtimeSubscribeStatus.subscribed);
+        onStatus(false);
+        developer.log(
+          'postall realtime connect failed: $error',
+          name: 'PostallRealtime',
+          error: error,
+          stackTrace: stack,
+        );
       }
-    });
-    _channel = channel;
+    }
   }
 
   @override

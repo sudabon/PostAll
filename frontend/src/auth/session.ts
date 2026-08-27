@@ -1,5 +1,5 @@
 import { ApiClient } from '@/api/client'
-import { refreshTokens, type TokenSet } from '@/auth/pkce'
+import { refreshTokens, TokenRequestError, type TokenSet } from '@/auth/pkce'
 import type { PlatformAdapter } from '@/platform'
 import { useSettings } from '@/state/settings'
 
@@ -13,10 +13,6 @@ const listeners = new Set<(signedIn: boolean) => void>()
 export function subscribeSignedIn(listener: (signedIn: boolean) => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
-}
-
-export function currentAccessToken(): string | null {
-  return tokens?.accessToken ?? null
 }
 
 export function rememberTokens(next: TokenSet | null) {
@@ -66,8 +62,11 @@ async function refreshAccessToken(platform: PlatformAdapter, cur: TokenSet): Pro
     const merged = { ...next, refreshToken: next.refreshToken ?? cur.refreshToken }
     await persistTokens(platform, merged)
     return merged.accessToken
-  } catch {
-    await persistTokens(platform, null)
+  } catch (err) {
+    const status = err instanceof TokenRequestError ? err.status : 0
+    if (status === 400 || status === 401) {
+      await persistTokens(platform, null)
+    }
     return null
   }
 }

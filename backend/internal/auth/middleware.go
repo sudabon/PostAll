@@ -3,8 +3,8 @@ package auth
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"net/http"
-	"strings"
 )
 
 type contextKey struct{}
@@ -41,6 +41,10 @@ func Middleware(v *Verifier, users UserStore) func(http.Handler) http.Handler {
 			raw := BearerToken(r.Header.Get("Authorization"))
 			claims, err := v.Verify(r.Context(), raw)
 			if err != nil {
+				if errors.Is(err, ErrJWKSUnavailable) {
+					writeJSON(w, http.StatusServiceUnavailable, `{"code":"unavailable","message":"認可情報を検証できませんでした"}`)
+					return
+				}
 				writeUnauthorized(w)
 				return
 			}
@@ -60,7 +64,7 @@ func Middleware(v *Verifier, users UserStore) func(http.Handler) http.Handler {
 }
 
 func skipAuth(path string) bool {
-	return path == "/health" || path == "/ready" || strings.HasPrefix(path, "/internal/")
+	return path == "/health" || path == "/ready" || path == "/internal/attachments/reap"
 }
 
 func writeUnauthorized(w http.ResponseWriter) {

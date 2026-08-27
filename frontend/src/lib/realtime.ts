@@ -6,10 +6,10 @@ export function subscribePostallEvents(input: {
   accessToken?: string
   getAccessToken?: () => Promise<string | null>
   onSignal: () => void
-  onStatus: (subscribed: boolean) => void
+  onStatus: (subscribed: boolean, permanent?: boolean) => void
 }): () => void {
   if (!input.supabaseUrl || !input.publishableKey || (!input.getAccessToken && !input.accessToken)) {
-    input.onStatus(false)
+    input.onStatus(false, true)
     return () => {}
   }
 

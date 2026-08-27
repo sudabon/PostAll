@@ -25,7 +25,6 @@ vi.mock('@/auth/AuthProvider', () => ({
 }))
 
 vi.mock('@/auth/session', () => ({
-  currentAccessToken: () => 'access-token',
   accessTokenForRequest: mocks.getAccessToken,
 }))
 
@@ -96,13 +95,24 @@ describe('useChangeSync', () => {
         postId: '55555555-5555-5555-5555-555555555555',
       }),
     ]
-    mocks.listEvents.mockResolvedValue({ events: frames, nextAfter: '7', hasMore: false })
+    // 初回の回収は履歴の読み飛ばし（全 invalidate 一回）なので、細粒度の
+    // invalidate を検証するには 2 回目以降のシグナルを起こす必要がある。
+    mocks.listEvents.mockResolvedValue({ events: [], nextAfter: '4', hasMore: false })
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
 
     const { unmount } = renderHook(() => useChangeSync(true), { wrapper: wrapper(queryClient) })
 
     await waitFor(() => expect(useUi.getState().connectionState).toBe('live'))
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3))
+    invalidate.mockClear()
+
+    mocks.listEvents.mockResolvedValue({ events: frames, nextAfter: '7', hasMore: false })
+    await act(async () => {
+      mocks.onSignal?.()
+      await Promise.resolve()
+    })
+
     await waitFor(() => expect(invalidate).toHaveBeenCalled())
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['channels'] })
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['posts', channelId] })

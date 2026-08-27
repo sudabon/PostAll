@@ -8,7 +8,8 @@ import { usePlatform } from '@/platform'
 import { useSettings } from '@/state/settings'
 import { useUi } from '@/state/ui'
 
-const pollInterval = 15_000
+const pollIntervalDegraded = 15_000
+const pollIntervalLive = 60_000
 const realtimeRetryBase = 1_000
 const realtimeRetryMax = 30_000
 
@@ -28,6 +29,7 @@ export function useChangeSync(enabled = true) {
     let stopped = false
     let lastEventId: string | null = null
     let pollTimer: number | null = null
+    let pollIntervalMs: number | null = null
     let recovery: Promise<boolean> | null = null
     let unsubscribeRealtime: (() => void) | null = null
     let realtimeRetryTimer: number | null = null
@@ -77,6 +79,22 @@ export function useChangeSync(enabled = true) {
       }
     }
 
+    const stopPolling = () => {
+      if (pollTimer === null) return
+      window.clearInterval(pollTimer)
+      pollTimer = null
+      pollIntervalMs = null
+    }
+
+    const startPolling = (interval: number) => {
+      if (pollTimer !== null && pollIntervalMs === interval) return
+      stopPolling()
+      pollIntervalMs = interval
+      pollTimer = window.setInterval(() => {
+        void recoverOnce()
+      }, interval)
+    }
+
     const recoverChanges = async (): Promise<boolean> => {
       if (!navigator.onLine) {
         useUi.getState().setConnectionState('offline')
@@ -90,17 +108,20 @@ export function useChangeSync(enabled = true) {
       }
       if (stopped) return false
       try {
+        const isInitial = lastEventId === null
         let cursor = lastEventId ?? '0'
         while (!stopped) {
           const page = await api.listEvents(cursor, 200)
-          for (const event of page.events) applyEvent(event)
+          if (!isInitial) {
+            for (const event of page.events) applyEvent(event)
+          }
           if (/^[0-9]+$/.test(page.nextAfter) && (lastEventId === null || BigInt(page.nextAfter) > BigInt(lastEventId))) {
             lastEventId = page.nextAfter
           }
           cursor = page.nextAfter
           if (!page.hasMore) break
         }
-        if (!stopped) {
+        if (!stopped && isInitial) {
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['channels'] }),
             queryClient.invalidateQueries({ queryKey: ['posts'] }),
@@ -108,7 +129,12 @@ export function useChangeSync(enabled = true) {
           ])
         }
         return !stopped
-      } catch {
+      } catch (err) {
+        console.warn('change sync recover failed', err)
+        if (!stopped) {
+          useUi.getState().setConnectionState('degraded')
+          startPolling(pollIntervalDegraded)
+        }
         return false
       }
     }
@@ -119,19 +145,6 @@ export function useChangeSync(enabled = true) {
         recovery = null
       })
       return recovery
-    }
-
-    const startPolling = () => {
-      if (pollTimer !== null) return
-      pollTimer = window.setInterval(() => {
-        void recoverOnce()
-      }, pollInterval)
-    }
-
-    const stopPolling = () => {
-      if (pollTimer === null) return
-      window.clearInterval(pollTimer)
-      pollTimer = null
     }
 
     const stopRealtimeRetry = () => {
@@ -168,20 +181,20 @@ export function useChangeSync(enabled = true) {
           if (stopped || generation !== realtimeGeneration) return
           void recoverOnce()
         },
-        onStatus: (subscribed) => {
+        onStatus: (subscribed, permanent) => {
           if (stopped || generation !== realtimeGeneration) return
           if (subscribed) {
             realtimeRetryAttempt = 0
             stopRealtimeRetry()
-            stopPolling()
+            startPolling(pollIntervalLive)
             useUi.getState().setConnectionState('live')
             void recoverOnce()
             return
           }
           useUi.getState().setConnectionState('degraded')
-          startPolling()
+          startPolling(pollIntervalDegraded)
           void recoverOnce()
-          scheduleRealtimeRetry()
+          if (!permanent) scheduleRealtimeRetry()
         },
       })
     }
@@ -208,7 +221,7 @@ export function useChangeSync(enabled = true) {
     const onMockSignal = () => {
       void recoverOnce()
     }
-    const mockSignalsEnabled = import.meta.env.DEV || import.meta.env.MODE === 'test'
+    const mockSignalsEnabled = import.meta.env.VITE_E2E === 'true'
     window.addEventListener('online', onOnline)
     window.addEventListener('offline', onOffline)
     document.addEventListener('visibilitychange', onVisibility)

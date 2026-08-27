@@ -102,6 +102,10 @@ func TestSearchMatchesJapaneseSubstringAndLiterals(t *testing.T) {
 	assertIDs(t, "xyz", 0)
 }
 
+// TestPGroongaIndexMatchesPlainLike は enable_seqscan = off の下で索引が「使える」
+// ことと、索引経由の結果が seq scan と一致することを確認する。既定のプランナ設定で
+// 索引が選択されることは保証しない。それは
+// TestPGroongaIndexIsChosenByDefaultPlanner が担当する。
 func TestPGroongaIndexMatchesPlainLike(t *testing.T) {
 	databaseURL := testutil.PostgresURL(t)
 	pool, err := pgxpool.New(context.Background(), databaseURL)
@@ -221,4 +225,65 @@ func bodiesOf(results []search.Result) []string {
 		out = append(out, r.Body)
 	}
 	return out
+}
+
+// TestPGroongaIndexIsChosenByDefaultPlanner は、enable_seqscan を既定のまま
+// 十分な行数を投入したときに、プランナが posts_body_pgroonga を選ぶことを確認する。
+// PGroonga へ移行した目的そのものなので、索引が「使える」だけでは足りない。
+func TestPGroongaIndexIsChosenByDefaultPlanner(t *testing.T) {
+	databaseURL := testutil.PostgresURL(t)
+	pool, err := pgxpool.New(context.Background(), databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	ctx := context.Background()
+	var userID, channelID string
+	if err := pool.QueryRow(ctx, `insert into users (auth_subject) values ('planner-user') returning id`).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `insert into channels (name, sort_key) values ('planner', 'a') returning id`).Scan(&channelID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		insert into posts (channel_id, author_id, body)
+		select $1, $2, '埋め草の本文 ' || g
+		  from generate_series(1, 2000) as g
+	`, channelID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `insert into posts (channel_id, author_id, body) values ($1, $2, '東京都庁の案内')`, channelID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `analyze posts`); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := pool.Query(ctx, `
+		explain (format text)
+		select body
+		from posts
+		where deleted_at is null and body ilike $1 escape '\'
+	`, search.ContainsPattern("都庁"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var lines []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, line)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	plan := strings.Join(lines, "\n")
+	if !strings.Contains(plan, "posts_body_pgroonga") {
+		t.Fatalf("既定のプランナが posts_body_pgroonga を選ばなかった:\n%s", plan)
+	}
 }

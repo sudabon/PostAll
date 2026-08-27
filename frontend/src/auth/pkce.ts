@@ -66,23 +66,43 @@ export async function refreshTokens(input: {
   }, 'refresh_token')
 }
 
+export class TokenRequestError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message)
+    this.name = 'TokenRequestError'
+  }
+}
+
 async function tokenRequest(
   supabaseUrl: string,
   publishableKey: string,
   body: Record<string, string>,
   grantType: 'pkce' | 'refresh_token',
 ): Promise<TokenSet> {
-  const res = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/token?grant_type=${grantType}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: publishableKey,
-    },
-    body: JSON.stringify(body),
-  })
-  const json = (await res.json()) as Record<string, unknown>
+  let res: Response
+  try {
+    res = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/token?grant_type=${grantType}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: publishableKey,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch (err) {
+    throw new TokenRequestError(err instanceof Error ? err.message : 'token request failed', 0)
+  }
+  let json: Record<string, unknown> = {}
+  try {
+    json = (await res.json()) as Record<string, unknown>
+  } catch {
+    json = {}
+  }
   if (!res.ok) {
-    throw new Error(String(json.error_description ?? json.error ?? json.msg ?? 'token exchange failed'))
+    throw new TokenRequestError(String(json.error_description ?? json.error ?? json.msg ?? 'token exchange failed'), res.status)
   }
   return parseTokenResponse(json)
 }

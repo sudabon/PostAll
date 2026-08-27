@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sudabon/PostAll/backend/internal/blob"
 	"github.com/sudabon/PostAll/backend/internal/emoji"
@@ -84,14 +86,25 @@ func main() {
 }
 
 func runEmojiSync(ctx context.Context, databaseURL, dir string) error {
-	pool, err := pgxpool.New(ctx, databaseURL)
+	poolCfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return err
+	}
+	poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
+	bucket := os.Getenv("EMOJI_S3_BUCKET")
+	skipStorage := os.Getenv("EMOJI_SKIP_STORAGE") == "1"
+	if bucket == "" && !skipStorage {
+		return fmt.Errorf("emoji-sync: EMOJI_S3_BUCKET is required")
+	}
+
 	var objects blob.Store
-	if bucket := os.Getenv("EMOJI_S3_BUCKET"); bucket != "" {
+	if bucket != "" {
 		s3store, err := blob.NewS3(ctx, blob.S3Config{
 			Endpoint:  os.Getenv("S3_ENDPOINT"),
 			Region:    env("S3_REGION", "auto"),

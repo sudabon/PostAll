@@ -94,8 +94,12 @@ class AuthController extends AsyncNotifier<AuthState> {
       await ref.read(tokenStoreProvider).write(merged);
       state = AsyncData(_value.copyWith(tokens: merged));
       return merged.accessToken;
+    } on TokenRequestFailure catch (error) {
+      if (error.status == 400 || error.status == 401) {
+        await _forgetTokens();
+      }
+      return null;
     } on Exception {
-      await _forgetTokens();
       return null;
     }
   }

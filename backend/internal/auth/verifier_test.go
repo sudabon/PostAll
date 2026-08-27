@@ -302,6 +302,39 @@ func TestRejectsMissingBearer(t *testing.T) {
 	}
 }
 
+func TestRejectsHMACAlgConfusion(t *testing.T) {
+	key, jwks, kid := testKey(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(jwks)
+	}))
+	t.Cleanup(srv.Close)
+	v := NewVerifierFromURL(srv.URL, "https://issuer.example", "authenticated", srv.Client())
+	if _, err := v.Verify(t.Context(), mint(t, key, kid, validClaims("user-sub"))); err != nil {
+		t.Fatal(err)
+	}
+
+	hmacTok := jwt.NewWithClaims(jwt.SigningMethodHS256, validClaims("attacker"))
+	hmacTok.Header["kid"] = kid
+	secret := elliptic.Marshal(elliptic.P256(), key.X, key.Y)
+	signed, err := hmacTok.SignedString(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Verify(t.Context(), signed); err == nil {
+		t.Fatal("expected HS256 token signed with JWKS key material to be rejected")
+	}
+
+	noneTok := jwt.NewWithClaims(jwt.SigningMethodNone, validClaims("attacker"))
+	noneTok.Header["kid"] = kid
+	noneSigned, err := noneTok.SignedString(jwt.UnsafeAllowNoneSignatureType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Verify(t.Context(), noneSigned); err == nil {
+		t.Fatal("expected alg none token to be rejected")
+	}
+}
+
 func validClaims(sub string) jwt.MapClaims {
 	return jwt.MapClaims{
 		"iss":  "https://issuer.example",

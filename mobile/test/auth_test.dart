@@ -17,7 +17,7 @@ import 'support/harness.dart';
 /// 認可画面の代わりに、指定した結果を返す [SupabaseAuth]。
 class FakeSupabaseAuth extends SupabaseAuth {
   FakeSupabaseAuth({required this.result})
-      : super(supabaseUrl: 'https://auth.invalid', publishableKey: 'key');
+    : super(supabaseUrl: 'https://auth.invalid', publishableKey: 'key');
 
   /// 認可コードつきのコールバック URL、または投げる例外。
   final Object result;
@@ -27,7 +27,9 @@ class FakeSupabaseAuth extends SupabaseAuth {
   TokenSet? nextTokens;
 
   @override
-  Future<TokenSet> signIn({Future<String> Function(Uri url)? authenticate}) async {
+  Future<TokenSet> signIn({
+    Future<String> Function(Uri url)? authenticate,
+  }) async {
     signInCalls += 1;
     final outcome = result;
     if (outcome is Exception) throw outcome;
@@ -40,7 +42,10 @@ class FakeSupabaseAuth extends SupabaseAuth {
   }
 }
 
-Future<ProviderContainer> _authContainer(SupabaseAuth auth, TokenStore store) async {
+Future<ProviderContainer> _authContainer(
+  SupabaseAuth auth,
+  TokenStore store,
+) async {
   SharedPreferences.setMockInitialValues({});
   final prefs = await SharedPreferences.getInstance();
   final container = ProviderContainer(
@@ -124,7 +129,9 @@ void main() {
       final container = await _authContainer(auth, store);
 
       await container.read(authControllerProvider.future);
-      final token = await container.read(authControllerProvider.notifier).accessToken();
+      final token = await container
+          .read(authControllerProvider.notifier)
+          .accessToken();
 
       expect(token, 'refreshed');
       // GoTrue は refresh_token を返さないことがあるため、手元の値を残す。
@@ -142,11 +149,36 @@ void main() {
       final container = await _authContainer(auth, store);
 
       await container.read(authControllerProvider.future);
-      final token = await container.read(authControllerProvider.notifier).accessToken();
+      final token = await container
+          .read(authControllerProvider.notifier)
+          .accessToken();
 
       expect(token, isNull);
       expect(await store.read(), isNull);
-      expect(container.read(authControllerProvider).value!.error, contains('再度サインイン'));
+      expect(
+        container.read(authControllerProvider).value!.error,
+        contains('再度サインイン'),
+      );
+    });
+
+    test('Scenario: 一時的な通信断ではサインアウトしない', () async {
+      final expired = TokenSet(
+        accessToken: 'old',
+        refreshToken: 'refresh',
+        expiresAt: DateTime.now().subtract(const Duration(minutes: 1)),
+      );
+      final store = InMemoryTokenStore(expired);
+      final auth = _OfflineRefreshAuth();
+      final container = await _authContainer(auth, store);
+
+      await container.read(authControllerProvider.future);
+      final token = await container
+          .read(authControllerProvider.notifier)
+          .accessToken();
+
+      expect(token, isNull);
+      // 通信断は失効ではない。リフレッシュトークンを捨てて再サインインを強いない。
+      expect((await store.read())!.refreshToken, 'refresh');
     });
 
     test('有効なトークンは更新せずそのまま使う', () async {
@@ -155,7 +187,9 @@ void main() {
       final container = await _authContainer(auth, store);
 
       await container.read(authControllerProvider.future);
-      final token = await container.read(authControllerProvider.notifier).accessToken();
+      final token = await container
+          .read(authControllerProvider.notifier)
+          .accessToken();
 
       expect(token, 'access');
       expect(auth.refreshCalls, 0);
@@ -167,9 +201,16 @@ void main() {
       final api = FakeApi();
       addTearDown(api.dispose);
 
-      await pumpApp(tester, api: api, signedIn: false, child: const SignInScreen());
+      await pumpApp(
+        tester,
+        api: api,
+        signedIn: false,
+        child: const SignInScreen(),
+      );
 
-      final button = tester.widget<FilledButton>(find.byKey(const Key('sign-in-button')));
+      final button = tester.widget<FilledButton>(
+        find.byKey(const Key('sign-in-button')),
+      );
       expect(button.onPressed, isNull);
       expect(find.text('Supabase の接続設定が未入力です'), findsOneWidget);
     });
@@ -199,7 +240,8 @@ void main() {
 }
 
 class _RefreshingAuth extends SupabaseAuth {
-  _RefreshingAuth() : super(supabaseUrl: 'https://auth.invalid', publishableKey: 'key');
+  _RefreshingAuth()
+    : super(supabaseUrl: 'https://auth.invalid', publishableKey: 'key');
 
   var refreshCalls = 0;
 
@@ -214,9 +256,19 @@ class _RefreshingAuth extends SupabaseAuth {
 }
 
 class _FailingRefreshAuth extends SupabaseAuth {
-  _FailingRefreshAuth() : super(supabaseUrl: 'https://auth.invalid', publishableKey: 'key');
+  _FailingRefreshAuth()
+    : super(supabaseUrl: 'https://auth.invalid', publishableKey: 'key');
 
   @override
   Future<TokenSet> refresh(String refreshToken) async =>
-      throw const SignInFailure('refresh token が失効しています');
+      throw const TokenRequestFailure('refresh token が失効しています', status: 401);
+}
+
+class _OfflineRefreshAuth extends SupabaseAuth {
+  _OfflineRefreshAuth()
+    : super(supabaseUrl: 'https://auth.invalid', publishableKey: 'key');
+
+  @override
+  Future<TokenSet> refresh(String refreshToken) async =>
+      throw const TokenRequestFailure('Supabase Auth へ接続できません', status: 0);
 }

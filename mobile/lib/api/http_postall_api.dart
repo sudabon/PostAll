@@ -442,6 +442,7 @@ class HttpPostAllApi implements PostAllApi, RealtimeStatusSource {
         generation++;
         stopRetry();
         stopPolling();
+        _setRealtimeStatus(false);
         final current = realtime;
         realtime = null;
         try {

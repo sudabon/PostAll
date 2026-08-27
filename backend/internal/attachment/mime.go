@@ -3,10 +3,10 @@ package attachment
 import "strings"
 
 var allowedTypes = map[string]struct{}{
-	"image/jpeg": {},
-	"image/png":  {},
-	"image/gif":  {},
-	"image/webp": {},
+	"image/jpeg":      {},
+	"image/png":       {},
+	"image/gif":       {},
+	"image/webp":      {},
 	"application/pdf": {},
 	"text/plain":      {},
 	"text/markdown":   {},

@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -21,12 +22,13 @@ import (
 )
 
 var (
-	ErrUnauthorized = errors.New("unauthorized")
-	ErrUnknownKID   = errors.New("unknown key id")
+	ErrUnauthorized    = errors.New("unauthorized")
+	ErrUnknownKID      = errors.New("unknown key id")
+	ErrJWKSUnavailable = errors.New("jwks unavailable")
 )
 
 const (
-	defaultJWKSTimeout               = 3 * time.Second
+	defaultJWKSTimeout               = 8 * time.Second
 	defaultUnknownKIDTTL             = time.Minute
 	defaultUnknownKIDRefreshCooldown = 5 * time.Second
 	defaultMaxUnknownKIDs            = 256
@@ -98,6 +100,9 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Claims, error) {
 		return Claims{}, ErrUnauthorized
 	}
 	if err := v.refreshForUnknownKID(ctx, unknown.kid); err != nil {
+		if errors.Is(err, ErrJWKSUnavailable) {
+			return Claims{}, err
+		}
 		return Claims{}, ErrUnauthorized
 	}
 	claims, err = v.parse(raw)
@@ -121,7 +126,7 @@ func (e *unknownKIDError) Unwrap() error {
 
 func (v *Verifier) parse(raw string) (Claims, error) {
 	token, err := jwt.Parse(raw, func(t *jwt.Token) (any, error) {
-		if t.Method != jwt.SigningMethodES256 {
+		if t.Method != jwt.SigningMethodES256 && t.Method != jwt.SigningMethodRS256 {
 			return nil, ErrUnauthorized
 		}
 		kid, _ := t.Header["kid"].(string)
@@ -185,7 +190,7 @@ func (v *Verifier) refreshForUnknownKID(ctx context.Context, kid string) error {
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("%w: %v", ErrJWKSUnavailable, ctx.Err())
 	case outcome := <-result:
 		return outcome.Err
 	}
@@ -247,6 +252,8 @@ type jwk struct {
 	Crv string `json:"crv"`
 	X   string `json:"x"`
 	Y   string `json:"y"`
+	N   string `json:"n"`
+	E   string `json:"e"`
 	Alg string `json:"alg"`
 }
 
@@ -257,7 +264,7 @@ func (v *Verifier) refresh(ctx context.Context) error {
 	}
 	resp, err := v.client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrJWKSUnavailable, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -273,14 +280,23 @@ func (v *Verifier) refresh(ctx context.Context) error {
 	}
 	next := make(map[string]crypto.PublicKey, len(doc.Keys))
 	for _, k := range doc.Keys {
-		if k.Kty != "EC" || k.Kid == "" {
+		if k.Kid == "" {
 			continue
 		}
-		pub, err := ecdsaPublicKey(k.X, k.Y, k.Crv)
-		if err != nil {
-			continue
+		switch k.Kty {
+		case "EC":
+			pub, err := ecdsaPublicKey(k.X, k.Y, k.Crv)
+			if err != nil {
+				continue
+			}
+			next[k.Kid] = pub
+		case "RSA":
+			pub, err := rsaPublicKey(k.N, k.E)
+			if err != nil {
+				continue
+			}
+			next[k.Kid] = pub
 		}
-		next[k.Kid] = pub
 	}
 	if len(next) == 0 {
 		return errors.New("empty jwks")
@@ -292,6 +308,28 @@ func (v *Verifier) refresh(ctx context.Context) error {
 	}
 	v.mu.Unlock()
 	return nil
+}
+
+func rsaPublicKey(nB64, eB64 string) (*rsa.PublicKey, error) {
+	nb, err := base64.RawURLEncoding.DecodeString(nB64)
+	if err != nil {
+		return nil, err
+	}
+	eb, err := base64.RawURLEncoding.DecodeString(eB64)
+	if err != nil {
+		return nil, err
+	}
+	var eInt int
+	for _, b := range eb {
+		eInt = eInt<<8 | int(b)
+	}
+	if eInt == 0 {
+		return nil, errors.New("invalid rsa exponent")
+	}
+	return &rsa.PublicKey{
+		N: new(big.Int).SetBytes(nb),
+		E: eInt,
+	}, nil
 }
 
 func ecdsaPublicKey(xB64, yB64, crv string) (*ecdsa.PublicKey, error) {

@@ -1,6 +1,7 @@
 package migrations
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ func TestRealtimePolicyIsTopicAndExtensionScoped(t *testing.T) {
 			t.Errorf("migration is missing %q", required)
 		}
 	}
-	if strings.Contains(contents, "using (true)") {
+	if regexp.MustCompile(`using\s*\(\s*true\s*\)`).MatchString(strings.ToLower(contents)) {
 		t.Fatal("migration still grants unscoped realtime.messages SELECT")
 	}
 }
@@ -30,13 +31,16 @@ func TestBestEffortNotificationIsObservable(t *testing.T) {
 	}
 }
 
-func TestPGroongaDownRestoresBigmBeforeDroppingPGroonga(t *testing.T) {
+func TestPGroongaDownDropsIndexAndExtension(t *testing.T) {
 	contents := strings.ToLower(migration(t, "00008_pgroonga.sql"))
+	down := contents[strings.Index(contents, "-- +goose down"):]
+	if strings.Contains(down, "pg_bigm") || strings.Contains(down, "posts_body_bigm") {
+		t.Fatal("down still requires pg_bigm")
+	}
 	assertOrdered(t, contents,
 		"-- +goose down",
-		"create extension if not exists pg_bigm",
-		"create index posts_body_bigm",
 		"drop index if exists posts_body_pgroonga",
+		"drop extension if exists pgroonga",
 	)
 }
 

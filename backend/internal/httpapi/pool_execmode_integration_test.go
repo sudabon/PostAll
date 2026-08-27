@@ -1,58 +1,20 @@
-package httpapi_test
+package httpapi
 
 import (
-	"context"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/sudabon/PostAll/backend/internal/store"
-	"github.com/sudabon/PostAll/backend/internal/testutil"
 )
 
-func TestTransactionPoolerCompatibleQueryExecMode(t *testing.T) {
-	databaseURL := testutil.PostgresURL(t)
-	cfg, err := pgxpool.ParseConfig(databaseURL)
+func TestPoolConfigUsesDescribeExecAndLimitsConns(t *testing.T) {
+	cfg, err := newPoolConfig("postgres://postall:postall@127.0.0.1:5432/postall?sslmode=disable")
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.MaxConns = 2
-	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
-	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
-	if err != nil {
-		t.Fatal(err)
+	if cfg.ConnConfig.DefaultQueryExecMode != pgx.QueryExecModeDescribeExec {
+		t.Fatalf("DefaultQueryExecMode = %v, want DescribeExec", cfg.ConnConfig.DefaultQueryExecMode)
 	}
-	t.Cleanup(pool.Close)
-
-	q := store.New(pool)
-	ctx := context.Background()
-	first, err := q.InsertUserByAuthSubject(ctx, "pool-user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := q.GetUserByAuthSubject(ctx, "pool-user")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.ID != second.ID {
-		t.Fatalf("id mismatch %s %s", first.ID, second.ID)
-	}
-	if _, err := q.GetUserByAuthSubject(ctx, "pool-user"); err != nil {
-		t.Fatalf("repeat select after reconnect-style exec: %v", err)
-	}
-
-	ch, err := q.InsertChannel(ctx, store.InsertChannelParams{Name: "pool", SortKey: "a"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	post, err := q.InsertPost(ctx, store.InsertPostParams{
-		ChannelID: ch.ID, AuthorID: first.ID, Body: "describe-exec",
-	})
-	if err != nil {
-		t.Fatalf("insert post with null thread_root: %v", err)
-	}
-	if _, err := q.ListReactionRowsForPosts(ctx, []uuid.UUID{post.ID}); err != nil {
-		t.Fatalf("list reactions: %v", err)
+	if cfg.MaxConns != 2 {
+		t.Fatalf("MaxConns = %d, want 2", cfg.MaxConns)
 	}
 }

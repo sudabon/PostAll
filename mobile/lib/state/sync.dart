@@ -32,6 +32,10 @@ class ChangeSync {
   bool _stopped = false;
   bool _recovering = false;
   bool _resuming = false;
+  Duration _reconnectDelay = _reconnectDelayInitial;
+
+  static const _reconnectDelayInitial = Duration(seconds: 1);
+  static const _reconnectDelayMax = Duration(seconds: 30);
 
   /// 直近に取り込んだイベント ID。テストと表示のために公開する。
   String? get lastEventId => _lastEventId;
@@ -92,6 +96,13 @@ class ChangeSync {
         (subscribed) {
           if (_stopped || generation != _connectionGeneration) return;
           _realtimeSubscribed = subscribed;
+          if (subscribed) {
+            _reconnectDelay = _reconnectDelayInitial;
+          }
+          if (!subscribed &&
+              _ref.read(connectionProvider) == BackendConnection.offline) {
+            return;
+          }
           _ref
               .read(connectionProvider.notifier)
               .set(
@@ -129,7 +140,13 @@ class ChangeSync {
     _realtimeSubscribed = false;
     _ref.read(connectionProvider.notifier).set(BackendConnection.degraded);
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 1), () {
+    final delay = _reconnectDelay;
+    final nextSeconds = (_reconnectDelay.inSeconds * 2).clamp(
+      _reconnectDelayInitial.inSeconds,
+      _reconnectDelayMax.inSeconds,
+    );
+    _reconnectDelay = Duration(seconds: nextSeconds);
+    _reconnectTimer = Timer(delay, () {
       if (_stopped) return;
       unawaited(_recover());
       _connect();
@@ -152,6 +169,14 @@ class ChangeSync {
         if (!page.hasMore) break;
       }
       _lastEventId = cursor;
+      _reconnectDelay = _reconnectDelayInitial;
+      _ref
+          .read(connectionProvider.notifier)
+          .set(
+            _realtimeSubscribed == true
+                ? BackendConnection.online
+                : BackendConnection.degraded,
+          );
       return true;
     } on Object {
       _ref.read(connectionProvider.notifier).set(BackendConnection.offline);

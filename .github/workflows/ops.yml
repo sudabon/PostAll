@@ -1,5 +1,9 @@
 name: ops
 
+concurrency:
+  group: ops-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -63,7 +67,7 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
-          curl -fsS -X POST \
+          curl --fail-with-body -sS --max-time 120 --retry 2 --retry-connrefused -X POST \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL%/}/internal/attachments/reap"
 
@@ -73,7 +77,7 @@ jobs:
     steps:
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: "2.116.0"
       - name: Dump and encrypt database
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -93,6 +97,17 @@ jobs:
             --use-copy \
             --exclude public.goose_db_version \
             -f "$plain"
+          min_bytes=1024
+          plain_bytes=$(stat -c '%s' "$plain")
+          if (( plain_bytes < min_bytes )); then
+            echo "Plain dump is ${plain_bytes} bytes; minimum is ${min_bytes}." >&2
+            exit 1
+          fi
+          copy_count=$(grep -c '^COPY ' "$plain" || true)
+          if (( copy_count == 0 )); then
+            echo "Plain dump has no COPY statements." >&2
+            exit 1
+          fi
           gzip -9 -c "$plain" > "$compressed"
           printf '%s' "$DUMP_PASSPHRASE" | gpg \
             --batch \

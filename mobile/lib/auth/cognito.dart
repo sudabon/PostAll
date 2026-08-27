@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:dio/dio.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
@@ -17,6 +19,16 @@ class SignInFailure implements Exception {
   const SignInFailure(this.message);
 
   final String message;
+
+  @override
+  String toString() => message;
+}
+
+class TokenRequestFailure implements Exception {
+  const TokenRequestFailure(this.message, {this.status = 0});
+
+  final String message;
+  final int status;
 
   @override
   String toString() => message;
@@ -82,18 +94,21 @@ class SupabaseAuth {
   /// サーバ側セッションも落とす。失敗しても端末側の破棄は続行する。
   Future<void> signOut({String? accessToken}) async {
     try {
-      await _dio.postUri<dynamic>(
+      final response = await _dio.postUri<dynamic>(
         Uri.parse('${_base()}/auth/v1/logout'),
         options: Options(
           headers: {
             'apikey': publishableKey,
             if (accessToken != null && accessToken.isNotEmpty) 'Authorization': 'Bearer $accessToken',
           },
-          validateStatus: (_) => true,
         ),
       );
-    } on Exception {
-      // 中断されても、呼び出し側が端末のトークンを破棄する。
+      final status = response.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        developer.log('signOut HTTP $status', name: 'SupabaseAuth');
+      }
+    } on Exception catch (error) {
+      developer.log('signOut failed: $error', name: 'SupabaseAuth');
     }
   }
 
@@ -118,18 +133,23 @@ class SupabaseAuth {
         ),
       );
     } on DioException catch (error) {
-      throw SignInFailure(error.message ?? 'Supabase Auth へ接続できません');
+      throw TokenRequestFailure(error.message ?? 'Supabase Auth へ接続できません', status: error.response?.statusCode ?? 0);
     }
 
     final data = response.data;
     final json = data is Map ? data.cast<String, Object?>() : const <String, Object?>{};
     final status = response.statusCode ?? 0;
     if (status < 200 || status >= 300) {
-      throw SignInFailure(
+      throw TokenRequestFailure(
         (json['error_description'] ?? json['error'] ?? json['msg'] ?? 'トークンの取得に失敗しました').toString(),
+        status: status,
       );
     }
-    return TokenSet.fromTokenResponse(json);
+    final tokens = TokenSet.fromTokenResponse(json);
+    if (tokens.accessToken.isEmpty) {
+      throw TokenRequestFailure('access_token が空です', status: status);
+    }
+    return tokens;
   }
 
   String _base() => supabaseUrl.replaceAll(RegExp(r'/$'), '');

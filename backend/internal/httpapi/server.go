@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -23,18 +24,18 @@ import (
 )
 
 type Config struct {
-	DatabaseURL    string
-	SupabaseURL    string
-	Verifier       *auth.Verifier
-	S3Endpoint     string
-	S3Region       string
-	S3Bucket       string
-	S3AccessKey    string
-	S3SecretKey    string
-	EmojiBucket    string
-	Blob           blob.Store
-	EmojiBlob      blob.Store
-	CronSecret     string
+	DatabaseURL string
+	SupabaseURL string
+	Verifier    *auth.Verifier
+	S3Endpoint  string
+	S3Region    string
+	S3Bucket    string
+	S3AccessKey string
+	S3SecretKey string
+	EmojiBucket string
+	Blob        blob.Store
+	EmojiBlob   blob.Store
+	CronSecret  string
 }
 
 type Server struct {
@@ -50,22 +51,33 @@ type Server struct {
 	mux         http.Handler
 }
 
+func newPoolConfig(databaseURL string) (*pgxpool.Config, error) {
+	poolCfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	poolCfg.MaxConns = 2
+	poolCfg.MaxConnIdleTime = 30 * time.Second
+	// DescribeExec avoids named prepared statements (42P05 on Supavisor
+	// transaction pooling) while still describing types so uuid[] encodes.
+	poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+	return poolCfg, nil
+}
+
 func New(cfg Config) (*Server, error) {
+	if cfg.DatabaseURL != "" && cfg.Verifier == nil && cfg.SupabaseURL == "" {
+		return nil, fmt.Errorf("httpapi: Verifier or SUPABASE_URL is required when DATABASE_URL is set")
+	}
 	s := &Server{cronSecret: cfg.CronSecret, emojiBlobs: cfg.EmojiBlob}
 
 	var users auth.UserStore
 	if cfg.DatabaseURL != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+		poolCfg, err := newPoolConfig(cfg.DatabaseURL)
 		if err != nil {
 			return nil, err
 		}
-		poolCfg.MaxConns = 2
-		poolCfg.MaxConnIdleTime = 30 * time.Second
-		// DescribeExec avoids named prepared statements (42P05 on Supavisor
-		// transaction pooling) while still describing types so uuid[] encodes.
-		poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
 		pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 		if err != nil {
 			return nil, err
@@ -118,6 +130,7 @@ func New(cfg Config) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ready", s.GetHealth)
 	mux.HandleFunc("POST /internal/attachments/reap", s.ReapAttachments)
+	mux.HandleFunc("GET /internal/attachments/reap", s.ReapAttachments)
 	inner := api.HandlerWithOptions(s, api.StdHTTPServerOptions{
 		BaseRouter: mux,
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -161,7 +174,7 @@ func (s *Server) ReapAttachments(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.attachments.Reap(r.Context()); err != nil {
 		slog.ErrorContext(r.Context(), "attachment reaper failed", "error", safeLogError(err))
-		writeInternal(w, r, err)
+		writeAppError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

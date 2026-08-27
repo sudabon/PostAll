@@ -24,6 +24,7 @@ PostAll/
 - Node.js 22+
 - Flutter 3.32（iOS シミュレータまたは実機）
 - Supabase CLI（ローカル DB とダンプ）
+- Docker（`supabase start` と `make test` の testcontainers に必須）
 - Vercel CLI（任意。プレビューは Git 連携で足りる）
 - 本番: Vercel Hobby + Supabase Free、ドメイン `memo.sudabon.com`
 
@@ -89,6 +90,17 @@ API（Vercel）:
 
 フロント（Vite）: `VITE_SUPABASE_URL`、`VITE_SUPABASE_PUBLISHABLE_KEY`。API ベース URL の既定は空（同一オリジン）。
 
+GitHub Actions（`ops` workflow）の repository secrets:
+
+| Secret | 使うジョブ | 未設定時の挙動 |
+|---|---|---|
+| `DATABASE_URL` | migrate / emoji-sync / db-dump | ジョブが失敗する |
+| `EMOJI_S3_BUCKET` | emoji-sync | emoji-sync が失敗する |
+| `S3_ENDPOINT` / `S3_REGION` / `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | emoji-sync | Storage へのアップロードが失敗する |
+| `APP_URL` | reap | curl が失敗する |
+| `CRON_SECRET` | reap | サーバが 401 を返し reap が失敗する |
+| `DUMP_PASSPHRASE` | db-dump | ジョブが失敗する |
+
 CI のマイグレーション / ダンプは **Session プール**（`*.pooler.supabase.com:5432`）の `DATABASE_URL` を GitHub Actions の secret に置く。Direct（`db.<ref>.supabase.co:5432`）は IPv6 専用で、IPv4 だけのネットワーク（このマシンや GitHub-hosted runner）からは届かない。IPv4 アドオンは不要。
 
 ### 暗号化バックアップ
@@ -105,6 +117,8 @@ gpg --decrypt postall.dump.sql.gz.gpg \
   | gzip -dc \
   | psql "$DATABASE_URL"
 ```
+
+このバックアップは `public` schema のデータのみで、**Supabase Auth のユーザー（`auth.users`）は含まない**。別プロジェクトへ復元すると `users.auth_subject` が参照する認証主体が存在せず、全ユーザーが GitHub で再サインインしても新しい `sub` が発行されて既存の投稿と紐付かない。プロジェクトごと失う事態に備えるなら、Auth ユーザーの移行手段を別途用意する。
 
 このバックアップに Supabase Storage の添付・絵文字オブジェクトは含まれない。絵文字は `emoji-sync` で再作成できるが、添付は失敗を許容する現行方針のため、利用量が増えた時点で別途バックアップ対象にする。
 
