@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -9,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/sudabon/PostAll/backend/internal/api"
+	"github.com/sudabon/PostAll/backend/internal/blob"
 	"github.com/sudabon/PostAll/backend/internal/emoji"
 	"github.com/sudabon/PostAll/backend/internal/post"
 )
@@ -58,12 +62,32 @@ func (s *Server) GetEmojiImage(w http.ResponseWriter, r *http.Request, shortcode
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	location, err := s.emojiBlobs.PresignGet(r.Context(), item.StorageKey, item.StorageKey)
+	// 署名付き URL へリダイレクトすると、ブラウザがクレデンシャル付きのまま
+	// クロスオリジンでストレージを読みに行くことになり CORS と署名の両方に依存する。
+	// OpenAPI の定義どおり、この API が画像そのものを返す。
+	body, contentType, size, err := s.emojiBlobs.Get(r.Context(), item.StorageKey)
 	if err != nil {
+		if errors.Is(err, blob.ErrNotFound) {
+			writeEmojiImageNotFound(w)
+			return
+		}
 		writeInternal(w, r, err)
 		return
 	}
-	http.Redirect(w, r, location, http.StatusFound)
+	defer func() { _ = body.Close() }()
+	if contentType == "" {
+		contentType = "image/png"
+	}
+	w.Header().Set("Content-Type", contentType)
+	if size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, body); err != nil {
+		// ヘッダ送信後なのでステータスは変えられない。記録だけ残す。
+		slog.WarnContext(r.Context(), "emoji image streaming failed",
+			"shortcode", string(shortcode), "error", safeLogError(err))
+	}
 }
 
 func (s *Server) AddReaction(w http.ResponseWriter, r *http.Request, postId api.PostId, emojiId api.EmojiId) {

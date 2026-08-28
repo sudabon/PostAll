@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"sync"
@@ -37,6 +38,18 @@ func (m *Memory) PresignPut(_ context.Context, key, contentType string, _ int64)
 
 func (m *Memory) PresignGet(_ context.Context, key, _ string) (string, error) {
 	return "memory://get/" + key, nil
+}
+
+func (m *Memory) Get(_ context.Context, key string) (io.ReadCloser, string, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, ok := m.objects[key]
+	if !ok {
+		return nil, "", 0, ErrNotFound
+	}
+	cp := make([]byte, len(data))
+	copy(cp, data)
+	return io.NopCloser(bytes.NewReader(cp)), "", int64(len(cp)), nil
 }
 
 func (m *Memory) Head(_ context.Context, key string) (bool, int64, error) {

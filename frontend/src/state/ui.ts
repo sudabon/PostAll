@@ -7,6 +7,7 @@ export type ConnectionState = 'connecting' | 'live' | 'degraded' | 'offline'
 export type UiState = {
   sidebarWidth: number
   sidebarCollapsed: boolean
+  threadWidth: number
   selectedChannelId: string | null
   expandedIds: string[]
   threadPostId: string | null
@@ -24,9 +25,13 @@ export type UiState = {
   updateAvailable: boolean
 }
 
+export const THREAD_MIN_WIDTH = 320
+export const THREAD_MAX_WIDTH = 640
+
 const initial: UiState = {
   sidebarWidth: 260,
   sidebarCollapsed: false,
+  threadWidth: 384,
   selectedChannelId: null,
   expandedIds: [],
   threadPostId: null,
@@ -48,6 +53,7 @@ type UiStore = UiState & {
   hydrate: (partial: Partial<UiState>) => void
   setSidebarWidth: (width: number) => void
   setSidebarCollapsed: (collapsed: boolean) => void
+  setThreadWidth: (width: number) => void
   selectChannel: (id: string | null) => void
   toggleExpanded: (id: string) => void
   setExpanded: (ids: string[]) => void
@@ -69,6 +75,9 @@ export const useUi = create<UiStore>((set, get) => ({
   hydrate: (partial) => set(partial),
   setSidebarWidth: (sidebarWidth) => set({ sidebarWidth: Math.min(420, Math.max(180, sidebarWidth)) }),
   setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
+  setThreadWidth: (threadWidth) => set({
+    threadWidth: Math.min(THREAD_MAX_WIDTH, Math.max(THREAD_MIN_WIDTH, threadWidth)),
+  }),
   selectChannel: (selectedChannelId) => set({
     selectedChannelId,
     threadPostId: null,
@@ -119,28 +128,39 @@ export function requireMutationConnection() {
   if (!useUi.getState().canMutate) throw new ConnectionUnavailableError()
 }
 
+const persistedKeys = [
+  'sidebarWidth',
+  'sidebarCollapsed',
+  'selectedChannelId',
+  'expandedIds',
+  'threadWidth',
+] as const
+
+type PersistedUi = Pick<UiState, (typeof persistedKeys)[number]>
+
+/**
+ * 永続化対象のキーだけを取り出す。zustand の set は Object.assign 相当なので、
+ * 保存データに無いキーをそのまま渡すと undefined で初期値を上書きしてしまう。
+ * 古い保存データを読んでも初期値が保たれるよう、undefined のキーは落とす。
+ */
+function pickPersisted(source: Partial<PersistedUi>): Partial<PersistedUi> {
+  const next: Partial<PersistedUi> = {}
+  for (const key of persistedKeys) {
+    if (source[key] === undefined) continue
+    Object.assign(next, { [key]: source[key] })
+  }
+  return next
+}
+
 export async function loadUi(adapter: PlatformAdapter) {
   const raw = await adapter.getItem('ui')
   if (!raw) return
   const parsed = JSON.parse(raw) as Partial<UiState>
-  useUi.getState().hydrate({
-    sidebarWidth: parsed.sidebarWidth,
-    sidebarCollapsed: parsed.sidebarCollapsed,
-    selectedChannelId: parsed.selectedChannelId,
-    expandedIds: parsed.expandedIds,
-  })
+  useUi.getState().hydrate(pickPersisted(parsed))
 }
 
 export function watchUi(adapter: PlatformAdapter) {
   return useUi.subscribe((state) => {
-    void adapter.setItem(
-      'ui',
-      JSON.stringify({
-        sidebarWidth: state.sidebarWidth,
-        sidebarCollapsed: state.sidebarCollapsed,
-        selectedChannelId: state.selectedChannelId,
-        expandedIds: state.expandedIds,
-      }),
-    )
+    void adapter.setItem('ui', JSON.stringify(pickPersisted(state)))
   })
 }

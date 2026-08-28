@@ -16,6 +16,8 @@ type UseDragValueOptions = {
   min: number
   max: number
   axis?: 'x' | 'y'
+  /** 右寄せ要素の左端をつかむ場合など、ポインタの移動方向と値の増減が逆になるとき true。 */
+  invert?: boolean
   dimension?: number
   threshold?: number
   snapPoints?: readonly number[]
@@ -24,8 +26,8 @@ type UseDragValueOptions = {
   onRelease?: (release: DragRelease) => void
 }
 
-function coordinate(event: PointerEvent<HTMLElement>, axis: 'x' | 'y') {
-  return axis === 'x' ? event.clientX : event.clientY
+function coordinate(event: PointerEvent<HTMLElement>, axis: 'x' | 'y', sign: 1 | -1) {
+  return sign * (axis === 'x' ? event.clientX : event.clientY)
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -43,6 +45,7 @@ export function useDragValue({
   min,
   max,
   axis = 'x',
+  invert = false,
   dimension = max - min,
   threshold = 10,
   snapPoints,
@@ -50,6 +53,7 @@ export function useDragValue({
   onCommit,
   onRelease,
 }: UseDragValueOptions) {
+  const sign: 1 | -1 = invert ? -1 : 1
   const value = useMotionValue(initialValue)
   const shouldReduceMotion = useReducedMotion()
   const [isDragging, setDragging] = useState(false)
@@ -73,7 +77,7 @@ export function useDragValue({
   }, [])
 
   const updateFromPointer = useCallback((event: PointerEvent<HTMLElement>) => {
-    const point = coordinate(event, axis)
+    const point = coordinate(event, axis, sign)
     const raw = point - grabOffset.current
     const next = rubberBandPosition(raw, { min, max, dimension })
     value.set(next)
@@ -83,7 +87,7 @@ export function useDragValue({
     const delta = point - pointerOrigin.current
     setDirection(Math.abs(delta) < threshold ? null : delta < 0 ? 'negative' : 'positive')
     return next
-  }, [axis, dimension, max, min, onChange, record, threshold, value])
+  }, [axis, dimension, max, min, onChange, record, sign, threshold, value])
 
   const settle = useCallback((velocity: number) => {
     const projected = projectMomentum(value.get(), velocity)
@@ -127,7 +131,7 @@ export function useDragValue({
 
     animation.current?.stop()
     settling.current = false
-    const point = coordinate(event, axis)
+    const point = coordinate(event, axis, sign)
     activePointer.current = event.pointerId
     pointerOrigin.current = point
     grabOffset.current = point - value.get()
@@ -136,7 +140,7 @@ export function useDragValue({
     setDragging(true)
     setDirection(null)
     event.currentTarget.setPointerCapture?.(event.pointerId)
-  }, [axis, record, value])
+  }, [axis, record, sign, value])
 
   const handlePointerMove = useCallback<PointerEventHandler<HTMLElement>>((event) => {
     if (activePointer.current === event.pointerId) updateFromPointer(event)

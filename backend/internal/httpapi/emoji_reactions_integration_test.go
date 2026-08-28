@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/google/uuid"
@@ -28,6 +29,8 @@ type reactionJSON struct {
 	ReactedByMe bool      `json:"reactedByMe"`
 	ReactorIDs  []string  `json:"reactorIds"`
 }
+
+var emojiPNG = []byte("\x89PNG\r\n\x1a\npostall-test")
 
 func TestEmojiCatalogAndReactionLifecycle(t *testing.T) {
 	databaseURL := testutil.PostgresURL(t)
@@ -142,7 +145,7 @@ func TestEmojiImageDelivery(t *testing.T) {
 	t.Cleanup(jwksServer.Close)
 
 	mem := blob.NewMemory()
-	mem.PutObject("shipit.png", []byte("\x89PNG\r\n\x1a\npostall-test"))
+	mem.PutObject("shipit.png", emojiPNG)
 
 	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "authenticated", jwksServer.Client())
 	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier, EmojiBlob: mem})
@@ -173,14 +176,23 @@ func TestEmojiImageDelivery(t *testing.T) {
 	req.Header.Set("Authorization", authz)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusFound {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("image = %d %s", rec.Code, rec.Body.Bytes())
 	}
-	if got := rec.Header().Get("Location"); got != "memory://get/shipit.png" {
-		t.Fatalf("location = %q", got)
+	if got := rec.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("content-type = %q", got)
+	}
+	if got := rec.Body.String(); got != string(emojiPNG) {
+		t.Fatalf("image body = %q", got)
+	}
+	if got := rec.Header().Get("Content-Length"); got != strconv.Itoa(len(emojiPNG)) {
+		t.Fatalf("content-length = %q", got)
 	}
 	if got := rec.Header().Get("Cache-Control"); got != "private, max-age=60" {
 		t.Fatalf("cache-control = %q", got)
+	}
+	if got := rec.Header().Get("Location"); got != "" {
+		t.Fatalf("unexpected redirect to %q", got)
 	}
 
 	cached := httptest.NewRequest(http.MethodGet, "/v1/emojis/shipit/image", nil)

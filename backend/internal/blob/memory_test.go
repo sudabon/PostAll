@@ -2,6 +2,8 @@ package blob
 
 import (
 	"context"
+	"errors"
+	"io"
 	"testing"
 )
 
@@ -29,5 +31,31 @@ func TestMemoryPutHeadDelete(t *testing.T) {
 	}
 	if m.Has("k") {
 		t.Fatal("expected deleted")
+	}
+}
+
+func TestMemoryGet(t *testing.T) {
+	m := NewMemory()
+	ctx := context.Background()
+
+	if _, _, _, err := m.Get(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get missing: %v", err)
+	}
+
+	m.PutObject("k", []byte("data"))
+	body, contentType, size, err := m.Get(ctx, "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = body.Close() }()
+	if contentType != "" {
+		t.Fatalf("content type = %q", contentType)
+	}
+	if size != 4 {
+		t.Fatalf("size = %d", size)
+	}
+	read, err := io.ReadAll(body)
+	if err != nil || string(read) != "data" {
+		t.Fatalf("body = %q %v", read, err)
 	}
 }

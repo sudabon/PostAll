@@ -6,12 +6,19 @@ import { useDragValue } from './useDragValue'
 
 afterEach(cleanup)
 
-function DragHarness({ onRelease = () => {} }: { onRelease?: (release: DragRelease) => void }) {
+function DragHarness({
+  onRelease = () => {},
+  invert = false,
+}: {
+  onRelease?: (release: DragRelease) => void
+  invert?: boolean
+}) {
   const [current, setCurrent] = useState(100)
   const drag = useDragValue({
     initialValue: 100,
     min: 80,
     max: 140,
+    invert,
     dimension: 60,
     snapPoints: [80, 140],
     onChange: setCurrent,
@@ -26,8 +33,8 @@ function DragHarness({ onRelease = () => {} }: { onRelease?: (release: DragRelea
   )
 }
 
-function prepareDrag(onRelease = vi.fn<(release: DragRelease) => void>()) {
-  render(<DragHarness onRelease={onRelease} />)
+function prepareDrag(onRelease = vi.fn<(release: DragRelease) => void>(), invert = false) {
+  render(<DragHarness onRelease={onRelease} invert={invert} />)
   const handle = screen.getByTestId('handle')
   handle.setPointerCapture = vi.fn()
   handle.releasePointerCapture = vi.fn()
@@ -89,5 +96,16 @@ describe('useDragValue', () => {
       transition: expect.objectContaining({ velocity: 200 }),
     }))
     expect(handle.releasePointerCapture).toHaveBeenCalledWith(1)
+  })
+
+  it('grows the value when dragging away from the anchored edge with invert', () => {
+    const { handle } = prepareDrag(vi.fn(), true)
+
+    pointer(handle, 'pointerdown', { x: 110, time: 0 })
+    pointer(handle, 'pointermove', { x: 90, time: 50 })
+    expect(screen.getByTestId('value')).toHaveTextContent('120')
+
+    pointer(handle, 'pointermove', { x: 130, time: 100 })
+    expect(screen.getByTestId('value')).toHaveTextContent('80')
   })
 })
