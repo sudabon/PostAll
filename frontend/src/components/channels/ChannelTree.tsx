@@ -10,6 +10,7 @@ import {
   type DragOverEvent,
 } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
+import { Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { Channel } from '@/api/client'
 import { buildForest, descendantIds, flattenVisible } from '@/lib/tree'
@@ -97,12 +98,14 @@ export function ChannelTree() {
         <span className="text-caption font-semibold uppercase text-muted-foreground">チャネル</span>
         <button
           type="button"
-          className="rounded-lg px-2 py-1 text-body font-semibold text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:text-disabled-foreground"
+          className="rounded-lg p-1.5 text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:text-disabled-foreground"
           data-testid="new-channel-button"
+          aria-label="チャネルを新規作成"
+          title="新規"
           disabled={!canMutate}
           onClick={() => useUi.getState().startCreate(null)}
         >
-          新規
+          <Plus className="size-4" />
         </button>
       </div>
       {notice ? <p className="px-3 text-caption text-destructive">{notice}</p> : null}

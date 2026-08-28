@@ -46,6 +46,8 @@
 | `heading` | 1.25rem (20px) | 1.2 | `-0.018em` |
 | `display` | 1.5rem (24px) | 1.1 | `-0.026em` |
 
+ヘッダー中央のブランド表記のみ `--font-script`（`Snell Roundhand` → `Apple Chancery` → `Segoe Script` → `Brush Script MT` → `cursive`）を使い、Tailwind の `font-script` から参照します。
+
 ## 3. 角丸
 
 基準は `--radius: 0.75rem`（12px）で、そこからの相対で刻みます。

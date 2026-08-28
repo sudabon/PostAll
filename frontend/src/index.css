@@ -158,6 +158,7 @@
   --tracking-display: -0.026em;
   --text-display--line-height: var(--leading-display);
   --text-display--letter-spacing: var(--tracking-display);
+  --font-script: "Snell Roundhand", "Apple Chancery", "Segoe Script", "Brush Script MT", cursive;
   --shadow-sm: var(--elevation-sm);
   --shadow-md: var(--elevation-md);
   --shadow-lg: var(--elevation-lg);

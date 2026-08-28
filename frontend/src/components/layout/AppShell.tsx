@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { AnimatePresence, animate, m } from 'motion/react'
+import { ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { ChannelTree } from '@/components/channels/ChannelTree'
 import { Timeline } from '@/components/timeline/Timeline'
 import { ThreadPanel } from '@/components/thread/ThreadPanel'
@@ -99,13 +100,23 @@ export function AppShell() {
           <Button
             type="button"
             variant="ghost"
-            size="sm"
-            className="h-8"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            aria-label={collapsed ? 'チャネルを表示' : '折りたたむ'}
+            title={collapsed ? 'チャネルを表示' : '折りたたむ'}
+            aria-expanded={!collapsed}
+            data-testid="sidebar-toggle"
             onClick={() => useUi.getState().setSidebarCollapsed(!collapsed)}
           >
-            {collapsed ? 'チャネルを表示' : '折りたたむ'}
+            {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
           </Button>
           <ChannelTitle />
+          <span
+            className="pointer-events-none absolute left-1/2 -translate-x-1/2 select-none font-script text-heading font-semibold tracking-normal"
+            data-testid="app-brand"
+          >
+            PostAll
+          </span>
           <BrowserChrome />
           <span
             aria-hidden="true"
@@ -130,9 +141,10 @@ function ChannelTitle() {
   const id = useUi((s) => s.selectedChannelId)
   const { data = [] } = useChannels()
   const name = data.find((c) => c.id === id)?.name
+  if (!name) return null
   return (
-    <h1 className="truncate text-title font-semibold" data-testid="channel-title">
-      {name ? `# ${name}` : 'PostAll'}
+    <h1 className="max-w-[30%] truncate text-title font-semibold" data-testid="channel-title">
+      {`# ${name}`}
     </h1>
   )
 }
