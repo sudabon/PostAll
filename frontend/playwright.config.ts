@@ -9,6 +9,7 @@ export default defineConfig({
   retries: 0,
   use: {
     locale: 'ja-JP',
+    reducedMotion: 'reduce',
     trace: 'on-first-retry',
   },
   webServer: [

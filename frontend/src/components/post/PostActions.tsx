@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { AnimatePresence, m, useReducedMotion } from 'motion/react'
 import type { Post } from '@/api/client'
+import { Button } from '@/components/ui/button'
+import { useOverlayPresence } from '@/lib/motion/useOverlayPresence'
+import { springPresets } from '@/lib/motion/springs'
+import { cn } from '@/lib/utils'
 
 export function PostActions({
   post,
@@ -19,48 +23,62 @@ export function PostActions({
   const [body, setBody] = useState(post.body)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
+  const [revealed, setRevealed] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const dialogRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLTextAreaElement>(null)
+  const restoreFocus = useRef(false)
   const titleId = useId()
   const bodyId = useId()
   const attachments = post.attachments ?? []
   const summary = post.body.trim().slice(0, 30) || attachments[0]?.fileName || post.id
-
-  const close = useCallback(() => {
-    setEditing(false)
-    requestAnimationFrame(() => triggerRef.current?.focus())
-  }, [])
+  const shouldReduceMotion = useReducedMotion()
+  const close = useCallback(() => setEditing(false), [])
+  const {
+    dialogRef,
+    shouldRender,
+    isPresent,
+    onCancel,
+    onExitComplete,
+    motionProps,
+  } = useOverlayPresence({ open: editing, onClose: close })
 
   useEffect(() => {
     if (!editing) return
-    requestAnimationFrame(() => bodyRef.current?.focus())
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        close()
-        return
-      }
-      if (event.key !== 'Tab') return
-      const controls = dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), textarea:not([disabled]), input:not([disabled])',
-      )
-      if (!controls?.length) return
-      const first = controls[0]!
-      const last = controls[controls.length - 1]!
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
+    const frame = requestAnimationFrame(() => bodyRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [editing])
+
+  useEffect(() => {
+    if (shouldRender || !restoreFocus.current) return
+    restoreFocus.current = false
+    const frame = requestAnimationFrame(() => triggerRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [shouldRender])
+
+  useEffect(() => {
+    const row = triggerRef.current?.closest<HTMLElement>('.group')
+    if (!row) return
+    const reveal = () => setRevealed(true)
+    const conceal = () => {
+      if (!row.matches(':focus-within')) setRevealed(false)
     }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [close, editing])
+    const onFocusOut = (event: FocusEvent) => {
+      if (!row.contains(event.relatedTarget as Node | null)) setRevealed(false)
+    }
+    row.addEventListener('pointerenter', reveal)
+    row.addEventListener('pointerleave', conceal)
+    row.addEventListener('focusin', reveal)
+    row.addEventListener('focusout', onFocusOut)
+    return () => {
+      row.removeEventListener('pointerenter', reveal)
+      row.removeEventListener('pointerleave', conceal)
+      row.removeEventListener('focusin', reveal)
+      row.removeEventListener('focusout', onFocusOut)
+    }
+  }, [])
 
   const openEditor = () => {
+    restoreFocus.current = true
     setBody(post.body)
     setSelectedIds(new Set(attachments.map((attachment) => attachment.id)))
     setError(null)
@@ -81,11 +99,23 @@ export function PostActions({
 
   return (
     <>
-      <div className="absolute right-2 top-2 flex gap-2 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+      <m.div
+        initial={false}
+        animate={shouldReduceMotion
+          ? { opacity: revealed ? 1 : 0 }
+          : { opacity: revealed ? 1 : 0, y: revealed ? 0 : -4, scale: revealed ? 1 : 0.96 }}
+        transition={shouldReduceMotion ? { duration: 0.14, ease: 'easeOut' } : springPresets.snap}
+        className={cn(
+          'material-thin absolute right-2 top-2 flex gap-1 rounded-lg p-1 shadow-sm',
+          !revealed && 'pointer-events-none',
+        )}
+        data-testid="post-actions"
+        data-visible={revealed}
+      >
         <button
           ref={triggerRef}
           type="button"
-          className="text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-lg px-1.5 py-1 text-caption font-medium hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           aria-label={`${kind}を編集: ${summary}`}
           aria-haspopup="dialog"
           aria-expanded={editing}
@@ -96,7 +126,7 @@ export function PostActions({
         </button>
         <button
           type="button"
-          className="text-xs text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="rounded-lg px-1.5 py-1 text-caption font-medium text-destructive hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           aria-label={`${kind}を削除: ${summary}`}
           disabled={mutationDisabled}
           onClick={() => {
@@ -105,71 +135,79 @@ export function PostActions({
         >
           削除
         </button>
-      </div>
-      {editing
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
-              onMouseDown={(event) => {
-                if (event.target === event.currentTarget) close()
-              }}
-            >
-              <div
-                ref={dialogRef}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby={titleId}
-                className="w-full max-w-lg rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl"
+      </m.div>
+      {shouldRender ? (
+        <dialog
+          ref={dialogRef}
+          className="m-auto h-dvh max-h-none w-dvw max-w-none overflow-visible border-0 bg-transparent p-0 text-foreground backdrop:bg-transparent"
+          aria-labelledby={titleId}
+          onCancel={onCancel}
+        >
+          <AnimatePresence onExitComplete={onExitComplete}>
+            {isPresent ? (
+              <m.div
+                key="post-editor-overlay"
+                {...motionProps.backdrop}
+                className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 p-4"
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget) close()
+                }}
               >
-                <h3 id={titleId} className="text-base font-semibold">
-                  {kind}を編集
-                </h3>
-                <label htmlFor={bodyId} className="mt-3 block text-sm font-medium">
-                  本文
-                </label>
-                <textarea
-                  ref={bodyRef}
-                  id={bodyId}
-                  value={body}
-                  onChange={(event) => setBody(event.target.value)}
-                  className="mt-1 min-h-32 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-                {attachments.length > 0 ? (
-                  <fieldset className="mt-3 rounded-md border border-border p-3">
-                    <legend className="px-1 text-sm font-medium">残す添付</legend>
-                    <div className="space-y-2">
-                      {attachments.map((attachment) => (
-                        <label key={attachment.id} className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.has(attachment.id)}
-                            onChange={(event) => {
-                              const next = new Set(selectedIds)
-                              if (event.target.checked) next.add(attachment.id)
-                              else next.delete(attachment.id)
-                              setSelectedIds(next)
-                            }}
-                          />
-                          <span className="min-w-0 truncate">{attachment.fileName}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-                ) : null}
-                {error ? <p role="alert" className="mt-2 text-sm text-destructive">{error}</p> : null}
-                <div className="mt-4 flex justify-end gap-2">
-                  <button type="button" className="rounded-md border border-border px-3 py-2 text-sm" onClick={close}>
-                    キャンセル
-                  </button>
-                  <button type="button" className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={save}>
-                    保存
-                  </button>
-                </div>
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+                <m.div
+                  {...motionProps.surface}
+                  className="material-regular w-full max-w-lg rounded-xl border border-border p-4 text-foreground shadow-lg"
+                >
+                  <h3 id={titleId} className="text-title font-semibold">
+                    {kind}を編集
+                  </h3>
+                  <label htmlFor={bodyId} className="mt-3 block text-body font-medium">
+                    本文
+                  </label>
+                  <textarea
+                    ref={bodyRef}
+                    autoFocus
+                    id={bodyId}
+                    value={body}
+                    onChange={(event) => setBody(event.target.value)}
+                    className="mt-1 min-h-32 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 text-body focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  />
+                  {attachments.length > 0 ? (
+                    <fieldset className="mt-3 rounded-lg border border-border p-3">
+                      <legend className="px-1 text-body font-medium">残す添付</legend>
+                      <div className="space-y-2">
+                        {attachments.map((attachment) => (
+                          <label key={attachment.id} className="flex items-center gap-2 text-body">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(attachment.id)}
+                              onChange={(event) => {
+                                const next = new Set(selectedIds)
+                                if (event.target.checked) next.add(attachment.id)
+                                else next.delete(attachment.id)
+                                setSelectedIds(next)
+                              }}
+                            />
+                            <span className="min-w-0 truncate">{attachment.fileName}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                  ) : null}
+                  {error ? <p role="alert" className="mt-2 text-body text-destructive">{error}</p> : null}
+                  <div className="mt-4 flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={close}>
+                      キャンセル
+                    </Button>
+                    <Button type="button" onClick={save}>
+                      保存
+                    </Button>
+                  </div>
+                </m.div>
+              </m.div>
+            ) : null}
+          </AnimatePresence>
+        </dialog>
+      ) : null}
     </>
   )
 }

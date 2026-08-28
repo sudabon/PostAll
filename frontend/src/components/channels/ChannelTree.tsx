@@ -16,6 +16,7 @@ import { buildForest, descendantIds, flattenVisible } from '@/lib/tree'
 import { useChannelMutations, useChannels, errorMessage } from '@/hooks/useChannels'
 import { useUi } from '@/state/ui'
 import { cn } from '@/lib/utils'
+import { usePressable } from '@/lib/motion/usePressable'
 
 type Intent = 'before' | 'after' | 'child' | null
 
@@ -93,10 +94,10 @@ export function ChannelTree() {
   return (
     <div className="flex h-full min-w-0 flex-col" data-testid="channel-tree">
       <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">チャネル</span>
+        <span className="text-caption font-semibold uppercase text-muted-foreground">チャネル</span>
         <button
           type="button"
-          className="text-sm text-primary"
+          className="rounded-lg px-2 py-1 text-body font-semibold text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:text-disabled-foreground"
           data-testid="new-channel-button"
           disabled={!canMutate}
           onClick={() => useUi.getState().startCreate(null)}
@@ -104,9 +105,9 @@ export function ChannelTree() {
           新規
         </button>
       </div>
-      {notice ? <p className="px-3 text-xs text-destructive">{notice}</p> : null}
+      {notice ? <p className="px-3 text-caption text-destructive">{notice}</p> : null}
       {isError ? (
-        <button type="button" className="px-3 text-left text-sm text-destructive" onClick={() => void refetch()}>
+        <button type="button" className="px-3 text-left text-body text-destructive" onClick={() => void refetch()}>
           チャネルの取得に失敗しました。再試行
         </button>
       ) : null}
@@ -196,6 +197,7 @@ function TreeRow({
     disabled: mutationDisabled,
   })
   const { setNodeRef: setDrop, isOver } = useDroppable({ id: channel.id, disabled: mutationDisabled })
+  const { isPressed, pressProps } = usePressable<HTMLButtonElement>()
   return (
     <div
       ref={(el) => {
@@ -210,8 +212,9 @@ function TreeRow({
       data-testid={`channel-row-${channel.name}`}
       data-depth={depth}
       className={cn(
-        'group flex min-w-max items-center gap-1 px-2 py-1 text-sm',
-        selected && 'bg-accent',
+        'group mx-1 flex min-w-max items-center gap-1 rounded-lg px-2 py-1 text-body transition-colors hover:bg-accent/70',
+        selected && 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90',
+        isPressed && (selected ? 'bg-primary/80' : 'bg-accent'),
         isOver && dropIntent === 'child' && 'bg-primary/10',
         isOver && dropIntent === 'before' && 'border-t-2 border-primary',
         isOver && dropIntent === 'after' && 'border-b-2 border-primary',
@@ -220,7 +223,10 @@ function TreeRow({
       {channel.children.length > 0 ? (
         <button
           type="button"
-          className="w-4 text-muted-foreground"
+          className={cn(
+            'w-4 rounded-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+            selected && 'text-primary-foreground/80',
+          )}
           onClick={() => useUi.getState().toggleExpanded(channel.id)}
         >
           {expanded ? '▾' : '▸'}
@@ -239,7 +245,10 @@ function TreeRow({
         <>
           <button
             type="button"
-            className="cursor-grab px-0.5 text-muted-foreground"
+            className={cn(
+              'cursor-grab rounded-sm px-0.5 text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+              selected && 'text-primary-foreground/80',
+            )}
             data-testid={`channel-drag-${channel.name}`}
             aria-label={`${channel.name} を移動`}
             disabled={mutationDisabled}
@@ -250,18 +259,19 @@ function TreeRow({
           </button>
           <button
             type="button"
-            className="flex-1 truncate text-left"
+            className="flex-1 truncate rounded-sm text-left font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             data-testid={`channel-${channel.name}`}
+            {...pressProps}
             onClick={() => useUi.getState().selectChannel(channel.id)}
           >
             # {channel.name}
           </button>
         </>
       )}
-      <span className="hidden gap-1 group-hover:flex">
+      <span className="hidden gap-1 group-focus-within:flex group-hover:flex">
         <button
           type="button"
-          className="text-xs text-muted-foreground"
+          className={cn('rounded-sm px-1 text-caption text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring', selected && 'text-primary-foreground/80')}
           disabled={mutationDisabled}
           onClick={() => useUi.getState().startCreate(channel.id)}
         >
@@ -269,13 +279,13 @@ function TreeRow({
         </button>
         <button
           type="button"
-          className="text-xs text-muted-foreground"
+          className={cn('rounded-sm px-1 text-caption text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring', selected && 'text-primary-foreground/80')}
           disabled={mutationDisabled}
           onClick={() => useUi.getState().setRenaming(channel.id)}
         >
           改名
         </button>
-        <button type="button" className="text-xs text-destructive" disabled={mutationDisabled} onClick={onDelete}>
+        <button type="button" className={cn('rounded-sm px-1 text-caption text-destructive focus-visible:outline-2 focus-visible:outline-ring', selected && 'text-primary-foreground')} disabled={mutationDisabled} onClick={onDelete}>
           削除
         </button>
       </span>
@@ -309,7 +319,7 @@ function NameForm({
       <input
         autoFocus
         data-testid="channel-name-input"
-        className="w-full rounded border border-input bg-background px-2 py-1 text-sm"
+        className="w-full rounded-lg border border-input bg-background px-2 py-1 text-body focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         placeholder={placeholder}
         value={value}
         onChange={(e) => setValue(e.target.value)}

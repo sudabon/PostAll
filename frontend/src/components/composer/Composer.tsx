@@ -182,7 +182,7 @@ export function Composer({
 
   return (
     <form
-      className={cn('border-t border-border bg-background p-3', dragging && 'bg-accent/40')}
+      className={cn('material-regular relative z-10 rounded-t-xl p-3 shadow-sm transition-[background-color,box-shadow]', dragging && 'bg-accent/60 shadow-md')}
       data-testid={storageKey.startsWith('draft:thread') ? 'thread-composer' : 'composer'}
       onSubmit={(e) => {
         e.preventDefault()
@@ -205,8 +205,8 @@ export function Composer({
         data-testid="composer-input"
         disabled={disabled || sending}
         className={cn(
-          'max-h-[200px] min-h-[44px] w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm',
-          disabled && 'opacity-50',
+          'max-h-[200px] min-h-11 w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-body shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+          disabled && 'text-disabled-foreground shadow-none',
         )}
         placeholder={disabled ? 'チャネルを選択してください' : placeholder}
         value={value}
@@ -233,47 +233,51 @@ export function Composer({
       {drafts.length > 0 ? (
         <ul className="mt-2 space-y-1">
           {drafts.map((d) => (
-            <li key={d.key} className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
-              {d.preview ? <img src={d.preview} alt="" className="h-8 w-8 rounded object-cover" /> : null}
+            <li key={d.key} className="flex items-center gap-2 rounded-lg border border-border bg-card px-2 py-1 text-caption shadow-sm">
+              {d.preview ? <img src={d.preview} alt="" className="h-8 w-8 rounded-lg object-cover" /> : null}
               <span className="min-w-0 flex-1 truncate">{d.file.name}</span>
               <span className="text-muted-foreground">{formatBytes(d.file.data.byteLength)}</span>
               {d.status === 'uploading' ? <span>{Math.round(d.progress * 100)}%</span> : null}
               {d.status === 'error' ? <span className="text-destructive">{d.error}</span> : null}
               {d.status === 'error' ? (
-                <button type="button" disabled={mutationDisabled} onClick={() => runUpload(d.key, d.file)}>
+                <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-caption" disabled={mutationDisabled} onClick={() => runUpload(d.key, d.file)}>
                   再試行
-                </button>
+                </Button>
               ) : null}
-              <button type="button" onClick={() => removeDraft(d.key)}>
+              <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-caption" onClick={() => removeDraft(d.key)}>
                 除去
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
       ) : null}
       <div className="mt-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="composer-code"
-            className="text-xs text-muted-foreground"
+            className="h-8 px-2 text-caption text-muted-foreground"
             disabled={disabled || sending}
             onClick={insertCode}
           >
             コード
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             data-testid="composer-attach"
-            className="text-xs text-muted-foreground"
+            className="h-8 px-2 text-caption text-muted-foreground"
             disabled={disabled || mutationDisabled || sending}
             onClick={() => {
               void platform.pickFiles({ multiple: true, accept: ACCEPT_ATTR }).then(addPicked)
             }}
           >
             添付
-          </button>
-          {error ? <p className="text-xs text-destructive">{error}</p> : null}
+          </Button>
+          {error ? <p className="text-caption text-destructive">{error}</p> : null}
         </div>
         <Button type="submit" size="sm" disabled={!canSend}>
           送信

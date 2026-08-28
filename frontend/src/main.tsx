@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { LazyMotion, MotionConfig, domAnimation } from 'motion/react'
 import './index.css'
 import App from './App.tsx'
 import { AuthProvider } from '@/auth/AuthProvider'
@@ -42,14 +43,18 @@ registerPwa()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <PlatformProvider>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <Boot>
-            <App />
-          </Boot>
-        </AuthProvider>
-      </QueryClientProvider>
-    </PlatformProvider>
+    <MotionConfig reducedMotion="user">
+      <LazyMotion features={domAnimation} strict>
+        <PlatformProvider>
+          <QueryClientProvider client={queryClient}>
+            <AuthProvider>
+              <Boot>
+                <App />
+              </Boot>
+            </AuthProvider>
+          </QueryClientProvider>
+        </PlatformProvider>
+      </LazyMotion>
+    </MotionConfig>
   </StrictMode>,
 )

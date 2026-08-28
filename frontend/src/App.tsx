@@ -75,13 +75,13 @@ export default function App() {
       {statusMessage ? (
         <div
           role="alert"
-          className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md border border-destructive bg-card px-4 py-3 shadow"
+          className="material-regular fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-destructive px-4 py-3 shadow-md"
           data-testid="connection-error"
         >
-          <p className="text-sm">{statusMessage}</p>
+          <p className="text-body">{statusMessage}</p>
           <button
             type="button"
-            className="mt-1 text-sm text-primary"
+            className="mt-1 rounded-lg px-2 py-1 text-body font-medium text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             onClick={() => {
               if (!navigator.onLine) {
                 window.location.reload()
@@ -97,10 +97,10 @@ export default function App() {
       ) : syncHint ? (
         <div
           aria-live="polite"
-          className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-md border bg-card px-4 py-3 shadow"
+          className="material-regular fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-border px-4 py-3 shadow-md"
           data-testid="connection-status"
         >
-          <p className="text-sm">{syncHint}</p>
+          <p className="text-body">{syncHint}</p>
         </div>
       ) : null}
     </>
