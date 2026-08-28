@@ -6,7 +6,7 @@
 - [x] 1.4 Supabase Storage の S3 互換エンドポイントとアクセスキーを控える（Free プランで発行できることは確認済み）
 - [x] 1.5 Vercel プロジェクトを **Hobby プラン**で作成し、リポジトリ（個人アカウント所有であること）を接続する。本番昇格はまだ行わない
 - [x] 1.6 `cmd/postall-server/main.go` の待受アドレス決定を、`PORT` が設定されていればそれを優先する形に変える
-- [x] 1.7 ルートに `vercel.json` を追加し、`services`（`web` = `frontend/`、`api` = `backend/` + `buildCommand: go build -o server ./cmd/postall-server`）と rewrite（`/v1/*` と `/health` を api、残りを web）を定義する
+- [x] 1.7 ルートに `vercel.json` を追加し、`services`（`web` = `frontend/` + `framework: vite` + `outputDirectory: dist`、`api` = `backend/` + `framework: go` + `entrypoint: cmd/postall-server/main.go` + `buildCommand: go build -o server ./cmd/postall-server`）と rewrite（`/v1/*` と `/health` を api、残りを web）を定義する
 - [ ] 1.8 **`services` が Hobby で使えることを確認する。** 使えない場合はフロント / API を 2 プロジェクトに分け、フロント側 `vercel.json` の rewrite で `/v1/*` を API プロジェクトへプロキシする構成へ切り替える（同一オリジンは維持されるので CORS は不要のまま）
 - [ ] 1.9 プレビューデプロイで `/health`（DATABASE_URL 未設定）が 200 を返し、ルート URL が PWA を返すことを確認する。**ここが通らない場合は以降を進めず、設計を見直す**
 

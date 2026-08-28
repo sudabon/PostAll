@@ -106,6 +106,8 @@ Actions のマイグレーション / 事前検査 / ダンプは **Session プ�
 
 ### 本番マイグレーションとデプロイ
 
+初回構築（Supabase / Vercel の設定、ドメイン切替、受け入れ確認）の手順は [DEPLOYMENT.md](DEPLOYMENT.md) にある。
+
 Vercel の Git 自動デプロイは `vercel.json` の `git.deploymentEnabled: false` で全ブランチ停止している。本番反映は GitHub の Actions 画面から、同じ Git ref を選んで次の順に手動実行する。
 
 1. `migrate` workflow を実行する。goose マイグレーションが成功した後だけ `emoji-sync` が動く。

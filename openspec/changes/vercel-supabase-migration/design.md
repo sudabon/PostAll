@@ -83,8 +83,13 @@ PostAll は現在、単一 VPS 上の 4 コンテナ（Nginx / Certbot / Go API 
 ```jsonc
 {
   "services": {
-    "web": { "root": "frontend/" },
-    "api": { "root": "backend/", "buildCommand": "go build -o server ./cmd/postall-server" }
+    "web": { "root": "frontend/", "framework": "vite", "outputDirectory": "dist" },
+    "api": {
+      "root": "backend/",
+      "framework": "go",
+      "entrypoint": "cmd/postall-server/main.go",
+      "buildCommand": "go build -o server ./cmd/postall-server"
+    }
   },
   "rewrites": [
     { "source": "/v1/(.*)",  "destination": { "service": "api" } },
@@ -98,7 +103,7 @@ PostAll は現在、単一 VPS 上の 4 コンテナ（Nginx / Certbot / Go API 
 
 **却下した案**: フロントを Vercel、API を Cloud Run 等の別サービスへ。→ 「Vercel + Supabase のみ」という前提に反する。
 
-**注意点**: Go の Framework Preset が自動検出するエントリポイントは `main.go` / `cmd/api/main.go` / `cmd/server/main.go` で、本リポジトリの `cmd/postall-server/main.go` は該当しない。`buildCommand` で明示する。`go.mod` はサービスルート（`backend/`）にあり、この配置のままでよい。
+**注意点**: Go の Framework Preset が自動検出するエントリポイントは `main.go` / `cmd/api/main.go` / `cmd/server/main.go` で、本リポジトリの `cmd/postall-server/main.go` は該当しない。`framework: "go"` と `entrypoint` を明示する。`buildCommand` だけではフレームワーク未検出時に `@vercel/static-build` へ落ち、既定の出力先 `public` を探して失敗する。`go.mod` はサービスルート（`backend/`）にあり、この配置のままでよい。web も同様で、`vercel pull` がダッシュボードの Output Directory（既定 `public`）を持ち込むと Vite の `dist` を見つけられず落ちる。`framework: "vite"` と `outputDirectory: "dist"` をサービスに明示する。
 
 **Services が Hobby で使えなかった場合のフォールバック**: フロントエンドと API を 2 つの Vercel プロジェクトに分け、フロント側の `vercel.json` で `/v1/*` を API プロジェクトへ **rewrite（サーバー側プロキシ）**する。rewrite はブラウザから見たオリジンを変えないため、CORS は依然として不要で、クライアントも無改修のまま。Hobby のアクティブプロジェクト上限（200）にも余裕がある。プロキシ経由のタイムアウト 120 秒はどちらの構成でも同じ。
 

@@ -65,3 +65,5 @@ mobile/build/
 .cursorrules
 .cursorignore
 .cursorindexingignore
+.vercel
+.env*
