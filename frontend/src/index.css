@@ -320,6 +320,16 @@
 .markdown-body ol {
   padding-left: 1.4em;
 }
+/* Tailwind preflight が list-style を消すため、本文だけマーカーを戻す */
+.markdown-body ul {
+  list-style: disc;
+}
+.markdown-body ol {
+  list-style: decimal;
+}
+.markdown-body li:has(> input[type='checkbox']) {
+  list-style: none;
+}
 .markdown-body blockquote {
   border-left: 3px solid var(--border);
   padding-left: 0.75em;

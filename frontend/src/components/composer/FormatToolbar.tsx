@@ -46,7 +46,7 @@ export function FormatToolbar({
       role="toolbar"
       aria-label="書式"
       data-testid="composer-format-toolbar"
-      className="flex flex-wrap items-center gap-0.5 rounded-t-xl border border-b-0 border-input bg-background px-1.5 py-1"
+      className="flex flex-wrap items-center gap-0.5 border-b border-input px-1.5 py-1"
     >
       {groups.map((group, i) => (
         <div key={group[0].action} className="flex items-center gap-0.5">

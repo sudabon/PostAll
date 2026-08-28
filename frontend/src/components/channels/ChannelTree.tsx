@@ -10,7 +10,7 @@ import {
   type DragOverEvent,
 } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import { Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { Channel } from '@/api/client'
 import { buildForest, descendantIds, flattenVisible } from '@/lib/tree'
@@ -227,15 +227,17 @@ function TreeRow({
         <button
           type="button"
           className={cn(
-            'w-4 rounded-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+            'flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
             selected && 'text-primary-foreground/80',
           )}
+          aria-label={`${channel.name} を${expanded ? '折りたたむ' : '展開'}`}
+          aria-expanded={expanded}
           onClick={() => useUi.getState().toggleExpanded(channel.id)}
         >
-          {expanded ? '▾' : '▸'}
+          {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
         </button>
       ) : (
-        <span className="w-4" />
+        <span className="w-5 shrink-0" />
       )}
       {renaming ? (
         <NameForm

@@ -1,5 +1,15 @@
 import '@testing-library/jest-dom/vitest'
+import { cleanup } from '@testing-library/react'
 import { MotionGlobalConfig } from 'motion/react'
+import { afterEach } from 'vitest'
+
+// vitest の globals を有効にしていないため、@testing-library/react の自動 cleanup が
+// 登録されない（afterEach がグローバルに存在するときだけ登録される仕様）。
+// アンマウントされないまま残ったツリーが環境破棄後に React のスケジューラを動かし、
+// "window is not defined" で vitest が exit 1 になるため、ここで明示的に登録する。
+afterEach(() => {
+  cleanup()
+})
 
 MotionGlobalConfig.skipAnimations = true
 
