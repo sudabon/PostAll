@@ -348,8 +348,8 @@ Vercel CLI 59 の `vercel pull` は、プロジェクト限定トークンだと
 
 - [x] `migrate` workflow を実行する。goose 適用が成功した後だけ `emoji-sync` が走る。
 - [x] `emoji-sync` が完了し、Storage の `emojis` バケットに png が並んだ。
-- [ ] `deploy` workflow を実行する。冒頭の `migrate-check` が未適用マイグレーションを**読み取り検査だけ**し、1 件でもあれば DB を変更せずに落ちる。
-- [ ] 本番 URL で `/health` が `{"status":"ok","database":"ok"}` を返す。
+- [x] `deploy` workflow を実行する。冒頭の `migrate-check` が未適用マイグレーションを**読み取り検査だけ**し、1 件でもあれば DB を変更せずに落ちる。
+- [x] 本番 URL で `/health` が `{"status":"ok","database":"ok"}` を返す。
 
 ```bash
 curl -s https://<production-url>/health | jq
@@ -369,19 +369,19 @@ cd backend && DATABASE_URL='<session-pooler-url>' go run ./cmd/postall-server mi
 
 旧環境が `memo.sudabon.com` を提供している間に準備し、最後に向き先だけを変える。
 
-- [ ] Vercel を **本番昇格**する（Production への promote）。
-- [ ] Vercel の Domains へ `memo.sudabon.com` を追加し、表示された DNS レコードを控える。
-- [ ] **切替の 24 時間以上前**に、現行 DNS レコードの TTL を 300 秒へ短縮する。
-- [ ] TTL の短縮が伝播した後、レコードを Vercel の指示値へ変更する。
-- [ ] 証明書が自動発行され、`https://memo.sudabon.com` が Vercel を指すことを確認する。
+- [x] Vercel を **本番昇格**する（Production への promote）。
+- [x] Vercel の Domains へ `memo.sudabon.com` を追加し、表示された DNS レコードを控える。
+- [x] **切替の 24 時間以上前**に、現行 DNS レコードの TTL を 300 秒へ短縮する。
+- [x] TTL の短縮が伝播した後、レコードを Vercel の指示値へ変更する。
+- [x] 証明書が自動発行され、`https://memo.sudabon.com` が Vercel を指すことを確認する。
 
 ```bash
 dig +short memo.sudabon.com
 curl -sI https://memo.sudabon.com/health | head -3
 ```
 
-- [ ] `APP_URL` secret を `https://memo.sudabon.com` に更新する（Vercel の本番 URL を入れていた場合）。
-- [ ] Supabase の Site URL / Redirect URLs と GitHub OAuth App の Homepage URL が新ドメインと一致している。
+- [x] `APP_URL` secret を `https://memo.sudabon.com` に更新する（Vercel の本番 URL を入れていた場合）。
+- [x] Supabase の Site URL / Redirect URLs と GitHub OAuth App の Homepage URL が新ドメインと一致している。
 
 問題が出た場合は DNS を旧環境へ戻す。TTL 300 秒なので数分で戻る。**この時点では旧 VPS を止めない。**
 
@@ -516,22 +516,22 @@ select * from change_event_retention;   -- pruned_through が単調増加する
 ## 12. トラブルシューティング
 
 
-| 症状                          | 確認する箇所                                                                                      |
-| --------------------------- | ------------------------------------------------------------------------------------------- |
-| 全 API が 401                 | JWT 署名鍵が ES256 か（3.4）。`SUPABASE_URL` の末尾スラッシュ。issuer / audience                             |
-| サインインが Redirect エラー         | Supabase の Redirect URLs（3.6）と GitHub OAuth App の callback（3.5）                             |
-| サインインは通るが投稿が他人のものに見えない      | `users.auth_subject` と JWT の `sub` の対応。別プロジェクトへ復元した場合は一致しない                                 |
-| 変更が他クライアントへ届かない             | `postall_notify_failures` の件数。`realtime.messages` の RLS（3.10）。ポーリング退避で反映されるなら Realtime 側の問題 |
-| 検索が 0 件のまま                  | `pgroonga` 拡張と索引。壊れていれば `REINDEX INDEX posts_body_pgroonga;`（実索引名は `\d posts` で確認）          |
-| 添付のアップロードが署名不一致             | `S3_ENDPOINT` / `S3_REGION` がバケットのものと一致しているか                                                |
-| 絵文字が出ない                     | `emoji-sync` の実行有無。`EMOJI_S3_BUCKET`。302 に追随できているか                                          |
-| `deploy` が冒頭の `migrate-check` で落ちる | 未適用マイグレーションがある。`migrate` を先に実行する（想定どおりの挙動） |
-| `deploy` が `Could not retrieve Project Settings` | `VERCEL_TOKEN` がプロジェクト限定になっていないか。チーム（または Full Account）スコープで再発行して secret を更新する。`.vercel` を消す指示は CI では的外れ（gitignore 済み）。確認は `vercel pull --debug` |
-| `deploy` が `No Output Directory named "public"` | Vite の出力は `frontend/dist`。`web` サービスに `framework: "vite"` と `outputDirectory: "dist"` が無いと、`vercel pull` がダッシュボードの既定 `public` を使う。500 kB chunk 警告は失敗原因ではない |
-| CLI が `projectSettings` エラー | `vercel build` 済みなら `vercel deploy --prebuilt --archive=tgz --yes`。`--archive=tgz` 単体は使わない |
-| `prune-events` が 401        | Vercel と GitHub secrets の `CRON_SECRET` が同一か                                                |
-| プロジェクトが pause された           | `ops` の schedule が止まっていないか。Dashboard から restore する                                          |
-| 30 日超オフラインの端末が同期しない         | 想定どおり。サーバが `resetRequired` を返し、クライアントが全再取得する                                                |
+| 症状                                               | 確認する箇所                                                                                                                                                     |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 全 API が 401                                      | JWT 署名鍵が ES256 か（3.4）。`SUPABASE_URL` の末尾スラッシュ。issuer / audience                                                                                            |
+| サインインが Redirect エラー                              | Supabase の Redirect URLs（3.6）と GitHub OAuth App の callback（3.5）                                                                                            |
+| サインインは通るが投稿が他人のものに見えない                           | `users.auth_subject` と JWT の `sub` の対応。別プロジェクトへ復元した場合は一致しない                                                                                                |
+| 変更が他クライアントへ届かない                                  | `postall_notify_failures` の件数。`realtime.messages` の RLS（3.10）。ポーリング退避で反映されるなら Realtime 側の問題                                                                |
+| 検索が 0 件のまま                                       | `pgroonga` 拡張と索引。壊れていれば `REINDEX INDEX posts_body_pgroonga;`（実索引名は `\d posts` で確認）                                                                         |
+| 添付のアップロードが署名不一致                                  | `S3_ENDPOINT` / `S3_REGION` がバケットのものと一致しているか                                                                                                               |
+| 絵文字が出ない                                          | `emoji-sync` の実行有無。`EMOJI_S3_BUCKET`。302 に追随できているか                                                                                                         |
+| `deploy` が冒頭の `migrate-check` で落ちる               | 未適用マイグレーションがある。`migrate` を先に実行する（想定どおりの挙動）                                                                                                                 |
+| `deploy` が `Could not retrieve Project Settings` | `VERCEL_TOKEN` がプロジェクト限定になっていないか。チーム（または Full Account）スコープで再発行して secret を更新する。`.vercel` を消す指示は CI では的外れ（gitignore 済み）。確認は `vercel pull --debug`            |
+| `deploy` が `No Output Directory named "public"`  | Vite の出力は `frontend/dist`。`web` サービスに `framework: "vite"` と `outputDirectory: "dist"` が無いと、`vercel pull` がダッシュボードの既定 `public` を使う。500 kB chunk 警告は失敗原因ではない |
+| CLI が `projectSettings` エラー                      | `vercel build` 済みなら `vercel deploy --prebuilt --archive=tgz --yes`。`--archive=tgz` 単体は使わない                                                                 |
+| `prune-events` が 401                             | Vercel と GitHub secrets の `CRON_SECRET` が同一か                                                                                                               |
+| プロジェクトが pause された                                | `ops` の schedule が止まっていないか。Dashboard から restore する                                                                                                         |
+| 30 日超オフラインの端末が同期しない                              | 想定どおり。サーバが `resetRequired` を返し、クライアントが全再取得する                                                                                                               |
 
 
 ---

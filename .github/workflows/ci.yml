@@ -1,9 +1,8 @@
 name: ci
 
 on:
-  push:
-    branches: [main, slack-style-memo-app]
   pull_request:
+    branches: [main, slack-style-memo-app]
 
 jobs:
   go:
