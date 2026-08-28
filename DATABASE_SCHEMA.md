@@ -316,7 +316,7 @@ create policy postall_events_select
 |---|---|
 | 拡張 | `pgcrypto`（`gen_random_uuid`）、`pgroonga`（全文検索） |
 | 接続 | API は Transaction pooler（6543）。migrate / emoji-sync / dump は Session pooler（`*.pooler.supabase.com:5432`）。Direct は IPv6 専用で使わない |
-| プリペアド | Supavisor の transaction pooling 下では名前付きプリペアドが `42P05` を起こすため `QueryExecModeDescribeExec` を使う |
+| プリペアド | API は `QueryExecModeExec`（1 往復）。名前付きは `42P05`、`DescribeExec` は無名プリペアドの `26000` を起こす。`uuid[]` は接続時に型登録する |
 | 保持期間 | `change_events` は 30 日。日次・6 時間ごとの `prune` が刈り取る |
 | バックアップ | 日次 `supabase db dump --data-only --schema public` を gzip + GPG AES-256 で暗号化し 30 日保持。`goose_db_version` は除外済みなので、復元先は空 DB へ goose migrate 後に流し込む |
 | バックアップ対象外 | `auth.users`（Supabase Auth）と Storage の実体（添付・絵文字） |

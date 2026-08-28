@@ -287,9 +287,9 @@ signup 無効の招待制のため。手順 9 で Studio から同じメール�
 
 Supabase の公式イメージ以外の PostgreSQL に対して `migrate` を流している。`DATABASE_URL` が `supabase start` の DB（`127.0.0.1:54322`）を指しているか確認する。
 
-### `prepared statement "..." already exists`（SQLSTATE 42P05）
+### `prepared statement "..." already exists`（SQLSTATE 42P05） / `unnamed prepared statement does not exist`（SQLSTATE 26000）
 
-transaction pooling 越しに名前付きプリペアドを使ったときのエラー。API は `QueryExecModeDescribeExec` で回避済みなので、これが出るのは pooler（54329 / 本番 6543）へ goose や psql のセッション前提の処理を流している場合。migrate と `emoji-sync` はダイレクト接続（ローカル 54322 / 本番 Session pooler 5432）を使う。
+transaction pooling 越しにプリペアドをセッションまたぎで使ったときのエラー。API は `QueryExecModeExec` で回避済み。42P05 は名前付き、26000 は `DescribeExec` の 2 往復で無名プリペアドが別バックエンドに載ったときに出る。これが出るのは pooler（54329 / 本番 6543）へ goose や psql のセッション前提の処理を流している場合。migrate と `emoji-sync` はダイレクト接続（ローカル 54322 / 本番 Session pooler 5432）を使う。
 
 ### 本番の `DATABASE_URL` に繋がらない（タイムアウト）
 
