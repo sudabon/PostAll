@@ -203,80 +203,87 @@ export function Composer({
         void platform.ingestFiles([...e.dataTransfer.files]).then(addPicked)
       }}
     >
-      <FormatToolbar disabled={disabled || sending} onAction={runFormat} />
-      <textarea
-        ref={area}
-        data-testid="composer-input"
-        disabled={disabled || sending}
+      <div
         className={cn(
-          'max-h-[200px] min-h-11 w-full resize-none rounded-b-xl border border-t-0 border-input bg-background px-3 py-2 text-body shadow-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
-          disabled && 'text-disabled-foreground shadow-none',
+          'rounded-xl border border-input bg-background shadow-sm focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring',
+          disabled && 'shadow-none',
         )}
-        placeholder={disabled ? 'チャネルを選択してください' : placeholder}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onPaste={(e) => {
-          const files = [...e.clipboardData.files]
-          if (files.length === 0) return
-          e.preventDefault()
-          if (mutationDisabled) {
-            setError('接続されていないため添付をアップロードできません')
-            return
-          }
-          void platform.ingestFiles(files).then(addPicked)
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            const pos = e.currentTarget.selectionStart ?? value.length
-            if (isInsideUnclosedFence(value, pos)) return
+      >
+        <FormatToolbar disabled={disabled || sending} onAction={runFormat} />
+        <textarea
+          ref={area}
+          data-testid="composer-input"
+          disabled={disabled || sending}
+          className={cn(
+            'max-h-[200px] min-h-11 w-full resize-none bg-transparent px-3 py-2 text-body outline-none',
+            disabled && 'text-disabled-foreground',
+          )}
+          placeholder={disabled ? 'チャネルを選択してください' : placeholder}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onPaste={(e) => {
+            const files = [...e.clipboardData.files]
+            if (files.length === 0) return
             e.preventDefault()
-            void submit()
-          }
-        }}
-      />
-      {drafts.length > 0 ? (
-        <ul className="mt-2 space-y-1">
-          {drafts.map((d) => (
-            <li key={d.key} className="flex items-center gap-2 rounded-lg border border-border bg-card px-2 py-1 text-caption shadow-sm">
-              {d.preview ? <img src={d.preview} alt="" className="h-8 w-8 rounded-lg object-cover" /> : null}
-              <span className="min-w-0 flex-1 truncate">{d.file.name}</span>
-              <span className="text-muted-foreground">{formatBytes(d.file.data.byteLength)}</span>
-              {d.status === 'uploading' ? <span>{Math.round(d.progress * 100)}%</span> : null}
-              {d.status === 'error' ? <span className="text-destructive">{d.error}</span> : null}
-              {d.status === 'error' ? (
-                <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-caption" disabled={mutationDisabled} onClick={() => runUpload(d.key, d.file)}>
-                  再試行
+            if (mutationDisabled) {
+              setError('接続されていないため添付をアップロードできません')
+              return
+            }
+            void platform.ingestFiles(files).then(addPicked)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              const pos = e.currentTarget.selectionStart ?? value.length
+              if (isInsideUnclosedFence(value, pos)) return
+              e.preventDefault()
+              void submit()
+            }
+          }}
+        />
+        {drafts.length > 0 ? (
+          <ul className="space-y-1 px-2 pb-1">
+            {drafts.map((d) => (
+              <li key={d.key} className="flex items-center gap-2 rounded-lg border border-border bg-card px-2 py-1 text-caption shadow-sm">
+                {d.preview ? <img src={d.preview} alt="" className="h-8 w-8 rounded-lg object-cover" /> : null}
+                <span className="min-w-0 flex-1 truncate">{d.file.name}</span>
+                <span className="text-muted-foreground">{formatBytes(d.file.data.byteLength)}</span>
+                {d.status === 'uploading' ? <span>{Math.round(d.progress * 100)}%</span> : null}
+                {d.status === 'error' ? <span className="text-destructive">{d.error}</span> : null}
+                {d.status === 'error' ? (
+                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-caption" disabled={mutationDisabled} onClick={() => runUpload(d.key, d.file)}>
+                    再試行
+                  </Button>
+                ) : null}
+                <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-caption" onClick={() => removeDraft(d.key)}>
+                  除去
                 </Button>
-              ) : null}
-              <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-caption" onClick={() => removeDraft(d.key)}>
-                除去
-              </Button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <div className="mt-2 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            data-testid="composer-attach"
-            className="size-9 text-muted-foreground"
-            aria-label="添付"
-            title="添付"
-            disabled={disabled || mutationDisabled || sending}
-            onClick={() => {
-              void platform.pickFiles({ multiple: true, accept: ACCEPT_ATTR }).then(addPicked)
-            }}
-          >
-            <CirclePlus className="size-5" />
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <div className="flex items-center justify-between gap-2 px-2 pb-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              data-testid="composer-attach"
+              className="size-9 text-muted-foreground"
+              aria-label="添付"
+              title="添付"
+              disabled={disabled || mutationDisabled || sending}
+              onClick={() => {
+                void platform.pickFiles({ multiple: true, accept: ACCEPT_ATTR }).then(addPicked)
+              }}
+            >
+              <CirclePlus className="size-5" />
+            </Button>
+            {error ? <p className="min-w-0 text-caption text-destructive">{error}</p> : null}
+          </div>
+          <Button type="submit" size="icon" className="size-9" aria-label="送信" title="送信" disabled={!canSend}>
+            <Send className="size-4" />
           </Button>
-          {error ? <p className="min-w-0 text-caption text-destructive">{error}</p> : null}
         </div>
-        <Button type="submit" size="icon" className="size-9" aria-label="送信" title="送信" disabled={!canSend}>
-          <Send className="size-4" />
-        </Button>
       </div>
     </form>
   )
