@@ -34,6 +34,11 @@ jobs:
           node-version: "22"
       - name: Install Vercel CLI
         run: npm install --global vercel@59.7.0
+      - name: Require Vercel credentials
+        run: |
+          : "${VERCEL_TOKEN:?VERCEL_TOKEN is empty}"
+          : "${VERCEL_ORG_ID:?VERCEL_ORG_ID is empty}"
+          : "${VERCEL_PROJECT_ID:?VERCEL_PROJECT_ID is empty}"
       - name: Pull production settings
         run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
       - name: Build production artifacts

@@ -5,10 +5,14 @@
   },
   "services": {
     "web": {
-      "root": "frontend/"
+      "root": "frontend/",
+      "framework": "vite",
+      "outputDirectory": "dist"
     },
     "api": {
       "root": "backend/",
+      "framework": "go",
+      "entrypoint": "cmd/postall-server/main.go",
       "buildCommand": "go build -o server ./cmd/postall-server"
     }
   },
