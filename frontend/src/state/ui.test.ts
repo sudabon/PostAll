@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { SearchResult } from '@/api/client'
-import { useUi } from './ui'
+import { createFakeAdapter } from '@/platform'
+import { loadUi, useUi } from './ui'
 
 const rootResult: SearchResult = {
   postId: '22222222-2222-2222-2222-222222222222',
@@ -65,5 +66,32 @@ describe('search result navigation', () => {
       targetPostId: null,
       targetThreadReplyId: null,
     })
+  })
+})
+
+describe('thread width', () => {
+  it('clamps the width to the allowed range', () => {
+    useUi.getState().setThreadWidth(100)
+    expect(useUi.getState().threadWidth).toBe(320)
+
+    useUi.getState().setThreadWidth(9999)
+    expect(useUi.getState().threadWidth).toBe(640)
+
+    useUi.getState().setThreadWidth(500)
+    expect(useUi.getState().threadWidth).toBe(500)
+  })
+
+  it('keeps the default when stored ui data predates the key', async () => {
+    useUi.getState().hydrate({ sidebarWidth: 260, threadWidth: 384 })
+    const adapter = createFakeAdapter()
+    await adapter.setItem(
+      'ui',
+      JSON.stringify({ sidebarWidth: 300, sidebarCollapsed: false, selectedChannelId: null, expandedIds: [] }),
+    )
+
+    await loadUi(adapter)
+
+    expect(useUi.getState().sidebarWidth).toBe(300)
+    expect(useUi.getState().threadWidth).toBe(384)
   })
 })
