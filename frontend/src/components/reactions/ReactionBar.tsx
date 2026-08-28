@@ -1,10 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { AnimatePresence, m } from 'motion/react'
 import type { Reaction } from '@/api/client'
 import { cn } from '@/lib/utils'
 import { useReactionMutation } from '@/hooks/useReactions'
 import { EmojiImage } from './EmojiImage'
 import { EmojiPicker } from './EmojiPicker'
 import { useUi } from '@/state/ui'
+import { usePressable } from '@/lib/motion/usePressable'
+import { springPresets } from '@/lib/motion/springs'
 
 export function ReactionBar({ postId, reactions }: { postId: string; reactions: Reaction[] }) {
   const mutation = useReactionMutation()
@@ -31,7 +34,7 @@ export function ReactionBar({ postId, reactions }: { postId: string; reactions: 
         onSelect={(emoji) => mutation.mutate({ postId, emoji, react: true })}
       />
       {mutation.isError ? (
-        <p role="alert" className="basis-full text-xs text-destructive">
+        <p role="alert" className="basis-full text-caption text-destructive">
           リアクションを更新できませんでした。元の状態に戻しました。
         </p>
       ) : null}
@@ -52,6 +55,8 @@ function ReactionButton({
   const holdTimer = useRef<number | null>(null)
   const suppressClick = useRef(false)
   const [held, setHeld] = useState(false)
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
 
   useEffect(
     () => () => {
@@ -72,10 +77,26 @@ function ReactionButton({
     holdTimer.current = null
     setHeld(false)
   }
+  const { isPressed, shouldReduceMotion, pressProps } = usePressable<HTMLButtonElement>({
+    disabled: busy,
+    onPointerDown: startHold,
+    onPointerUp: endHold,
+    onPointerCancel: endHold,
+  })
+  const showTooltip = held || hovered || focused
 
   return (
-    <span className="group/reaction relative inline-flex">
-      <button
+    <span
+      className="relative inline-flex"
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => {
+        setHovered(false)
+        endHold()
+      }}
+      onFocusCapture={() => setFocused(true)}
+      onBlurCapture={() => setFocused(false)}
+    >
+      <m.button
         type="button"
         aria-pressed={reaction.reactedByMe}
         aria-describedby={tooltipId}
@@ -84,15 +105,16 @@ function ReactionButton({
         }`}
         disabled={busy}
         className={cn(
-          'inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60',
+          'inline-flex h-7 items-center gap-1 rounded-full border px-2 text-caption font-medium shadow-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:border-border disabled:bg-muted disabled:text-disabled-foreground disabled:shadow-none data-[pressed]:bg-accent',
           reaction.reactedByMe
-            ? 'border-primary bg-primary/10 text-primary'
-            : 'border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground',
+            ? 'border-primary bg-primary/10 text-primary hover:bg-primary/15'
+            : 'border-border bg-material-thin text-muted-foreground hover:bg-accent hover:text-foreground',
         )}
-        onPointerDown={startHold}
-        onPointerUp={endHold}
-        onPointerCancel={endHold}
-        onPointerLeave={endHold}
+        {...pressProps}
+        animate={shouldReduceMotion
+          ? { opacity: isPressed ? 0.78 : 1 }
+          : { scale: isPressed ? 0.96 : 1 }}
+        transition={shouldReduceMotion ? { duration: 0.1 } : springPresets.snap}
         onClick={() => {
           if (suppressClick.current) {
             suppressClick.current = false
@@ -108,17 +130,23 @@ function ReactionButton({
           fallbackClassName="max-w-24"
         />
         <span>{reaction.count}</span>
-      </button>
-      <span
-        id={tooltipId}
-        role="tooltip"
-        className={cn(
-          'pointer-events-none absolute bottom-full left-1/2 z-40 mb-1 w-max max-w-64 -translate-x-1/2 rounded bg-foreground px-2 py-1 text-xs text-background opacity-0 transition-opacity group-hover/reaction:opacity-100 group-focus-within/reaction:opacity-100',
-          held && 'opacity-100',
-        )}
-      >
-        {reactorLabel(reaction)}
-      </span>
+      </m.button>
+      <AnimatePresence>
+        {showTooltip ? (
+          <m.span
+            id={tooltipId}
+            role="tooltip"
+            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 3 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 3 }}
+            transition={shouldReduceMotion ? { duration: 0.12, ease: 'easeOut' } : springPresets.snap}
+            style={{ transformOrigin: 'bottom center' }}
+            className="material-thin pointer-events-none absolute bottom-full left-1/2 z-40 mb-1 w-max max-w-64 -translate-x-1/2 rounded-lg px-2 py-1 text-caption text-foreground shadow-sm"
+          >
+            {reactorLabel(reaction)}
+          </m.span>
+        ) : null}
+      </AnimatePresence>
     </span>
   )
 }

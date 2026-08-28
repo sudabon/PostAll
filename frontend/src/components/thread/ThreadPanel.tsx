@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { m, useReducedMotion } from 'motion/react'
 import { usePostMutations, useThread } from '@/hooks/usePosts'
 import { formatDateTime } from '@/lib/dates'
 import { useUi } from '@/state/ui'
@@ -8,6 +9,8 @@ import { PostBody } from '@/components/post/PostBody'
 import { PostActions } from '@/components/post/PostActions'
 import { ReactionBar } from '@/components/reactions/ReactionBar'
 import { uploadPickedFile } from '@/lib/upload'
+import { Button } from '@/components/ui/button'
+import { springPresets } from '@/lib/motion/springs'
 
 export function ThreadPanel({ channelId }: { channelId: string | null }) {
   const postId = useUi((s) => s.threadPostId)
@@ -16,6 +19,7 @@ export function ThreadPanel({ channelId }: { channelId: string | null }) {
   const { data, isLoading } = useThread(postId)
   const mutations = usePostMutations(channelId)
   const { api } = useAuth()
+  const shouldReduceMotion = useReducedMotion()
   const targetVisible = targetReplyId !== null && Boolean(data?.replies.some((reply) => reply.id === targetReplyId))
   useEffect(() => {
     if (!targetReplyId || !targetVisible) return
@@ -30,20 +34,27 @@ export function ThreadPanel({ channelId }: { channelId: string | null }) {
   if (!postId) return null
 
   return (
-    <aside className="flex w-96 min-w-80 flex-col border-l border-border" data-testid="thread-panel">
+    <m.aside
+      initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, x: 24 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, x: 24 }}
+      transition={shouldReduceMotion ? { duration: 0.14, ease: 'easeOut' } : springPresets.sheet}
+      className="material-regular relative z-20 mb-2 mr-2 mt-14 flex w-96 min-w-80 flex-col overflow-hidden rounded-xl shadow-md"
+      data-testid="thread-panel"
+    >
       <header className="flex items-center justify-between border-b border-border px-3 py-2">
-        <h2 className="text-sm font-semibold">スレッド</h2>
-        <button type="button" onClick={() => useUi.getState().openThread(null)}>
+        <h2 className="text-title font-semibold">スレッド</h2>
+        <Button type="button" variant="ghost" size="sm" onClick={() => useUi.getState().openThread(null)}>
           閉じる
-        </button>
+        </Button>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {isLoading ? <p className="text-sm text-muted-foreground">読み込み中…</p> : null}
+        {isLoading ? <p className="text-body text-muted-foreground">読み込み中…</p> : null}
         {data?.root.deleted ? (
-          <p className="rounded bg-muted p-3 text-sm text-muted-foreground">このポストは削除されました</p>
+          <p className="rounded-lg bg-muted p-3 text-body text-muted-foreground">このポストは削除されました</p>
         ) : (
           <div className="mb-4">
-            <p className="text-xs text-muted-foreground">{data ? formatDateTime(data.root.createdAt) : ''}</p>
+            <p className="text-caption text-muted-foreground">{data ? formatDateTime(data.root.createdAt) : ''}</p>
             {data ? (
               <>
                 <PostBody post={data.root} />
@@ -61,7 +72,7 @@ export function ThreadPanel({ channelId }: { channelId: string | null }) {
               reply.id === targetReplyId ? 'rounded-md bg-accent p-2 ring-2 ring-primary' : ''
             }`}
           >
-            <p className="text-xs text-muted-foreground">{formatDateTime(reply.createdAt)}</p>
+            <p className="text-caption text-muted-foreground">{formatDateTime(reply.createdAt)}</p>
             <PostBody post={reply} />
             <ReactionBar postId={reply.id} reactions={reply.reactions ?? []} />
             <PostActions
@@ -84,6 +95,6 @@ export function ThreadPanel({ channelId }: { channelId: string | null }) {
           await mutations.reply.mutateAsync({ postId, body, attachmentIds })
         }}
       />
-    </aside>
+    </m.aside>
   )
 }

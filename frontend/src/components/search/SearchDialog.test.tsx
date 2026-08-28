@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useState } from 'react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Channel, SearchInput, SearchResultPage } from '@/api/client'
+import { MotionTestProvider } from '@/test/motion'
 import { SearchDialog } from './SearchDialog'
 
 beforeAll(() => {
@@ -26,10 +28,23 @@ const channel: Channel = {
 
 function renderDialog(search: (input: SearchInput) => Promise<SearchResultPage>, onSelect = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  function Harness() {
+    const [open, setOpen] = useState(true)
+    return (
+      <SearchDialog
+        open={open}
+        channels={[channel]}
+        search={search}
+        onClose={() => setOpen(false)}
+        onSelect={onSelect}
+      />
+    )
+  }
   render(
     <QueryClientProvider client={client}>
-      <SearchDialog open channels={[channel]} search={search} onClose={() => {}} onSelect={onSelect} />
+      <Harness />
     </QueryClientProvider>,
+    { wrapper: MotionTestProvider },
   )
   return onSelect
 }
@@ -53,7 +68,7 @@ describe('SearchDialog', () => {
     const search = vi.fn<(input: SearchInput) => Promise<SearchResultPage>>().mockResolvedValue(page)
     const onSelect = renderDialog(search)
 
-    expect(screen.getByLabelText('検索語')).toBeVisible()
+    await waitFor(() => expect(screen.getByLabelText('検索語')).toBeVisible())
     expect(screen.getByLabelText('チャネル')).toBeVisible()
     expect(screen.getByLabelText('開始日')).toBeVisible()
     expect(screen.getByLabelText('終了日')).toBeVisible()
@@ -72,7 +87,7 @@ describe('SearchDialog', () => {
     expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: '検索対象', channelId: channel.id }))
 
     fireEvent.click(screen.getByRole('button', { name: /本文の検索対象/ }))
-    expect(onSelect).toHaveBeenCalledWith(page.results[0])
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith(page.results[0]))
   })
 
   it('loads another cursor page and displays an empty state', async () => {

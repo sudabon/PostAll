@@ -31,12 +31,12 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
     <div className="group relative my-2" data-testid="code-block">
       <button
         type="button"
-        className="absolute right-2 top-2 z-10 rounded bg-background/80 px-2 py-0.5 text-xs opacity-0 ring-1 ring-border group-hover:opacity-100"
+        className="material-thin absolute right-2 top-2 z-10 rounded-lg px-2 py-0.5 text-caption opacity-0 shadow-sm ring-1 ring-border group-focus-within:opacity-100 group-hover:opacity-100"
         onClick={() => void copy()}
       >
         {copied ? 'コピーしました' : 'コピー'}
       </button>
-      <div className="overflow-x-auto rounded-md border border-border text-xs">
+      <div className="overflow-x-auto rounded-lg border border-border text-caption shadow-sm">
         {html ? (
           <div className="shiki-wrap" dangerouslySetInnerHTML={{ __html: html }} />
         ) : (

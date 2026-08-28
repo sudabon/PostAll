@@ -33,7 +33,7 @@ function textOf(node: ReactNode): string {
 export function MarkdownBody({ markdown }: { markdown: string }) {
   const platform = usePlatform()
   return (
-    <div className="markdown-body text-sm" data-testid="markdown-body">
+    <div className="markdown-body text-body" data-testid="markdown-body">
       <Markdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeSanitize, schema]]}
@@ -68,7 +68,7 @@ export function MarkdownBody({ markdown }: { markdown: string }) {
             if (className || String(children).includes('\n')) {
               return <code className={className}>{children}</code>
             }
-            return <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em]">{children}</code>
+            return <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-caption">{children}</code>
           },
           table: ({ children }) => (
             <div className="my-2 overflow-x-auto">

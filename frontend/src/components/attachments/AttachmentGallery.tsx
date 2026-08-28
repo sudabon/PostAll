@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { m, useReducedMotion } from 'motion/react'
 import type { Attachment } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
 import { usePlatform } from '@/platform'
@@ -28,31 +29,39 @@ function ImageThumb({ item }: { item: Attachment }) {
   const url = useSignedUrl(item.id)
   const [open, setOpen] = useState(false)
   const [failed, setFailed] = useState(false)
+  const shouldReduceMotion = useReducedMotion()
 
   if (failed || url === 'error') {
     return (
-      <div className="flex h-32 items-center justify-center rounded-md bg-muted text-xs text-muted-foreground">
+      <div className="flex h-32 items-center justify-center rounded-lg bg-muted text-caption text-muted-foreground">
         画像を取得できません
       </div>
     )
   }
   if (!url) {
-    return <div className="h-32 animate-pulse rounded-md bg-muted" />
+    return (
+      <m.div
+        className="h-32 rounded-lg bg-muted shadow-sm"
+        aria-label={`${item.fileName} を読み込み中`}
+        animate={shouldReduceMotion ? { opacity: 1 } : { opacity: [0.55, 1, 0.55] }}
+        transition={shouldReduceMotion ? { duration: 0 } : { duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+      />
+    )
   }
   return (
     <>
-      <button type="button" className="block overflow-hidden rounded-md" onClick={() => setOpen(true)}>
+      <button type="button" className="block overflow-hidden rounded-lg shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" onClick={() => setOpen(true)}>
         <img src={url} alt={item.fileName} className="max-h-48 w-full object-contain" onError={() => setFailed(true)} />
       </button>
       {open ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/85 p-6"
           role="dialog"
           aria-label="画像プレビュー"
           onClick={() => setOpen(false)}
         >
           <img src={url} alt={item.fileName} className="max-h-full max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
-          <button type="button" className="absolute right-4 top-4 text-sm text-white" onClick={() => setOpen(false)}>
+          <button type="button" className="absolute right-4 top-4 rounded-lg px-2 py-1 text-body text-background focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-background" onClick={() => setOpen(false)}>
             閉じる
           </button>
         </div>
@@ -88,14 +97,14 @@ function FileCard({ item }: { item: Attachment }) {
   }
 
   return (
-    <div className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
+    <div className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2 text-body shadow-sm">
       <div className="min-w-0">
         <p className="truncate font-medium">{item.fileName}</p>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-caption text-muted-foreground">
           {item.contentType} · {formatBytes(item.sizeBytes)}
         </p>
       </div>
-      <button type="button" className="shrink-0 text-xs text-primary" disabled={busy} onClick={() => void download()}>
+      <button type="button" className="shrink-0 rounded-lg px-2 py-1 text-caption font-medium text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:text-disabled-foreground" disabled={busy} onClick={() => void download()}>
         {busy ? '取得中…' : 'ダウンロード'}
       </button>
     </div>

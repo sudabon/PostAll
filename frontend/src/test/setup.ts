@@ -1,4 +1,16 @@
 import '@testing-library/jest-dom/vitest'
+import { MotionGlobalConfig } from 'motion/react'
+
+MotionGlobalConfig.skipAnimations = true
+
+if (typeof HTMLDialogElement !== 'undefined') {
+  HTMLDialogElement.prototype.showModal ??= function () {
+    this.open = true
+  }
+  HTMLDialogElement.prototype.close ??= function () {
+    this.open = false
+  }
+}
 
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

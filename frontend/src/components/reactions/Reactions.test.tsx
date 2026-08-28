@@ -5,6 +5,7 @@ import type { Emoji, Reaction } from '@/api/client'
 import { EmojiPicker } from './EmojiPicker'
 import { ReactionBar } from './ReactionBar'
 import { useUi } from '@/state/ui'
+import { MotionTestProvider } from '@/test/motion'
 
 const mocks = vi.hoisted(() => ({
   listEmojis: vi.fn(),
@@ -36,7 +37,9 @@ function renderWithQuery(ui: React.ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>, {
+    wrapper: MotionTestProvider,
+  })
 }
 
 describe('emoji reactions', () => {
@@ -73,12 +76,27 @@ describe('emoji reactions', () => {
     expect(onSelect).toHaveBeenCalledWith(emojis[1])
   })
 
+  it('uses a native modal and restores focus after Escape', async () => {
+    renderWithQuery(<EmojiPicker onSelect={vi.fn()} />)
+    const trigger = screen.getByRole('button', { name: 'リアクションを追加' })
+    trigger.focus()
+    fireEvent.click(trigger)
+
+    const dialog = await screen.findByRole('dialog', { name: 'リアクションを追加' })
+    expect(dialog.tagName).toBe('DIALOG')
+
+    fireEvent(dialog, new Event('cancel', { cancelable: true }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'リアクションを追加' })).toBeNull())
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
   it('shows an empty catalog as a normal picker state', async () => {
     mocks.listEmojis.mockResolvedValue([])
     renderWithQuery(<EmojiPicker onSelect={vi.fn()} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }))
-    expect(await screen.findByText('絵文字はまだ登録されていません')).toBeVisible()
+    await waitFor(() => expect(screen.getByText('絵文字はまだ登録されていません')).toBeVisible())
   })
 
   it('shows self state, reactor details, image fallback, and a rollback error', async () => {
@@ -102,8 +120,30 @@ describe('emoji reactions', () => {
 
     const toggle = screen.getByRole('button', { name: /:shipit: 2件/ })
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    fireEvent.pointerEnter(toggle)
     expect(screen.getByRole('tooltip')).toHaveTextContent('自分')
     expect(screen.getByRole('tooltip')).toHaveTextContent('bbbbbbbb…')
+    fireEvent.pointerLeave(toggle)
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
+
+    toggle.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 80,
+      bottom: 28,
+      width: 80,
+      height: 28,
+      toJSON: () => ({}),
+    })
+    toggle.setPointerCapture = vi.fn()
+    toggle.releasePointerCapture = vi.fn()
+    fireEvent.pointerDown(toggle, { pointerId: 1, button: 0, clientX: 40, clientY: 14 })
+    expect(toggle).toHaveAttribute('data-pressed')
+    fireEvent.pointerUp(toggle, { pointerId: 1, clientX: 40, clientY: 14 })
+    expect(toggle).not.toHaveAttribute('data-pressed')
     const fallback = await screen.findByText(':shipit:')
     expect(fallback).toBeVisible()
     expect(fallback).toHaveClass('truncate')
