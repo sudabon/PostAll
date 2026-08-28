@@ -1,6 +1,7 @@
 import { Children, isValidElement, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import { usePlatform } from '@/platform'
 import { CodeBlock } from './CodeBlock'
@@ -8,6 +9,9 @@ import { MermaidBlock } from './MermaidBlock'
 
 const schema = {
   ...defaultSchema,
+  // 書式ツールバーの「下線」が挿入する <u> のみ生 HTML を許可する。
+  // rehype-raw の後段でこの許可リストを適用するため、他のタグ・属性は従来どおり除去される。
+  tagNames: [...(defaultSchema.tagNames ?? []), 'u'],
   protocols: {
     ...defaultSchema.protocols,
     href: ['http', 'https', 'mailto'],
@@ -36,7 +40,7 @@ export function MarkdownBody({ markdown }: { markdown: string }) {
     <div className="markdown-body text-body" data-testid="markdown-body">
       <Markdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeSanitize, schema]]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, schema]]}
         components={{
           a: ({ href, children }) => {
             if (!href || !/^(https?:|mailto:)/i.test(href)) {

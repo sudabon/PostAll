@@ -35,7 +35,7 @@ describe('Composer', () => {
 
   it('inserts a code fence template', () => {
     renderComposer()
-    fireEvent.click(screen.getByTestId('composer-code'))
+    fireEvent.click(screen.getByTestId('composer-format-codeBlock'))
     expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toContain('```')
   })
 

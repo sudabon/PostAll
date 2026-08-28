@@ -46,4 +46,21 @@ describe('MarkdownBody', () => {
     expect(screen.getByRole('link', { name: 'ok' })).toBeTruthy()
     expect(spy).not.toHaveBeenCalled()
   })
+
+  it('renders an underline written as raw <u> HTML', () => {
+    const { container } = renderMarkdown('<u>\u4e0b\u7dda</u>')
+    const u = container.querySelector('u')
+    expect(u).not.toBeNull()
+    expect(u?.textContent).toBe('\u4e0b\u7dda')
+  })
+
+  it('strips raw HTML outside the allow list', () => {
+    const { container } = renderMarkdown(
+      '<img src="x" onerror="window.__xss = 1">\n<iframe src="https://example.com"></iframe>\n<u onclick="window.__xss = 1">ok</u>',
+    )
+    expect((window as unknown as { __xss?: number }).__xss).toBeUndefined()
+    expect(container.querySelector('iframe')).toBeNull()
+    expect(container.querySelector('[onerror]')).toBeNull()
+    expect(container.querySelector('u')?.getAttribute('onclick')).toBeNull()
+  })
 })
