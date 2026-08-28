@@ -4,7 +4,7 @@ import { useSettings } from '@/state/settings'
 import { useUi } from '@/state/ui'
 
 export function SignInScreen() {
-  const { signIn } = useAuth()
+  const { signIn, error } = useAuth()
   const settings = useSettings()
   const missing = !settings.supabaseUrl || !settings.supabasePublishableKey
 
@@ -15,6 +15,11 @@ export function SignInScreen() {
       {missing ? (
         <p className="max-w-md text-center text-sm text-destructive">
           Supabase のプロジェクト URL と publishable key を設定してください。
+        </p>
+      ) : null}
+      {error ? (
+        <p className="max-w-md text-center text-sm text-destructive" data-testid="auth-error">
+          {error}
         </p>
       ) : null}
       <div className="flex gap-3">
