@@ -10,7 +10,7 @@ import {
   type DragOverEvent,
 } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import { Plus } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { Channel } from '@/api/client'
 import { buildForest, descendantIds, flattenVisible } from '@/lib/tree'
@@ -262,10 +262,14 @@ function TreeRow({
           </button>
           <button
             type="button"
-            className="flex-1 truncate rounded-sm text-left font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="flex-1 select-none truncate rounded-sm text-left font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             data-testid={`channel-${channel.name}`}
+            title="ダブルクリックで名前を変更"
             {...pressProps}
             onClick={() => useUi.getState().selectChannel(channel.id)}
+            onDoubleClick={() => {
+              if (!mutationDisabled) useUi.getState().setRenaming(channel.id)
+            }}
           >
             # {channel.name}
           </button>
@@ -274,22 +278,17 @@ function TreeRow({
       <span className="hidden gap-1 group-focus-within:flex group-hover:flex">
         <button
           type="button"
-          className={cn('rounded-sm px-1 text-caption text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring', selected && 'text-primary-foreground/80')}
+          className={cn(
+            'rounded-sm p-0.5 text-destructive focus-visible:outline-2 focus-visible:outline-ring',
+            selected && 'text-primary-foreground',
+          )}
+          data-testid={`channel-delete-${channel.name}`}
+          aria-label={`${channel.name} を削除`}
+          title="削除"
           disabled={mutationDisabled}
-          onClick={() => useUi.getState().startCreate(channel.id)}
+          onClick={onDelete}
         >
-          子
-        </button>
-        <button
-          type="button"
-          className={cn('rounded-sm px-1 text-caption text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring', selected && 'text-primary-foreground/80')}
-          disabled={mutationDisabled}
-          onClick={() => useUi.getState().setRenaming(channel.id)}
-        >
-          改名
-        </button>
-        <button type="button" className={cn('rounded-sm px-1 text-caption text-destructive focus-visible:outline-2 focus-visible:outline-ring', selected && 'text-primary-foreground')} disabled={mutationDisabled} onClick={onDelete}>
-          削除
+          <Trash2 className="size-4" />
         </button>
       </span>
     </div>

@@ -1,9 +1,12 @@
+import { CirclePlus, Send } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { usePlatform, type PickedFile } from '@/platform'
 import { useUi } from '@/state/ui'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { insertCodeFence, isInsideUnclosedFence } from '@/lib/fence'
+import { isInsideUnclosedFence } from '@/lib/fence'
+import { applyFormat, type FormatAction } from '@/lib/markdown-format'
+import { FormatToolbar } from './FormatToolbar'
 import { ACCEPT_ATTR, checkAttachment, formatBytes, inferMime, isImageType } from '@/lib/attachments'
 
 type DraftFile = {
@@ -167,16 +170,16 @@ export function Composer({
     }
   }
 
-  const insertCode = () => {
+  const runFormat = (action: FormatAction) => {
     const el = area.current
     const start = el?.selectionStart ?? value.length
     const end = el?.selectionEnd ?? start
-    const next = insertCodeFence(value, start, end)
+    const next = applyFormat(action, value, start, end)
     setValue(next.value)
     requestAnimationFrame(() => {
       if (!el) return
       el.focus()
-      el.setSelectionRange(next.cursor, next.cursor)
+      el.setSelectionRange(next.selectionStart, next.selectionEnd)
     })
   }
 
@@ -200,12 +203,13 @@ export function Composer({
         void platform.ingestFiles([...e.dataTransfer.files]).then(addPicked)
       }}
     >
+      <FormatToolbar disabled={disabled || sending} onAction={runFormat} />
       <textarea
         ref={area}
         data-testid="composer-input"
         disabled={disabled || sending}
         className={cn(
-          'max-h-[200px] min-h-11 w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-body shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+          'max-h-[200px] min-h-11 w-full resize-none rounded-b-xl border border-t-0 border-input bg-background px-3 py-2 text-body shadow-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
           disabled && 'text-disabled-foreground shadow-none',
         )}
         placeholder={disabled ? 'チャネルを選択してください' : placeholder}
@@ -252,35 +256,26 @@ export function Composer({
         </ul>
       ) : null}
       <div className="mt-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <Button
             type="button"
             variant="ghost"
-            size="sm"
-            data-testid="composer-code"
-            className="h-8 px-2 text-caption text-muted-foreground"
-            disabled={disabled || sending}
-            onClick={insertCode}
-          >
-            コード
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
+            size="icon"
             data-testid="composer-attach"
-            className="h-8 px-2 text-caption text-muted-foreground"
+            className="size-9 text-muted-foreground"
+            aria-label="添付"
+            title="添付"
             disabled={disabled || mutationDisabled || sending}
             onClick={() => {
               void platform.pickFiles({ multiple: true, accept: ACCEPT_ATTR }).then(addPicked)
             }}
           >
-            添付
+            <CirclePlus className="size-5" />
           </Button>
-          {error ? <p className="text-caption text-destructive">{error}</p> : null}
+          {error ? <p className="min-w-0 text-caption text-destructive">{error}</p> : null}
         </div>
-        <Button type="submit" size="sm" disabled={!canSend}>
-          送信
+        <Button type="submit" size="icon" className="size-9" aria-label="送信" title="送信" disabled={!canSend}>
+          <Send className="size-4" />
         </Button>
       </div>
     </form>
