@@ -30,6 +30,16 @@ export function parseTokenResponse(json: Record<string, unknown>): TokenSet {
   }
 }
 
+export function oauthCallbackParams(url: string): { code: string | null; error: string | null } {
+  const parsed = new URL(url)
+  const hash = new URLSearchParams(parsed.hash.startsWith('#') ? parsed.hash.slice(1) : parsed.hash)
+  const get = (key: string) => parsed.searchParams.get(key) ?? hash.get(key)
+  return {
+    code: get('code'),
+    error: get('error_description') ?? get('error'),
+  }
+}
+
 export function authorizeUrl(input: {
   supabaseUrl: string
   redirectUri: string
