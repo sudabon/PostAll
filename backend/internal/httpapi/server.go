@@ -19,7 +19,9 @@ import (
 	searchservice "github.com/sudabon/PostAll/backend/internal/search"
 	"github.com/sudabon/PostAll/backend/internal/store"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -58,10 +60,22 @@ func newPoolConfig(databaseURL string) (*pgxpool.Config, error) {
 	}
 	poolCfg.MaxConns = 2
 	poolCfg.MaxConnIdleTime = 30 * time.Second
-	// DescribeExec avoids named prepared statements (42P05 on Supavisor
-	// transaction pooling) while still describing types so uuid[] encodes.
-	poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+	// Exec sends Parse/Bind/Execute in one round trip. DescribeExec prepares an
+	// unnamed statement then executes it on a second trip; Supavisor
+	// transaction pooling can switch backends in between (SQLSTATE 26000).
+	// Named prepared statements still cause 42P05, so we do not cache them.
+	poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	poolCfg.AfterConnect = func(_ context.Context, conn *pgx.Conn) error {
+		registerQueryExecTypes(conn.TypeMap())
+		return nil
+	}
 	return poolCfg, nil
+}
+
+func registerQueryExecTypes(m *pgtype.Map) {
+	// Exec infers parameter OIDs from Go types. []uuid.UUID is not in pgx's
+	// default map, but ListReactionRowsForPosts binds uuid[].
+	m.RegisterDefaultPgType([]uuid.UUID{}, "_uuid")
 }
 
 func New(cfg Config) (*Server, error) {

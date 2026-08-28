@@ -194,7 +194,7 @@ Supabase の接続経路を用途で使い分ける。ここを取り違える�
 | migrate / emoji-sync / db dump | Session pooler（`*.pooler.supabase.com:5432`） | goose のセッション状態が必要。かつ IPv4 で到達できる |
 | Direct（`db.<ref>.supabase.co:5432`） | 使わない | IPv6 専用。GitHub-hosted runner から届かない |
 
-Transaction pooling に合わせて `internal/httpapi` は pgxpool を `MaxConns = 2`、`DefaultQueryExecMode = QueryExecModeDescribeExec` で構成する。名前付きプリペアドステートメントは Supavisor 越しに `42P05` を起こすため使わず、それでも型記述は行って `uuid[]` のエンコードを保つ。
+Transaction pooling に合わせて `internal/httpapi` は pgxpool を `MaxConns = 2`、`DefaultQueryExecMode = QueryExecModeExec` で構成する。名前付きプリペアドは `42P05`、`DescribeExec` の 2 往復は無名プリペアドの `26000` を起こすため使わず、`uuid[]` は接続時に Go 型を登録してエンコードする。
 
 ### 7. 全文検索
 
