@@ -17,6 +17,7 @@ jobs:
   reap:
     if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 */6 * * *') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: Reap pending attachments (keep-alive)
         env:
@@ -24,6 +25,8 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
+          : "${APP_URL:?APP_URL secret is required}"
+          : "${CRON_SECRET:?CRON_SECRET secret is required}"
           curl --fail-with-body -sS --max-time 120 --retry 2 --retry-connrefused -X POST \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL%/}/internal/attachments/reap"
@@ -31,6 +34,7 @@ jobs:
   prune-events:
     if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 */6 * * *') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: Prune expired change events
         env:
@@ -38,6 +42,8 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -euo pipefail
+          : "${APP_URL:?APP_URL secret is required}"
+          : "${CRON_SECRET:?CRON_SECRET secret is required}"
           curl --fail-with-body -sS --max-time 120 --retry 2 --retry-connrefused -X POST \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             "${APP_URL%/}/internal/events/prune"
@@ -45,6 +51,7 @@ jobs:
   db-dump:
     if: ${{ (github.event_name == 'schedule' && github.event.schedule == '15 3 * * *') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: supabase/setup-cli@v1
         with:
