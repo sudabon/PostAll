@@ -158,6 +158,11 @@
   --tracking-display: -0.026em;
   --text-display--line-height: var(--leading-display);
   --text-display--letter-spacing: var(--tracking-display);
+  /* ヘッダのブランド表記専用。h-12 のヘッダに収まる最大寸法で、
+     最小幅 800px でもチャネル名と重ならない（上下 5px、チャネル名との間隔 9px）。 */
+  --text-brand: 2rem;
+  --leading-brand: 1.2;
+  --text-brand--line-height: var(--leading-brand);
   --font-script: "Snell Roundhand", "Apple Chancery", "Segoe Script", "Brush Script MT", cursive;
   --shadow-sm: var(--elevation-sm);
   --shadow-md: var(--elevation-md);

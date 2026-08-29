@@ -112,7 +112,7 @@ export function AppShell() {
           </Button>
           <ChannelTitle />
           <span
-            className="pointer-events-none absolute left-1/2 -translate-x-1/2 select-none font-script text-heading font-semibold tracking-normal"
+            className="pointer-events-none absolute left-1/2 -translate-x-1/2 select-none font-script text-brand font-semibold tracking-normal"
             data-testid="app-brand"
           >
             PostAll

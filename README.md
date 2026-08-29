@@ -18,6 +18,8 @@ PostAll/
 └── openspec/     # 仕様と change
 ```
 
+手元の Mac / iPhone へアプリとして入れる手順は [INSTALL.md](INSTALL.md) にある。
+
 ## 前提
 
 - Go 1.26+

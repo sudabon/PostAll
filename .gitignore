@@ -37,6 +37,9 @@ go.work.sum
 node_modules/
 npm-debug.log*
 
+# Electron（`npm run pack` の成果物）
+electron/dist/
+
 # Playwright
 frontend/playwright-report/
 frontend/test-results/

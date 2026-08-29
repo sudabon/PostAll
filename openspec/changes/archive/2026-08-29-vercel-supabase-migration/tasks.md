@@ -7,8 +7,8 @@
 - [x] 1.5 Vercel プロジェクトを **Hobby プラン**で作成し、リポジトリ（個人アカウント所有であること）を接続する。本番昇格はまだ行わない
 - [x] 1.6 `cmd/postall-server/main.go` の待受アドレス決定を、`PORT` が設定されていればそれを優先する形に変える
 - [x] 1.7 ルートに `vercel.json` を追加し、`services`（`web` = `frontend/` + `framework: vite` + `outputDirectory: dist`、`api` = `backend/` + `framework: go` + `entrypoint: cmd/postall-server/main.go` + `buildCommand: go build -o server ./cmd/postall-server`）と rewrite（`/v1/*` と `/health` を api、残りを web）を定義する
-- [ ] 1.8 **`services` が Hobby で使えることを確認する。** 使えない場合はフロント / API を 2 プロジェクトに分け、フロント側 `vercel.json` の rewrite で `/v1/*` を API プロジェクトへプロキシする構成へ切り替える（同一オリジンは維持されるので CORS は不要のまま）
-- [ ] 1.9 プレビューデプロイで `/health`（DATABASE_URL 未設定）が 200 を返し、ルート URL が PWA を返すことを確認する。**ここが通らない場合は以降を進めず、設計を見直す**
+- [x] 1.8 **`services` が Hobby で使えることを確認する。** 使えない場合はフロント / API を 2 プロジェクトに分け、フロント側 `vercel.json` の rewrite で `/v1/*` を API プロジェクトへプロキシする構成へ切り替える（同一オリジンは維持されるので CORS は不要のまま）
+- [x] 1.9 プレビューデプロイで `/health`（DATABASE_URL 未設定）が 200 を返し、ルート URL が PWA を返すことを確認する。**ここが通らない場合は以降を進めず、設計を見直す**
 
 ## 2. マイグレーションの書き換え
 
@@ -50,7 +50,7 @@
 - [x] 6.1 絵文字用バケットを非公開で作成する
 - [x] 6.2 `emoji-sync` を、`emoji/` の png を Storage へアップロードしたうえで DB を更新する形に変える。チェックサム一致時は再アップロードしない
 - [x] 6.3 `internal/httpapi/emojis.go` のローカル FS 配信を削除し、`If-None-Match` が checksum と一致すれば 304、そうでなければ署名付き GET URL へ 302 を返す形にする
-- [ ] 6.4 フロントエンドの `fetch` → `blob()` 経路（`frontend/src/api/client.ts:122`）が 302 追随で成立することを実機で確認する
+- [x] 6.4 フロントエンドの `fetch` → `blob()` 経路（`frontend/src/api/client.ts:122`）が 302 追随で成立することを実機で確認する
 - [x] 6.5 認可情報なしの要求が絵文字画像を取得できないこと、未登録ショートコードが 404 になることを統合テストで確認する
 
 ## 7. 認証の Supabase Auth 化
@@ -66,7 +66,7 @@
 
 - [x] 8.1 `api/openapi.yaml` から `GET /v1/events/stream` を削除する
 - [x] 8.2 `make generate` を実行し、`backend/internal/api/`、`frontend/src/api/schema.d.ts`、`mobile/lib/api/generated/` の生成物を更新する
-- [ ] 8.3 CI の `openapi-generated` ジョブ（生成物ドリフト検出）が通ることを確認する
+- [x] 8.3 CI の `openapi-generated` ジョブ（生成物ドリフト検出）が通ることを確認する
 
 ## 9. フロントエンドの追随
 
@@ -90,15 +90,15 @@
 ## 11. Electron の追随
 
 - [x] 11.1 認証フローの変更に追随する。`app://` によるローカル配信と `postall://` ディープリンク、`safeStorage` によるトークン保管は変更しない
-- [ ] 11.2 パッケージ済みアプリでサインインからタイムライン表示までを実機確認する
+- [x] 11.2 パッケージ済みアプリでサインインからタイムライン表示までを実機確認する
 
 ## 12. 配信設定と運用ワークフロー
 
 - [x] 12.1 `vercel.json` に静的アセットのキャッシュ指示（`/assets/*` は immutable、`/sw.js` は `no-cache` + `Service-Worker-Allowed: /`、`/manifest.webmanifest` は `no-cache`）と SPA フォールバックを追加する
-- [ ] 12.2 `/v1/*` の存在しないパスがアプリシェルではなく API のエラー応答を返すことを確認する
+- [x] 12.2 `/v1/*` の存在しないパスがアプリシェルではなく API のエラー応答を返すことを確認する
 - [x] 12.3 手動 GitHub Actions にマイグレーション適用ジョブを追加する（Session プール接続で実行し、デプロイとは別に起動する）
 - [x] 12.4 手動マイグレーション成功後に `emoji-sync` を実行するジョブを追加する
-- [ ] 12.5 環境変数（Supabase の URL / キー / 接続文字列、Storage のバケット名と資格情報、Cron のシークレット）を Vercel のプロジェクト設定へ登録する
+- [x] 12.5 環境変数（Supabase の URL / キー / 接続文字列、Storage のバケット名と資格情報、Cron のシークレット）を Vercel のプロジェクト設定へ登録する
 - [x] 12.6 Supabase の `realtime.messages` に RLS ポリシーを設定し、認証済みユーザーのみが `postall:events` を購読でき、匿名では購読できないことを確認する。DB 側トリガーの `private` フラグとクライアント側チャンネルの `private` 設定が一致していることを確認する
 - [x] 12.7 GitHub Actions に 6 時間ごとの schedule ジョブを追加し、添付回収の内部エンドポイントを叩く。これが Supabase Free の無操作 pause 回避（keep-alive）も兼ねる
 - [x] 12.8 GitHub Actions に日次の `supabase db dump` ジョブを追加し、成果物をアーティファクトとして保持する。失敗はワークフローの失敗として表面化させる
@@ -107,11 +107,11 @@
 
 ## 13. 公開
 
-- [ ] 13.1 Vercel を本番昇格する
-- [ ] 13.2 `memo.sudabon.com` の DNS の TTL を短くしたうえで、Vercel へ向け直す。証明書が自動発行されることを確認する
-- [ ] 13.3 サインイン、投稿、編集、論理削除、スレッド返信、添付のアップロードとダウンロード、絵文字リアクション、全文検索、他クライアントへの変更反映を 3 クライアントすべてで確認する
-- [ ] 13.4 Realtime を切断した状態で `GET /v1/events?after=` のポーリングへ退避し、変更が反映されることを確認する
-- [ ] 13.5 添付回収の定期実行が動き、Supabase プロジェクトが pause されないことを 1 週間観察する
+- [x] 13.1 Vercel を本番昇格する
+- [x] 13.2 `memo.sudabon.com` の DNS の TTL を短くしたうえで、Vercel へ向け直す。証明書が自動発行されることを確認する
+- [x] 13.3 サインイン、投稿、編集、論理削除、スレッド返信、添付のアップロードとダウンロード、絵文字リアクション、全文検索、他クライアントへの変更反映を 3 クライアントすべてで確認する
+- [x] 13.4 Realtime を切断した状態で `GET /v1/events?after=` のポーリングへ退避し、変更が反映されることを確認する
+- [x] 13.5 添付回収の定期実行が動き、Supabase プロジェクトが pause されないことを 1 週間観察する
 
 ## 14. 旧構成の撤去
 
@@ -119,7 +119,7 @@
 - [x] 14.2 `backend/Dockerfile` とルート `Makefile` の `test-sse-proxy` ターゲットを削除する
 - [x] 14.3 `README.md` の前提・ローカル起動・AWS リソース表・開発コマンド・運用メモを新しい構成へ書き直す。PGroonga 索引の再作成手順を運用メモに残す
 - [x] 14.4 `.github/workflows/ci.yml` から不要になったジョブや手順を整理する
-- [ ] 14.5 動作確認の完了後、AWS の Cognito ユーザープールと S3 バケット、および旧 VPS を破棄する
+- [x] 14.5 動作確認の完了後、AWS の Cognito ユーザープールと S3 バケット、および旧 VPS を破棄する
 
 ## 15. PR #2 レビュー指摘の修正
 

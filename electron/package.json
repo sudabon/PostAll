@@ -6,6 +6,7 @@
   "main": "main.mjs",
   "scripts": {
     "start": "electron .",
+    "test": "node test/proxy.e2e.mjs",
     "pack": "electron-builder --mac dir"
   },
   "devDependencies": {
@@ -30,7 +31,8 @@
     ],
     "mac": {
       "target": ["dir"],
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns"
     }
   }
 }
