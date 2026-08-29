@@ -107,7 +107,7 @@ function WideShell() {
       <div className="relative flex min-w-0 flex-1 flex-col">
         <header
           className={cn(
-            'material-thin shell-header absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-3 shadow-sm transition-[background-color,box-shadow,backdrop-filter]',
+            'material-thin shell-header absolute inset-x-0 top-0 z-30 flex items-center gap-2 shadow-sm transition-[background-color,box-shadow,backdrop-filter]',
             isContentUnderChrome && 'material-regular shadow-md',
           )}
         >
@@ -163,7 +163,7 @@ function NarrowShell() {
     >
       <header
         className={cn(
-          'material-thin shell-header absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-3 shadow-sm transition-[background-color,box-shadow,backdrop-filter]',
+          'material-thin shell-header absolute inset-x-0 top-0 z-30 flex items-center gap-2 shadow-sm transition-[background-color,box-shadow,backdrop-filter]',
           isContentUnderChrome && 'material-regular shadow-md',
         )}
       >
@@ -221,7 +221,9 @@ function ChannelTitle() {
   const name = data.find((c) => c.id === id)?.name
   if (!name) return null
   return (
-    <h1 className="max-w-[70%] truncate text-title font-semibold md:max-w-[30%]" data-testid="channel-title">
+    // 広幅ではヘッダ中央に固定されたブランド表記と衝突しないよう、中央から一定距離で頭打ちにする。
+    // 7rem = ブランドの半幅 + 戻る/折りたたみボタンと gap の 40px + 間隔 9px。
+    <h1 className="max-w-[70%] truncate text-title font-semibold md:max-w-[calc(50%-7rem)]" data-testid="channel-title">
       {`# ${name}`}
     </h1>
   )

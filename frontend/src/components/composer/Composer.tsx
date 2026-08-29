@@ -185,7 +185,8 @@ export function Composer({
 
   return (
     <form
-      className={cn('material-regular relative z-10 rounded-t-xl p-3 shadow-sm transition-[background-color,box-shadow] shell-composer', dragging && 'bg-accent/60 shadow-md')}
+      // 左右のパディングは shell-composer が safe-area 込みで持つ
+      className={cn('material-regular relative z-10 rounded-t-xl py-3 shadow-sm transition-[background-color,box-shadow] shell-composer', dragging && 'bg-accent/60 shadow-md')}
       data-testid={storageKey.startsWith('draft:thread') ? 'thread-composer' : 'composer'}
       onSubmit={(e) => {
         e.preventDefault()
@@ -203,10 +204,9 @@ export function Composer({
         void platform.ingestFiles([...e.dataTransfer.files]).then(addPicked)
       }}
     >
-      {/* 背景バーは全幅のまま下端を支え、入力カードだけタイムライン本文と同じ読み幅に揃える。 */}
       <div
         className={cn(
-          'mx-auto w-full max-w-reading rounded-xl border border-input bg-background shadow-sm focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring',
+          'rounded-xl border border-input bg-background shadow-sm focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring',
           disabled && 'shadow-none',
         )}
       >
