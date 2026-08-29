@@ -25,10 +25,18 @@ describe('Composer', () => {
     cleanup()
   })
 
-  it('does not submit Enter inside an unclosed code fence', () => {
+  it('does not submit Shift+Enter inside an unclosed code fence', () => {
     const { onSubmit } = renderComposer()
     const input = screen.getByTestId('composer-input')
     fireEvent.change(input, { target: { value: '```js\nconst x = 1' } })
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('does not submit on a plain Enter so it inserts a newline', () => {
+    const { onSubmit } = renderComposer()
+    const input = screen.getByTestId('composer-input')
+    fireEvent.change(input, { target: { value: 'こんにちは' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onSubmit).not.toHaveBeenCalled()
   })
@@ -37,15 +45,15 @@ describe('Composer', () => {
     const { onSubmit } = renderComposer()
     const input = screen.getByTestId('composer-input')
     fireEvent.change(input, { target: { value: 'にほんご' } })
-    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true, isComposing: true })
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
-  it('submits on a plain Enter', async () => {
+  it('submits on Shift+Enter', async () => {
     const { onSubmit } = renderComposer()
     const input = screen.getByTestId('composer-input')
     fireEvent.change(input, { target: { value: 'こんにちは' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('こんにちは', []))
   })
 
@@ -102,7 +110,7 @@ describe('Composer', () => {
     fireEvent.change(input, { target: { value: '切断中の下書き' } })
     expect(input).not.toBeDisabled()
     expect(screen.getByRole('button', { name: '送信' })).toBeDisabled()
-    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
     expect(onSubmit).not.toHaveBeenCalled()
 
     rendered.rerender(

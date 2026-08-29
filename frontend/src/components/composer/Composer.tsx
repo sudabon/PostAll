@@ -232,14 +232,14 @@ export function Composer({
             void platform.ingestFiles(files).then(addPicked)
           }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              // IME 変換中（変換候補の確定 Enter）は送信しない
-              if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
-              const pos = e.currentTarget.selectionStart ?? value.length
-              if (isInsideUnclosedFence(value, pos)) return
-              e.preventDefault()
-              void submit()
-            }
+            // Enter は改行、送信は Shift+Enter
+            if (e.key !== 'Enter' || !e.shiftKey) return
+            // IME 変換中（変換候補の確定 Enter）は送信しない
+            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
+            const pos = e.currentTarget.selectionStart ?? value.length
+            if (isInsideUnclosedFence(value, pos)) return
+            e.preventDefault()
+            void submit()
           }}
         />
         {drafts.length > 0 ? (
@@ -282,7 +282,7 @@ export function Composer({
             </Button>
             {error ? <p className="min-w-0 text-caption text-destructive">{error}</p> : null}
           </div>
-          <Button type="submit" size="icon" className="size-9" aria-label="送信" title="送信" disabled={!canSend}>
+          <Button type="submit" size="icon" className="size-9" aria-label="送信" title="送信 (Shift+Enter)" disabled={!canSend}>
             <Send className="size-4" />
           </Button>
         </div>

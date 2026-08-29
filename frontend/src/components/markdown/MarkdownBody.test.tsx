@@ -36,6 +36,12 @@ describe('MarkdownBody', () => {
     expect(screen.getByRole('table')).toBeTruthy()
   })
 
+  it('renders a single newline as a line break', () => {
+    const { container } = renderMarkdown('1行目\n2行目')
+    expect(container.querySelectorAll('br')).toHaveLength(1)
+    expect(container.querySelector('p')?.textContent).toBe('1行目\n2行目')
+  })
+
   it('does not execute script tags or javascript links', () => {
     const adapter = createFakeAdapter()
     const spy = vi.spyOn(adapter, 'openExternal')

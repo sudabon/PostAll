@@ -13,6 +13,13 @@ import { cn } from '@/lib/utils'
 import { useScrollEdge } from '@/lib/motion/useScrollEdge'
 import { Button } from '@/components/ui/button'
 
+const bottomThreshold = 32
+
+function pinToBottom(el: HTMLElement, measuredHeight: { current: number }) {
+  el.scrollTop = el.scrollHeight
+  measuredHeight.current = el.scrollHeight
+}
+
 export function Timeline({
   channelId,
   onScrollEdgeChange,
@@ -27,11 +34,14 @@ export function Timeline({
   const posts = flattenPages(data?.pages)
   const scroller = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const isContentUnderChrome = useScrollEdge(scroller, sentinelRef)
   const loading = useRef(false)
   const mutations = usePostMutations(channelId)
   const { api } = useAuth()
   const initial = useRef(true)
+  const pinnedToBottom = useRef(true)
+  const measuredHeight = useRef(0)
 
   useEffect(() => {
     onScrollEdgeChange?.(isContentUnderChrome)
@@ -39,18 +49,34 @@ export function Timeline({
 
   useEffect(() => {
     initial.current = true
+    pinnedToBottom.current = true
   }, [channelId, timelineAnchorId])
 
   useEffect(() => {
     const el = scroller.current
     if (!el || !initial.current || posts.length === 0) return
-    el.scrollTop = el.scrollHeight
+    pinToBottom(el, measuredHeight)
     initial.current = false
   }, [posts.length, channelId, timelineAnchorId])
+
+  // 再取得や画像・コードハイライトの遅延描画で本文が伸びても最下部に留まらせる
+  useEffect(() => {
+    const el = scroller.current
+    const content = contentRef.current
+    if (!el || !content || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (pinnedToBottom.current) pinToBottom(el, measuredHeight)
+      else measuredHeight.current = el.scrollHeight
+    })
+    observer.observe(content)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [channelId])
 
   const targetVisible = targetPostId !== null && posts.some((post) => post.id === targetPostId)
   useEffect(() => {
     if (!targetPostId || !targetVisible) return
+    pinnedToBottom.current = false
     const frame = requestAnimationFrame(() => {
       const target = document.getElementById(`post-${targetPostId}`)
       target?.scrollIntoView({ block: 'center' })
@@ -61,13 +87,22 @@ export function Timeline({
 
   const onScroll = () => {
     const el = scroller.current
-    if (!el || loading.current || !hasNextPage || isFetchingNextPage) return
+    if (!el) return
+    // 本文が伸びた直後のスクロールイベントは利用者の操作ではないので追従状態を変えない
+    if (el.scrollHeight === measuredHeight.current) {
+      pinnedToBottom.current = el.scrollHeight - el.clientHeight - el.scrollTop <= bottomThreshold
+    }
+    measuredHeight.current = el.scrollHeight
+    if (loading.current || !hasNextPage || isFetchingNextPage) return
     if (el.scrollTop > 40) return
     loading.current = true
     const prev = el.scrollHeight
     void fetchNextPage().then(() => {
       requestAnimationFrame(() => {
-        if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight - prev + el.scrollTop
+        if (scroller.current) {
+          scroller.current.scrollTop = scroller.current.scrollHeight - prev + el.scrollTop
+          measuredHeight.current = scroller.current.scrollHeight
+        }
         loading.current = false
       })
     })
@@ -90,43 +125,45 @@ export function Timeline({
         data-testid="timeline"
       >
         <div ref={sentinelRef} className="h-px" aria-hidden="true" />
-        {timelineAnchorId ? (
-          <div className="material-thin mb-3 rounded-lg px-4 py-2 text-center shadow-sm">
-            <Button type="button" variant="ghost" size="sm" className="text-primary" onClick={() => useUi.getState().returnToLatest()}>
-              最新のポストへ戻る
-            </Button>
-          </div>
-        ) : null}
-        {isFetchingNextPage ? <p className="mb-2 text-center text-caption text-muted-foreground">読み込み中…</p> : null}
-        {!hasNextPage && posts.length > 0 ? (
-          <p className="mb-2 text-center text-caption text-muted-foreground">履歴の先頭です</p>
-        ) : null}
-        {isLoading ? <p className="text-body text-muted-foreground">読み込み中…</p> : null}
-        {!isLoading && posts.length === 0 ? (
-          <p className="text-body text-muted-foreground">まだポストがありません</p>
-        ) : null}
-        {posts.map((post, i) => {
-          const prev = posts[i - 1]
-          const showDate = !prev || localDateKey(prev.createdAt) !== localDateKey(post.createdAt)
-          return (
-            <div key={post.id}>
-              {showDate ? (
-                <div className="my-4 flex items-center gap-3 text-caption font-medium text-muted-foreground">
-                  <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                  <span>{formatDateLabel(post.createdAt)}</span>
-                  <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                </div>
-              ) : null}
-              <PostRow
-                post={post}
-                highlighted={post.id === targetPostId}
-                mutationDisabled={!canMutate}
-                onEdit={(body, attachmentIds) => mutations.edit.mutate({ id: post.id, body, attachmentIds })}
-                onDelete={() => mutations.remove.mutate(post.id)}
-              />
+        <div ref={contentRef}>
+          {timelineAnchorId ? (
+            <div className="material-thin mb-3 rounded-lg px-4 py-2 text-center shadow-sm">
+              <Button type="button" variant="ghost" size="sm" className="text-primary" onClick={() => useUi.getState().returnToLatest()}>
+                最新のポストへ戻る
+              </Button>
             </div>
-          )
-        })}
+          ) : null}
+          {isFetchingNextPage ? <p className="mb-2 text-center text-caption text-muted-foreground">読み込み中…</p> : null}
+          {!hasNextPage && posts.length > 0 ? (
+            <p className="mb-2 text-center text-caption text-muted-foreground">履歴の先頭です</p>
+          ) : null}
+          {isLoading ? <p className="text-body text-muted-foreground">読み込み中…</p> : null}
+          {!isLoading && posts.length === 0 ? (
+            <p className="text-body text-muted-foreground">まだポストがありません</p>
+          ) : null}
+          {posts.map((post, i) => {
+            const prev = posts[i - 1]
+            const showDate = !prev || localDateKey(prev.createdAt) !== localDateKey(post.createdAt)
+            return (
+              <div key={post.id}>
+                {showDate ? (
+                  <div className="my-4 flex items-center gap-3 text-caption font-medium text-muted-foreground">
+                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                    <span>{formatDateLabel(post.createdAt)}</span>
+                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                  </div>
+                ) : null}
+                <PostRow
+                  post={post}
+                  highlighted={post.id === targetPostId}
+                  mutationDisabled={!canMutate}
+                  onEdit={(body, attachmentIds) => mutations.edit.mutate({ id: post.id, body, attachmentIds })}
+                  onDelete={() => mutations.remove.mutate(post.id)}
+                />
+              </div>
+            )
+          })}
+        </div>
       </div>
       <Composer
         key={channelId}
@@ -136,9 +173,10 @@ export function Timeline({
         uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress)}
         onSubmit={async (body, attachmentIds) => {
           await mutations.create.mutateAsync({ body, attachmentIds })
-          requestAnimationFrame(() => {
-            if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight
-          })
+          const el = scroller.current
+          if (!el) return
+          pinnedToBottom.current = true
+          pinToBottom(el, measuredHeight)
         }}
       />
     </div>
