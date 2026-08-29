@@ -30,7 +30,8 @@
     ],
     "mac": {
       "target": ["dir"],
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns"
     }
   }
 }
