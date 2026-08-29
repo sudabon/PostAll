@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { AnimatePresence, m, useReducedMotion } from 'motion/react'
+import { Pencil, Trash2 } from 'lucide-react'
 import type { Post } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import { useOverlayPresence } from '@/lib/motion/useOverlayPresence'
@@ -115,25 +116,27 @@ export function PostActions({
         <button
           ref={triggerRef}
           type="button"
-          className="rounded-lg px-1.5 py-1 text-caption font-medium hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          className="rounded-lg p-1.5 hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           aria-label={`${kind}を編集: ${summary}`}
+          title="編集"
           aria-haspopup="dialog"
           aria-expanded={editing}
           disabled={mutationDisabled}
           onClick={openEditor}
         >
-          編集
+          <Pencil className="size-4" />
         </button>
         <button
           type="button"
-          className="rounded-lg px-1.5 py-1 text-caption font-medium text-destructive hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          className="rounded-lg p-1.5 text-destructive hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           aria-label={`${kind}を削除: ${summary}`}
+          title="削除"
           disabled={mutationDisabled}
           onClick={() => {
             if (window.confirm(`この${kind}を削除しますか？`)) onDelete()
           }}
         >
-          削除
+          <Trash2 className="size-4" />
         </button>
       </m.div>
       {shouldRender ? (

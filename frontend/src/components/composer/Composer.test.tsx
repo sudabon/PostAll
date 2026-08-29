@@ -33,6 +33,22 @@ describe('Composer', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
+  it('does not submit while the IME is composing', () => {
+    const { onSubmit } = renderComposer()
+    const input = screen.getByTestId('composer-input')
+    fireEvent.change(input, { target: { value: 'にほんご' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('submits on a plain Enter', async () => {
+    const { onSubmit } = renderComposer()
+    const input = screen.getByTestId('composer-input')
+    fireEvent.change(input, { target: { value: 'こんにちは' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('こんにちは', []))
+  })
+
   it('inserts a code fence template', () => {
     renderComposer()
     fireEvent.click(screen.getByTestId('composer-format-codeBlock'))

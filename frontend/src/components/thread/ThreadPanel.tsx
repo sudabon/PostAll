@@ -56,7 +56,7 @@ export function ThreadPanel({ channelId }: { channelId: string | null }) {
       animate={{ opacity: 1, x: 0 }}
       exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, x: 24 }}
       transition={shouldReduceMotion ? { duration: 0.14, ease: 'easeOut' } : springPresets.sheet}
-      className="relative z-20 mb-2 mr-2 mt-14 flex shrink-0"
+      className="relative z-20 mt-12 flex shrink-0"
       style={{ width: resize.value }}
     >
       <div
@@ -82,7 +82,7 @@ export function ThreadPanel({ channelId }: { channelId: string | null }) {
         }}
       />
       <aside
-        className="material-regular flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl shadow-md"
+        className="material-regular flex min-w-0 flex-1 flex-col overflow-hidden"
         data-testid="thread-panel"
       >
         <header className="flex items-center justify-between border-b border-border px-3 py-2">
