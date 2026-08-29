@@ -81,8 +81,13 @@ function Button({
   onDrag,
   onDragStart,
   onDragEnd,
+  onClick,
   ...props
 }: ButtonProps) {
+  // iOS ではタップ後に合成 click が飛んでこないことがある（押下フィードバックだけ出て
+  // 何も起きない）。タッチは pointerup で直接発火させ、その後に click が来た場合は
+  // 二重実行にならないよう読み捨てる。
+  const activatedAt = React.useRef(0)
   const { isPressed, shouldReduceMotion, pressProps } = usePressable<HTMLButtonElement>({
     disabled,
     onPointerDown,
@@ -90,13 +95,23 @@ function Button({
     onPointerUp,
     onPointerCancel,
     onLostPointerCapture,
+    onPress: (event) => {
+      if (event.pointerType !== "touch" || !onClick) return
+      activatedAt.current = event.timeStamp
+      onClick(event)
+    },
   })
+  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (activatedAt.current && event.timeStamp - activatedAt.current < 700) return
+    onClick?.(event)
+  }
   const sharedProps = {
     "data-slot": "button",
     className: cn(buttonVariants({ variant, size, className })),
     disabled,
     ...props,
     ...pressProps,
+    onClick: handleClick,
   }
 
   if (asChild) {
