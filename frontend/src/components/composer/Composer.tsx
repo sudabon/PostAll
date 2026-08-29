@@ -185,7 +185,7 @@ export function Composer({
 
   return (
     <form
-      className={cn('material-regular relative z-10 rounded-t-xl p-3 shadow-sm transition-[background-color,box-shadow]', dragging && 'bg-accent/60 shadow-md')}
+      className={cn('material-regular relative z-10 rounded-t-xl p-3 shadow-sm transition-[background-color,box-shadow] shell-composer', dragging && 'bg-accent/60 shadow-md')}
       data-testid={storageKey.startsWith('draft:thread') ? 'thread-composer' : 'composer'}
       onSubmit={(e) => {
         e.preventDefault()

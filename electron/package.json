@@ -6,7 +6,7 @@
   "main": "main.mjs",
   "scripts": {
     "start": "electron .",
-    "test": "node test/proxy.e2e.mjs",
+    "test": "node test/proxy.e2e.mjs && node test/narrow-window.e2e.mjs",
     "pack": "electron-builder --mac dir"
   },
   "devDependencies": {

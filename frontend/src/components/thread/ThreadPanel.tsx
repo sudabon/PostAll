@@ -13,8 +13,15 @@ import { uploadPickedFile } from '@/lib/upload'
 import { Button } from '@/components/ui/button'
 import { useDragValue } from '@/lib/motion/useDragValue'
 import { springPresets } from '@/lib/motion/springs'
+import { cn } from '@/lib/utils'
 
-export function ThreadPanel({ channelId }: { channelId: string | null }) {
+export function ThreadPanel({
+  channelId,
+  variant = 'pane',
+}: {
+  channelId: string | null
+  variant?: 'pane' | 'screen'
+}) {
   const postId = useUi((s) => s.threadPostId)
   const targetReplyId = useUi((s) => s.targetThreadReplyId)
   const canMutate = useUi((s) => s.canMutate)
@@ -48,6 +55,8 @@ export function ThreadPanel({ channelId }: { channelId: string | null }) {
     resize.value.set(useUi.getState().threadWidth)
   }
 
+  const fullScreen = variant === 'screen'
+
   if (!postId) return null
 
   return (
@@ -56,9 +65,13 @@ export function ThreadPanel({ channelId }: { channelId: string | null }) {
       animate={{ opacity: 1, x: 0 }}
       exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, x: 24 }}
       transition={shouldReduceMotion ? { duration: 0.14, ease: 'easeOut' } : springPresets.sheet}
-      className="relative z-20 mt-12 flex shrink-0"
-      style={{ width: resize.value }}
+      className={cn(
+        'relative z-20 flex',
+        fullScreen ? 'min-h-0 min-w-0 flex-1 flex-col' : 'mt-12 shrink-0',
+      )}
+      style={fullScreen ? undefined : { width: resize.value }}
     >
+      {fullScreen ? null : (
       <div
         role="separator"
         aria-orientation="vertical"
@@ -81,10 +94,12 @@ export function ThreadPanel({ channelId }: { channelId: string | null }) {
           event.preventDefault()
         }}
       />
+      )}
       <aside
         className="material-regular flex min-w-0 flex-1 flex-col overflow-hidden"
         data-testid="thread-panel"
       >
+        {fullScreen ? null : (
         <header className="flex items-center justify-between border-b border-border px-3 py-2">
           <h2 className="text-title font-semibold">スレッド</h2>
           <Button
@@ -99,7 +114,8 @@ export function ThreadPanel({ channelId }: { channelId: string | null }) {
             <X className="size-4" />
           </Button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        )}
+        <div className={cn('min-h-0 flex-1 overflow-y-auto p-3', fullScreen && 'shell-content-pad')}>
           {isLoading ? <p className="text-body text-muted-foreground">読み込み中…</p> : null}
           {data?.root.deleted ? (
             <p className="rounded-lg bg-muted p-3 text-body text-muted-foreground">このポストは削除されました</p>

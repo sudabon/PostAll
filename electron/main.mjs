@@ -139,8 +139,8 @@ function createWindow() {
 
   mainWindow = new BrowserWindow({
     ...bounds,
-    minWidth: 800,
-    minHeight: 600,
+    minWidth: 360,
+    minHeight: 500,
     title: 'PostAll',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

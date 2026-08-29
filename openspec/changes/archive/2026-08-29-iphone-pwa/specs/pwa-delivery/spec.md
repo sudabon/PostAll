@@ -1,8 +1,5 @@
-# pwa-delivery Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change slack-style-memo-app. Update Purpose after archive.
-## Requirements
 ### Requirement: ブラウザからの利用
 システムは、Electron デスクトップアプリと同一のフロントエンドを、ブラウザからも利用できる形で配信しなければならない (SHALL)。ブラウザで利用する場合も、チャネル・タイムライン・投稿・スレッド・リアクション・検索の各機能が利用できなければならない (SHALL)。
 
@@ -33,53 +30,7 @@ TBD - created by archiving change slack-style-memo-app. Update Purpose after arc
 - **WHEN** ユーザーが iOS Safari の共有メニューからアプリをホーム画面に追加する
 - **THEN** システムはスタンドアロン表示に必要なメタデータ（Web App Manifest、apple-mobile-web-app 系メタ、apple-touch-icon）を提供し、追加したアイコンからブラウザクローム無しで起動できる
 
-### Requirement: アプリシェルのキャッシュ
-システムは、Service Worker によりアプリシェル（HTML / JavaScript / CSS / アイコン）をキャッシュし、再訪時の初期表示を高速化しなければならない (SHALL)。
-
-#### Scenario: 2 回目以降の起動
-- **WHEN** 一度読み込んだ後にユーザーが再度アプリを開く
-- **THEN** システムはキャッシュ済みのアプリシェルから起動し、ネットワークの応答を待たずに画面の骨格を表示する
-
-#### Scenario: 新しいバージョンを配信する
-- **WHEN** サーバ上のアプリシェルが更新される
-- **THEN** システムは新しいバージョンを取得し、ユーザーに更新が利用可能であることを示すか、次回起動時に適用する
-
-#### Scenario: 古いキャッシュを残さない
-- **WHEN** 新しいバージョンが適用される
-- **THEN** システムは古いバージョンのキャッシュを破棄し、新旧が混在した状態で動作しない
-
-### Requirement: データはキャッシュしない
-システムは、オンライン動作を前提とするため、チャネル・ポスト・添付の内容を Service Worker で永続的にキャッシュしてはならない (MUST NOT)。
-
-#### Scenario: オフラインで開く
-- **WHEN** ネットワークが利用できない状態でインストール済みの PWA を起動する
-- **THEN** システムはアプリシェルを表示したうえで、接続できないことを明示し、古いデータを最新であるかのように表示しない
-
-### Requirement: プラットフォーム能力のフォールバック
-システムは、Electron でのみ利用できる機能について、ブラウザでは同等のブラウザ API へフォールバックするか、当該機能の導線を隠さなければならない (SHALL)。ブラウザで利用できない機能の呼び出しによって実行時エラーを起こしてはならない (MUST NOT)。
-
-#### Scenario: ファイル選択
-- **WHEN** ブラウザでユーザーが添付のファイル選択を行う
-- **THEN** システムはブラウザ標準のファイル選択を用いて添付を追加する
-
-#### Scenario: 添付のダウンロード
-- **WHEN** ブラウザでユーザーが添付のダウンロードを実行する
-- **THEN** システムはブラウザのダウンロード機能を用いてファイルを保存する
-
-#### Scenario: 利用できない機能の導線を隠す
-- **WHEN** ブラウザで、グローバルショートカットのようにブラウザに存在しない機能がある
-- **THEN** システムは当該機能の設定項目や操作導線を表示しない
-
-#### Scenario: ネイティブ専用 API を呼ばない
-- **WHEN** ブラウザでアプリのいずれかの画面を操作する
-- **THEN** システムは Electron 固有の API を呼び出さず、実行時エラーを発生させない
-
-### Requirement: セキュアコンテキストでの配信
-システムは、PWA を HTTPS で配信しなければならない (SHALL)。
-
-#### Scenario: HTTP でアクセスされる
-- **WHEN** ユーザーが HTTP でアプリの URL へアクセスする
-- **THEN** システムは HTTPS へリダイレクトする
+## ADDED Requirements
 
 ### Requirement: スタンドアロンでのサインイン導線
 システムは、iOS のスタンドアロン PWA と Safari タブでストレージが隔離されることを前提に、今開いているコンテキストの中でサインインを完了させなければならない (SHALL)。
@@ -91,4 +42,3 @@ TBD - created by archiving change slack-style-memo-app. Update Purpose after arc
 #### Scenario: ストレージ隔離をサインイン前に伝える
 - **WHEN** ホーム画面から起動した未サインインの PWA がサインイン画面を表示する
 - **THEN** システムは、認可の途中で別のブラウザが開いた場合はそちらで使い続けるか、ホーム画面アプリに戻って再度サインインする旨を示す
-

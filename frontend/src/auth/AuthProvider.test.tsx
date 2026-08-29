@@ -88,4 +88,23 @@ describe('AuthProvider callback failures', () => {
     expect(await screen.findByTestId('auth-error')).toHaveTextContent('Signups not allowed for this instance')
     expect(window.location.search).toBe('')
   })
+
+  it('does not restore the OAuth callback URL after replaceState', async () => {
+    mocks.exchangeCode.mockResolvedValue({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      expiresAt: Date.now() + 60_000,
+    })
+    window.history.pushState({ postallNarrow: 'channels' }, '', '/')
+    window.history.pushState({}, '', '/auth/callback?code=authorization-code')
+
+    renderApp(await adapterWithVerifier())
+
+    expect(await screen.findByTestId('channel-tree')).toBeTruthy()
+    expect(window.location.pathname).toBe('/')
+    expect(window.location.search).toBe('')
+    window.history.back()
+    expect(window.location.pathname).toBe('/')
+    expect(window.location.search).not.toContain('code=')
+  })
 })

@@ -2,7 +2,7 @@
 
 Slack 風のポスト型メモ管理アプリケーション。チャネルへ放り込むだけで時系列に積み上がり、後から階層で束ね直せる。
 
-macOS（Electron）、ブラウザ（PWA）、iOS（Flutter）の 3 経路から、同じ Vercel 上の Go API / Supabase（PostgreSQL + Auth + Storage）を参照する。
+macOS（Electron）、ブラウザ（PWA。iPhone の常用は Safari またはホーム画面への追加）、iOS ネイティブ（Flutter。有償の Apple Developer Program がある場合の選択肢）の 3 経路から、同じ Vercel 上の Go API / Supabase（PostgreSQL + Auth + Storage）を参照する。
 
 ## リポジトリ構成
 
@@ -18,7 +18,7 @@ PostAll/
 └── openspec/     # 仕様と change
 ```
 
-手元の Mac / iPhone へアプリとして入れる手順は [INSTALL.md](INSTALL.md) にある。
+手元の Mac へデスクトップアプリを入れる手順、および iPhone で PWA または Flutter 開発ビルドを使う手順は [INSTALL.md](INSTALL.md) にある。iPhone の常用経路は Safari / ホーム画面の PWA で、Flutter は有償署名向けの選択肢として残している。
 
 ## 前提
 

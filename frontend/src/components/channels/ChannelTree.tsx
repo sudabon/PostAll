@@ -1,7 +1,7 @@
 import {
   DndContext,
   MouseSensor,
-  PointerSensor,
+  TouchSensor,
   useDraggable,
   useDroppable,
   useSensor,
@@ -18,6 +18,8 @@ import { useChannelMutations, useChannels, errorMessage } from '@/hooks/useChann
 import { useUi } from '@/state/ui'
 import { cn } from '@/lib/utils'
 import { usePressable } from '@/lib/motion/usePressable'
+import { useWideViewport } from '@/hooks/useWideViewport'
+import { channelTreeSensorConstraints } from '@/components/channels/dndSensors'
 
 type Intent = 'before' | 'after' | 'child' | null
 
@@ -32,9 +34,11 @@ export function ChannelTree() {
   const [notice, setNotice] = useState<string | null>(null)
   const [overId, setOverId] = useState<string | null>(null)
   const [intent, setIntent] = useState<Intent>(null)
+  const wide = useWideViewport()
+  const sensorOptions = channelTreeSensorConstraints(wide)
   const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(MouseSensor, sensorOptions.mouse),
+    useSensor(TouchSensor, sensorOptions.touch),
   )
 
   const forest = useMemo(() => buildForest(data), [data])
@@ -137,7 +141,7 @@ export function ChannelTree() {
           onCancel={() => useUi.setState({ creating: null })}
         />
       ) : null}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-h-0 flex-1 overflow-auto shell-list-bottom">
         <DndContext sensors={sensors} onDragOver={onDragOver} onDragEnd={onDragEnd}>
           {rows.map(({ node, depth }) => (
             <TreeRow
@@ -215,7 +219,7 @@ function TreeRow({
       data-testid={`channel-row-${channel.name}`}
       data-depth={depth}
       className={cn(
-        'group mx-1 flex min-w-max items-center gap-1 rounded-lg px-2 py-1 text-body transition-colors hover:bg-accent/70',
+        'group mx-1 flex min-w-0 items-center gap-1 rounded-lg px-2 py-1 text-body transition-colors hover:bg-accent/70',
         selected && 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90',
         isPressed && (selected ? 'bg-primary/80' : 'bg-accent'),
         isOver && dropIntent === 'child' && 'bg-primary/10',

@@ -1,18 +1,32 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AnimatePresence, animate, m } from 'motion/react'
-import { ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { ChevronLeft, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { ChannelTree } from '@/components/channels/ChannelTree'
 import { Timeline } from '@/components/timeline/Timeline'
 import { ThreadPanel } from '@/components/thread/ThreadPanel'
 import { BrowserChrome } from '@/components/layout/BrowserChrome'
 import { useChannels } from '@/hooks/useChannels'
-import { useUi } from '@/state/ui'
+import { seedNarrowHistory, useUi, watchNarrowHistory } from '@/state/ui'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useDragValue } from '@/lib/motion/useDragValue'
 import { springPresets } from '@/lib/motion/springs'
+import { useWideViewport } from '@/hooks/useWideViewport'
+import { useVisualViewportInset } from '@/hooks/useVisualViewportInset'
 
 export function AppShell() {
+  const wide = useWideViewport()
+  useVisualViewportInset()
+
+  useEffect(() => watchNarrowHistory(), [])
+  useEffect(() => {
+    seedNarrowHistory()
+  }, [wide])
+
+  return wide ? <WideShell /> : <NarrowShell />
+}
+
+function WideShell() {
   const collapsed = useUi((s) => s.sidebarCollapsed)
   const width = useUi((s) => s.sidebarWidth)
   const selected = useUi((s) => s.selectedChannelId)
@@ -51,7 +65,7 @@ export function AppShell() {
   }
 
   return (
-    <div className="flex h-dvh min-w-[800px] bg-background text-foreground">
+    <div className="flex h-dvh min-w-0 bg-background text-foreground">
       <m.aside
         className="material-thick relative z-20 flex shrink-0 flex-col overflow-hidden shadow-md"
         style={{ width: sidebar.value }}
@@ -59,7 +73,7 @@ export function AppShell() {
         inert={collapsed}
         data-testid="sidebar"
       >
-        <div className="h-full min-w-48">
+        <div className="h-full min-w-0">
           <ChannelTree />
         </div>
       </m.aside>
@@ -93,7 +107,7 @@ export function AppShell() {
       <div className="relative flex min-w-0 flex-1 flex-col">
         <header
           className={cn(
-            'material-thin absolute inset-x-0 top-0 z-30 flex h-12 items-center gap-2 px-3 shadow-sm transition-[background-color,box-shadow,backdrop-filter]',
+            'material-thin shell-header absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-3 shadow-sm transition-[background-color,box-shadow,backdrop-filter]',
             isContentUnderChrome && 'material-regular shadow-md',
           )}
         >
@@ -137,13 +151,77 @@ export function AppShell() {
   )
 }
 
+function NarrowShell() {
+  const screen = useUi((s) => s.narrowScreen)
+  const selected = useUi((s) => s.selectedChannelId)
+  const [isContentUnderChrome, setContentUnderChrome] = useState(false)
+
+  return (
+    <div
+      className="relative flex h-dvh min-w-0 w-full flex-col overflow-x-hidden bg-background text-foreground"
+      data-testid="narrow-shell"
+    >
+      <header
+        className={cn(
+          'material-thin shell-header absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-3 shadow-sm transition-[background-color,box-shadow,backdrop-filter]',
+          isContentUnderChrome && 'material-regular shadow-md',
+        )}
+      >
+        {screen !== 'channels' ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            aria-label="戻る"
+            title="戻る"
+            data-testid="narrow-back"
+            onClick={() => useUi.getState().backNarrow()}
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+        ) : null}
+        {screen === 'channels' ? (
+          <span
+            className="pointer-events-none select-none font-script text-brand font-semibold tracking-normal"
+            data-testid="app-brand"
+          >
+            PostAll
+          </span>
+        ) : (
+          <ChannelTitle />
+        )}
+        <BrowserChrome />
+        <span
+          aria-hidden="true"
+          className={cn(
+            'scroll-edge-mask pointer-events-none absolute inset-x-0 top-full h-4 opacity-0 transition-opacity',
+            isContentUnderChrome && 'opacity-100',
+          )}
+        />
+      </header>
+      <div className="flex min-h-0 min-w-0 flex-1">
+        {screen === 'channels' ? (
+          <div className="shell-content-pad flex min-h-0 min-w-0 flex-1 flex-col">
+            <ChannelTree />
+          </div>
+        ) : null}
+        {screen === 'timeline' ? (
+          <Timeline channelId={selected} onScrollEdgeChange={setContentUnderChrome} />
+        ) : null}
+        {screen === 'thread' ? <ThreadPanel channelId={selected} variant="screen" /> : null}
+      </div>
+    </div>
+  )
+}
+
 function ChannelTitle() {
   const id = useUi((s) => s.selectedChannelId)
   const { data = [] } = useChannels()
   const name = data.find((c) => c.id === id)?.name
   if (!name) return null
   return (
-    <h1 className="max-w-[30%] truncate text-title font-semibold" data-testid="channel-title">
+    <h1 className="max-w-[70%] truncate text-title font-semibold md:max-w-[30%]" data-testid="channel-title">
       {`# ${name}`}
     </h1>
   )

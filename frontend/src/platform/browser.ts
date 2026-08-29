@@ -12,7 +12,7 @@ const caps: Record<Capability, boolean> = {
 
 const secrets = new Map<string, string>()
 
-function sessionSecretKey(key: string) {
+function secretKey(key: string) {
   return `postall:secret:${key}`
 }
 
@@ -41,7 +41,7 @@ export function createBrowserAdapter(): PlatformAdapter {
       const mem = secrets.get(key)
       if (mem != null) return mem
       try {
-        return sessionStorage.getItem(sessionSecretKey(key))
+        return localStorage.getItem(secretKey(key))
       } catch {
         return null
       }
@@ -49,7 +49,7 @@ export function createBrowserAdapter(): PlatformAdapter {
     async setSecret(key, value) {
       secrets.set(key, value)
       try {
-        sessionStorage.setItem(sessionSecretKey(key), value)
+        localStorage.setItem(secretKey(key), value)
       } catch {
         // private mode などではメモリのみ
       }
@@ -57,7 +57,7 @@ export function createBrowserAdapter(): PlatformAdapter {
     async deleteSecret(key) {
       secrets.delete(key)
       try {
-        sessionStorage.removeItem(sessionSecretKey(key))
+        localStorage.removeItem(secretKey(key))
       } catch {
         // ignore
       }
