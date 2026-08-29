@@ -1,5 +1,5 @@
 import { installApiMock, expect, test } from './mock'
-import type { Page } from '@playwright/test'
+import { devices, type Page } from '@playwright/test'
 
 async function dragByMouse(page: Page, sourceTestId: string, targetTestId: string) {
   const source = page.getByTestId(sourceTestId)
@@ -371,6 +371,7 @@ test('wide window keeps posts full width and left aligned with a padded composer
         articleLeft: Math.round(article.getBoundingClientRect().left - scrollerRect.left),
         cardLeft: Math.round(card.getBoundingClientRect().left - form.getBoundingClientRect().left),
         cardRight: Math.round(form.getBoundingClientRect().right - card.getBoundingClientRect().right),
+        cardBottom: Math.round(form.getBoundingClientRect().bottom - card.getBoundingClientRect().bottom),
         // 折り返すと高さが倍になるので、行数はツールバー高 ÷ ボタン行高で見る
         toolbarRows: Math.round(
           card.firstElementChild!.getBoundingClientRect().height /
@@ -384,6 +385,7 @@ test('wide window keeps posts full width and left aligned with a padded composer
   expect(wide.contentInner).toBeGreaterThan(1000)
   expect(wide.cardLeft).toBe(16)
   expect(wide.cardRight).toBe(16)
+  expect(wide.cardBottom).toBe(16)
   expect(wide.cardLeft).toBe(wide.articleLeft)
 
   // 狭幅では書式ツールバーを 1 段に保つため、入力カードは端まで使う。
@@ -393,5 +395,72 @@ test('wide window keeps posts full width and left aligned with a padded composer
   expect(narrow.contentWidth).toBe(narrow.contentInner)
   expect(narrow.cardLeft).toBe(0)
   expect(narrow.cardRight).toBe(0)
+  expect(narrow.cardBottom).toBe(0)
   expect(narrow.toolbarRows).toBe(1)
+})
+
+test('touch devices keep form controls at 16px so iOS does not auto zoom', async ({ browser }, testInfo) => {
+  // iOS は 16px 未満のフォーム部品にユーザー操作でフォーカスするとページを自動拡大し、
+  // 拡大が残ったままリロードするまで横スクロールが消えない。Composer はマウント時に
+  // textarea へ focus() するので、チャネルやスレッドを開くたびに踏んでいた。
+  const context = await browser.newContext({
+    ...devices['Pixel 5'],
+    locale: 'ja-JP',
+    baseURL: testInfo.project.use.baseURL,
+  })
+  const page = await context.newPage()
+  try {
+    const mock = await installApiMock(page)
+    const { posts } = mock.seedChannel('inbox', ['ポスト'])
+    await page.goto('/')
+    await page.getByTestId('channel-inbox').click()
+    await expect(page.getByTestId('timeline')).toBeVisible()
+
+    const timeline = await page.evaluate(() => {
+      const input = document.querySelector('[data-testid="composer-input"]') as HTMLElement
+      return { size: parseFloat(getComputedStyle(input).fontSize), focused: document.activeElement === input }
+    })
+    expect(timeline.focused).toBe(true)
+    expect(timeline.size).toBeGreaterThanOrEqual(16)
+
+    await page.getByTestId(`post-${posts[0]!.id}`).getByText('スレッドで返信').click()
+    await expect(page.getByTestId('thread-panel')).toBeVisible()
+    const sizes = await page.evaluate(() =>
+      [...document.querySelectorAll('input, select, textarea')].map((el) =>
+        parseFloat(getComputedStyle(el).fontSize),
+      ),
+    )
+    expect(sizes.length).toBeGreaterThan(0)
+    expect(Math.min(...sizes)).toBeGreaterThanOrEqual(16)
+  } finally {
+    await context.close()
+  }
+})
+
+test('narrow shell starts on the channel list even when a channel was open', async ({ page }) => {
+  const mock = await installApiMock(page)
+  mock.seedChannel('inbox', ['ポスト'])
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  await page.getByTestId('channel-inbox').click()
+  await expect(page.getByTestId('timeline')).toBeVisible()
+
+  // リロードしてもチャネル一覧から始まる（選択自体は保持される）
+  await page.reload()
+  await expect(page.getByTestId('channel-tree')).toBeVisible()
+  await expect(page.getByTestId('timeline')).toHaveCount(0)
+
+  // 履歴 state も一覧に揃うので、開き直したあとの「戻る」が一覧に帰ってくる
+  await page.getByTestId('channel-inbox').click()
+  await expect(page.getByTestId('timeline')).toBeVisible()
+  await page.getByTestId('narrow-back').click()
+  await expect(page.getByTestId('channel-tree')).toBeVisible()
+
+  // 広幅はサイドバーに一覧が常時見えているので、前回のチャネルを開いたままにする
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.getByTestId('channel-inbox').click()
+  await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
+  await page.reload()
+  await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
+  await expect(page.getByTestId('timeline')).toBeVisible()
 })

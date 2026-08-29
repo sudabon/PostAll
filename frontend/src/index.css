@@ -257,6 +257,7 @@
     .shell-composer {
       padding-left: calc(var(--safe-left) + 1rem);
       padding-right: calc(var(--safe-right) + 1rem);
+      padding-bottom: calc(var(--safe-bottom) + var(--keyboard-inset) + 1rem);
     }
   }
 }
@@ -336,6 +337,25 @@
     --material-thin-filter: none;
     --material-regular-filter: none;
     --material-thick-filter: none;
+  }
+}
+
+/*
+  iOS は font-size が 16px 未満のフォーム部品にユーザー操作でフォーカスすると
+  ページを自動拡大する。拡大するとビジュアルビューポートがレイアウトビューポートより
+  狭くなり、横スクロールが残ったままリロードするまで戻らない。
+  Composer はマウント時に textarea へ focus() するため、チャネルやスレッドを
+  開くたびにこれが起きていた（リロード時はユーザー操作を伴わないので拡大しない）。
+  viewport の maximum-scale=1 で抑止するとピンチズームを奪う（WCAG 1.4.4）ため、
+  タッチ環境に限ってフォーム部品を 16px 以上にする。
+  Tailwind の text-* は utilities レイヤーにあり base より強いので、
+  レイヤー外に置いて確実に上書きする。
+*/
+@media (hover: none) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(1rem, 1em);
   }
 }
 
