@@ -48,7 +48,8 @@ test('sign-in workspace post thread dnd and restore', async ({ page }) => {
   await expect(page.getByTestId('channel-tree')).toBeVisible()
   await expect(page.getByTestId('channel-other')).toBeVisible()
   await expect(page.getByTestId('channel-inbox')).toBeVisible()
-  await expect(page.getByTestId('channel-title')).toHaveText('# other')
+  // 起動時はチャネル未選択（一覧から始める）
+  await expect(page.getByTestId('channel-title')).toHaveCount(0)
   await page.getByTestId('channel-inbox').click()
   await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
   await expect(page.getByText('hello memo')).toBeVisible()
@@ -399,7 +400,14 @@ test('wide window keeps posts full width and left aligned with a padded composer
   expect(narrow.toolbarRows).toBe(1)
 })
 
-test('touch devices keep form controls at 16px so iOS does not auto zoom', async ({ browser }, testInfo) => {
+test('touch devices keep the soft keyboard out of the way of the composer', async ({ page, browser }, testInfo) => {
+  // デスクトップは従来どおりマウント時にコンポーザへフォーカスする
+  const desktopMock = await installApiMock(page)
+  desktopMock.seedChannel('inbox', ['ポスト'])
+  await page.goto('/')
+  await page.getByTestId('channel-inbox').click()
+  await expect(page.getByTestId('composer-input')).toBeFocused()
+
   // iOS は 16px 未満のフォーム部品にユーザー操作でフォーカスするとページを自動拡大し、
   // 拡大が残ったままリロードするまで横スクロールが消えない。Composer はマウント時に
   // textarea へ focus() するので、チャネルやスレッドを開くたびに踏んでいた。
@@ -408,24 +416,28 @@ test('touch devices keep form controls at 16px so iOS does not auto zoom', async
     locale: 'ja-JP',
     baseURL: testInfo.project.use.baseURL,
   })
-  const page = await context.newPage()
+  const touch = await context.newPage()
   try {
-    const mock = await installApiMock(page)
+    const mock = await installApiMock(touch)
     const { posts } = mock.seedChannel('inbox', ['ポスト'])
-    await page.goto('/')
-    await page.getByTestId('channel-inbox').click()
-    await expect(page.getByTestId('timeline')).toBeVisible()
+    await touch.goto('/')
+    await touch.getByTestId('channel-inbox').click()
+    await expect(touch.getByTestId('timeline')).toBeVisible()
 
-    const timeline = await page.evaluate(() => {
+    const timeline = await touch.evaluate(() => {
       const input = document.querySelector('[data-testid="composer-input"]') as HTMLElement
       return { size: parseFloat(getComputedStyle(input).fontSize), focused: document.activeElement === input }
     })
-    expect(timeline.focused).toBe(true)
+    // 自動フォーカスするとソフトキーボードがタイムラインを覆い、
+    // 最初のタップがキーボードを閉じるだけで消費されてしまう
+    expect(timeline.focused).toBe(false)
+    // 16px 未満だと iOS がフォーカス時にページを自動拡大し、横スクロールが残る
     expect(timeline.size).toBeGreaterThanOrEqual(16)
 
-    await page.getByTestId(`post-${posts[0]!.id}`).getByText('スレッドで返信').click()
-    await expect(page.getByTestId('thread-panel')).toBeVisible()
-    const sizes = await page.evaluate(() =>
+    // キーボードが出ていないので「スレッドで返信」のタップが一度で通る
+    await touch.getByTestId(`post-${posts[0]!.id}`).getByText('スレッドで返信').tap()
+    await expect(touch.getByTestId('thread-panel')).toBeVisible()
+    const sizes = await touch.evaluate(() =>
       [...document.querySelectorAll('input, select, textarea')].map((el) =>
         parseFloat(getComputedStyle(el).fontSize),
       ),
@@ -437,7 +449,7 @@ test('touch devices keep form controls at 16px so iOS does not auto zoom', async
   }
 })
 
-test('narrow shell starts on the channel list even when a channel was open', async ({ page }) => {
+test('every device starts on the channel list even when a channel was open', async ({ page }) => {
   const mock = await installApiMock(page)
   mock.seedChannel('inbox', ['ポスト'])
   await page.setViewportSize({ width: 390, height: 844 })
@@ -456,11 +468,12 @@ test('narrow shell starts on the channel list even when a channel was open', asy
   await page.getByTestId('narrow-back').click()
   await expect(page.getByTestId('channel-tree')).toBeVisible()
 
-  // 広幅はサイドバーに一覧が常時見えているので、前回のチャネルを開いたままにする
+  // 広幅でもリロード後はチャネル未選択で、サイドバーの一覧だけが見えている
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.getByTestId('channel-inbox').click()
   await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
   await page.reload()
-  await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
-  await expect(page.getByTestId('timeline')).toBeVisible()
+  await expect(page.getByTestId('channel-tree')).toBeVisible()
+  await expect(page.getByTestId('channel-title')).toHaveCount(0)
+  await expect(page.getByText('チャネルが選択されていません')).toBeVisible()
 })

@@ -218,10 +218,10 @@ export function requireMutationConnection() {
   if (!useUi.getState().canMutate) throw new ConnectionUnavailableError()
 }
 
+// selectedChannelId は永続化しない。起動時は全デバイスでチャネル一覧から始める。
 const persistedKeys = [
   'sidebarWidth',
   'sidebarCollapsed',
-  'selectedChannelId',
   'expandedIds',
   'threadWidth',
 ] as const
@@ -247,8 +247,6 @@ export async function loadUi(adapter: PlatformAdapter) {
   if (!raw) return
   const parsed = JSON.parse(raw) as Partial<UiState>
   useUi.getState().hydrate(pickPersisted(parsed))
-  // 起動時は常にチャネル一覧から始める。選択チャネルは復元するので、
-  // サイドバーが常時見えている広幅では前回のチャネルが開いたままになる。
 }
 
 export function watchUi(adapter: PlatformAdapter) {

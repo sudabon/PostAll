@@ -5,6 +5,7 @@ import { useUi } from '@/state/ui'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { isInsideUnclosedFence } from '@/lib/fence'
+import { isTouchDevice } from '@/lib/viewport'
 import { applyFormat, type FormatAction } from '@/lib/markdown-format'
 import { FormatToolbar } from './FormatToolbar'
 import { ACCEPT_ATTR, checkAttachment, formatBytes, inferMime, isImageType } from '@/lib/attachments'
@@ -43,6 +44,7 @@ export function Composer({
   const draftsRef = useRef<DraftFile[]>([])
   const [dragging, setDragging] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
+  const lastEpoch = useRef<number | null>(null)
   const [loaded, setLoaded] = useState(false)
 
   const replaceDrafts = (next: DraftFile[]) => {
@@ -74,6 +76,16 @@ export function Composer({
   useEffect(() => {
     const el = area.current
     if (!el) return
+    // タッチ端末ではマウント時に自動フォーカスしない。ソフトキーボードが立ち上がって
+    // タイムラインを覆い、最初のタップがキーボードを閉じるだけで消費されてしまう
+    // （「スレッドで返信」を押しても何も起きないように見える）。
+    // メニューや Cmd+L による明示的なフォーカス（epoch 更新）は従来どおり効かせる。
+    // epoch が実際に変わったときだけ「明示的なフォーカス要求」とみなす。
+    // 初回マウント時の実行（StrictMode の二重実行を含む）は epoch が動かないので
+    // タッチ端末では何もしない。
+    const requested = lastEpoch.current !== null && lastEpoch.current !== epoch
+    lastEpoch.current = epoch
+    if (!requested && isTouchDevice()) return
     el.focus()
     el.selectionStart = el.value.length
   }, [epoch])

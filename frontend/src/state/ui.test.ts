@@ -136,7 +136,7 @@ describe('narrow screen', () => {
     stop()
   })
 
-  it('restores the saved channel but still starts on the channel list', async () => {
+  it('starts on the channel list with no channel selected', async () => {
     useUi.getState().hydrate({ selectedChannelId: null, narrowScreen: 'channels' })
     const adapter = createFakeAdapter()
     await adapter.setItem(
@@ -152,8 +152,19 @@ describe('narrow screen', () => {
 
     await loadUi(adapter)
 
-    expect(useUi.getState().selectedChannelId).toBe(channelA)
+    // 選択チャネルは保存も復元もしないので、広幅でも一覧から始まる
+    expect(useUi.getState().selectedChannelId).toBeNull()
     expect(useUi.getState().narrowScreen).toBe('channels')
+  })
+
+  it('does not persist selectedChannelId', async () => {
+    const adapter = createFakeAdapter()
+    const stop = watchUi(adapter)
+    useUi.getState().selectChannel(channelA)
+    await Promise.resolve()
+    const stored = JSON.parse((await adapter.getItem('ui')) ?? '{}') as Record<string, unknown>
+    expect(stored).not.toHaveProperty('selectedChannelId')
+    stop()
   })
 
   it('keeps the selected channel when going back to the channel list', () => {
