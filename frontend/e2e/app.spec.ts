@@ -27,13 +27,13 @@ test('sign-in workspace post thread dnd and restore', async ({ page }) => {
   await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
 
   await page.getByTestId('composer-input').fill('hello memo')
-  await page.getByTestId('composer-input').press('Enter')
+  await page.getByTestId('composer-input').press('Shift+Enter')
   await expect(page.getByText('hello memo')).toBeVisible()
 
   await page.getByText('スレッドで返信').click()
   await expect(page.getByTestId('thread-panel')).toBeVisible()
   await page.getByTestId('thread-composer').locator('[data-testid="composer-input"]').fill('thread reply')
-  await page.getByTestId('thread-composer').locator('[data-testid="composer-input"]').press('Enter')
+  await page.getByTestId('thread-composer').locator('[data-testid="composer-input"]').press('Shift+Enter')
   await expect(page.getByText('thread reply')).toBeVisible()
 
   await page.getByTestId('new-channel-button').click()
@@ -63,7 +63,7 @@ test('emoji reactions filter, roll back, toggle, and work in replies', async ({ 
   await page.getByTestId('channel-name-input').press('Enter')
   await page.getByTestId('channel-reactions').click()
   await page.getByTestId('composer-input').fill('emoji memo')
-  await page.getByTestId('composer-input').press('Enter')
+  await page.getByTestId('composer-input').press('Shift+Enter')
 
   const post = page.locator('article').filter({ hasText: 'emoji memo' })
   const reactionTrigger = post.getByRole('button', { name: 'リアクションを追加' })
@@ -96,7 +96,7 @@ test('emoji reactions filter, roll back, toggle, and work in replies', async ({ 
   await post.getByRole('button', { name: 'スレッドで返信' }).click()
   const panel = page.getByTestId('thread-panel')
   await panel.getByTestId('composer-input').fill('reply reaction')
-  await panel.getByTestId('composer-input').press('Enter')
+  await panel.getByTestId('composer-input').press('Shift+Enter')
   const reply = panel.locator('article').filter({ hasText: 'reply reaction' })
   await reply.getByRole('button', { name: 'リアクションを追加' }).click()
   await page.getByRole('dialog', { name: 'リアクションを追加' }).getByRole('button', { name: ':shipit:' }).click()
@@ -112,13 +112,13 @@ test('edits and deletes a thread reply and refreshes the root reply count', asyn
   await page.getByTestId('channel-name-input').press('Enter')
   await page.getByTestId('channel-reply-actions').click()
   await page.getByTestId('composer-input').fill('root memo')
-  await page.getByTestId('composer-input').press('Enter')
+  await page.getByTestId('composer-input').press('Shift+Enter')
 
   const root = page.getByTestId('timeline').locator('article').filter({ hasText: 'root memo' })
   await root.getByRole('button', { name: 'スレッドで返信' }).click()
   const panel = page.getByTestId('thread-panel')
   await panel.getByTestId('composer-input').fill('reply before edit')
-  await panel.getByTestId('composer-input').press('Enter')
+  await panel.getByTestId('composer-input').press('Shift+Enter')
   await expect(root.getByRole('button', { name: /1 件の返信/ })).toBeVisible()
 
   let reply = panel.locator('article').filter({ hasText: 'reply before edit' })
@@ -196,6 +196,70 @@ test('blocks mutations offline, preserves a draft, and refreshes missed posts af
   await expect(page.getByTestId('connection-error')).toHaveCount(0)
   await expect(composer).toHaveValue('切断中も残る下書き')
   await expect(page.getByRole('button', { name: '送信' })).toBeEnabled()
-  await composer.press('Enter')
+  await composer.press('Shift+Enter')
   await expect(page.getByText('切断中も残る下書き')).toBeVisible()
+})
+
+test('app shell fits a small window without document scrolling', async ({ page }) => {
+  await installApiMock(page)
+  await page.setViewportSize({ width: 900, height: 520 })
+  await page.goto('/')
+  await page.getByTestId('new-channel-button').click()
+  await page.getByTestId('channel-name-input').fill('inbox')
+  await page.getByTestId('channel-name-input').press('Enter')
+  await page.getByTestId('channel-inbox').click()
+  await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
+
+  const fit = await page.evaluate(() => ({
+    docHeight: document.documentElement.scrollHeight,
+    innerHeight: window.innerHeight,
+  }))
+  expect(fit.docHeight).toBeLessThanOrEqual(fit.innerHeight)
+  await expect(page.getByTestId('composer-input')).toBeInViewport()
+})
+
+test('keeps the newest post in view after posting', async ({ page }) => {
+  await installApiMock(page)
+  await page.setViewportSize({ width: 1000, height: 700 })
+  await page.goto('/')
+  await page.getByTestId('new-channel-button').click()
+  await page.getByTestId('channel-name-input').fill('inbox')
+  await page.getByTestId('channel-name-input').press('Enter')
+  await page.getByTestId('channel-inbox').click()
+  await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
+
+  const composer = page.getByTestId('composer-input')
+  const long = 'あ'.repeat(400)
+  for (let i = 0; i < 8; i++) {
+    await composer.fill(`長文ポスト${i} ${long}`)
+    await composer.press('Shift+Enter')
+    await expect(page.getByText(`長文ポスト${i} `)).toBeVisible()
+  }
+
+  const timeline = page.getByTestId('timeline')
+  await expect
+    .poll(() => timeline.evaluate((el) => el.scrollHeight - el.clientHeight - Math.round(el.scrollTop)))
+    .toBeLessThanOrEqual(1)
+  await expect(timeline.locator('article').last()).toBeInViewport({ ratio: 1 })
+})
+
+test('Enter inserts a newline and Shift+Enter sends it as a line break', async ({ page }) => {
+  await installApiMock(page)
+  await page.goto('/')
+  await page.getByTestId('new-channel-button').click()
+  await page.getByTestId('channel-name-input').fill('inbox')
+  await page.getByTestId('channel-name-input').press('Enter')
+  await page.getByTestId('channel-inbox').click()
+
+  const composer = page.getByTestId('composer-input')
+  await composer.fill('1行目')
+  await composer.press('Enter')
+  await composer.type('2行目')
+  await expect(composer).toHaveValue('1行目\n2行目')
+
+  await composer.press('Shift+Enter')
+  await expect(composer).toHaveValue('')
+  const body = page.getByTestId('markdown-body').first()
+  await expect(body).toContainText('1行目')
+  expect(await body.locator('br').count()).toBe(1)
 })

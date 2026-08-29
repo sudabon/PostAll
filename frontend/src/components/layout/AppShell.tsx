@@ -51,7 +51,7 @@ export function AppShell() {
   }
 
   return (
-    <div className="flex h-screen min-h-[600px] min-w-[800px] bg-background text-foreground">
+    <div className="flex h-dvh min-w-[800px] bg-background text-foreground">
       <m.aside
         className="material-thick relative z-20 flex shrink-0 flex-col overflow-hidden shadow-md"
         style={{ width: sidebar.value }}
