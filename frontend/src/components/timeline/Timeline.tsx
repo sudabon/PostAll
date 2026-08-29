@@ -7,6 +7,7 @@ import { useAuth } from '@/auth/AuthProvider'
 import { Composer } from '@/components/composer/Composer'
 import { PostActions } from '@/components/post/PostActions'
 import { PostBody } from '@/components/post/PostBody'
+import { PostEditor } from '@/components/post/PostEditor'
 import { ReactionBar } from '@/components/reactions/ReactionBar'
 import { uploadPickedFile } from '@/lib/upload'
 import { cn } from '@/lib/utils'
@@ -18,6 +19,16 @@ const bottomThreshold = 32
 function pinToBottom(el: HTMLElement, measuredHeight: { current: number }) {
   el.scrollTop = el.scrollHeight
   measuredHeight.current = el.scrollHeight
+}
+
+/**
+ * 編集フォームがタイムライン上に開いているか。行の存在まで見るので、対象が取得結果から
+ * 消えて編集状態だけが残っても追従は止まらないし、スレッド側の返信の編集で
+ * タイムラインが固まることもない。
+ */
+function isEditingInTimeline() {
+  const id = useUi.getState().editingPostId
+  return id !== null && document.getElementById(`post-${id}`) !== null
 }
 
 export function Timeline({
@@ -65,6 +76,12 @@ export function Timeline({
     const content = contentRef.current
     if (!el || !content || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
+      // 編集中は追従しない。フォームの高さが変わるたびに編集箇所が画面外へ送られる。
+      // 副作用の中でしか要る判断ではないので購読せず getState で読む。
+      if (isEditingInTimeline()) {
+        measuredHeight.current = el.scrollHeight
+        return
+      }
       if (pinnedToBottom.current) pinToBottom(el, measuredHeight)
       else measuredHeight.current = el.scrollHeight
     })
@@ -88,8 +105,9 @@ export function Timeline({
   const onScroll = () => {
     const el = scroller.current
     if (!el) return
-    // 本文が伸びた直後のスクロールイベントは利用者の操作ではないので追従状態を変えない
-    if (el.scrollHeight === measuredHeight.current) {
+    // 本文が伸びた直後のスクロールイベントは利用者の操作ではないので追従状態を変えない。
+    // 編集中は追従状態そのものを触らず、閉じた時点で編集前の値をそのまま使う。
+    if (!isEditingInTimeline() && el.scrollHeight === measuredHeight.current) {
       pinnedToBottom.current = el.scrollHeight - el.clientHeight - el.scrollTop <= bottomThreshold
     }
     measuredHeight.current = el.scrollHeight
@@ -159,7 +177,10 @@ export function Timeline({
                   post={post}
                   highlighted={post.id === targetPostId}
                   mutationDisabled={!canMutate}
-                  onEdit={(body, attachmentIds) => mutations.edit.mutate({ id: post.id, body, attachmentIds })}
+                  onSave={async (body, attachmentIds) => {
+                    await mutations.edit.mutateAsync({ id: post.id, body, attachmentIds })
+                    useUi.getState().setEditingPost(null)
+                  }}
                   onDelete={() => mutations.remove.mutate(post.id)}
                 />
               </div>
@@ -189,15 +210,17 @@ function PostRow({
   post,
   highlighted,
   mutationDisabled,
-  onEdit,
+  onSave,
   onDelete,
 }: {
   post: Post
   highlighted: boolean
   mutationDisabled: boolean
-  onEdit: (body: string, attachmentIds: string[]) => void
+  onSave: (body: string, attachmentIds: string[]) => Promise<void>
   onDelete: () => void
 }) {
+  // 行ごとに真偽値で購読するので、編集の開始・終了で再描画されるのは当該行だけになる
+  const editing = useUi((s) => s.editingPostId === post.id)
   return (
     <article
       id={`post-${post.id}`}
@@ -213,7 +236,11 @@ function PostRow({
         <time>{formatTime(post.createdAt)}</time>
         {post.editedAt ? <span>編集済み</span> : null}
       </header>
-      <PostBody post={post} />
+      {editing ? (
+        <PostEditor post={post} mutationDisabled={mutationDisabled} onSave={onSave} />
+      ) : (
+        <PostBody post={post} />
+      )}
       <ReactionBar postId={post.id} reactions={post.reactions ?? []} />
       {post.replyCount > 0 ? (
         <Button
@@ -241,7 +268,6 @@ function PostRow({
         post={post}
         kind="ポスト"
         mutationDisabled={mutationDisabled}
-        onEdit={onEdit}
         onDelete={onDelete}
       />
     </article>

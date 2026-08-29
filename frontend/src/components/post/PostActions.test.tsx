@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Post } from '@/api/client'
+import { useUi } from '@/state/ui'
 import { MotionTestProvider } from '@/test/motion'
 import { PostActions } from './PostActions'
 
@@ -17,89 +18,80 @@ const post: Post = {
   replyCount: 0,
   lastReplyAt: null,
   reactions: [],
-  attachments: [
-    {
-      id: 'attachment-1',
-      postId: 'post-1',
-      fileName: 'keep.txt',
-      contentType: 'text/plain',
-      sizeBytes: 4,
-      checksum: 'keep',
-      createdAt: '2026-08-26T00:00:00Z',
-    },
-    {
-      id: 'attachment-2',
-      postId: 'post-1',
-      fileName: 'remove.txt',
-      contentType: 'text/plain',
-      sizeBytes: 6,
-      checksum: 'remove',
-      createdAt: '2026-08-26T00:00:00Z',
-    },
-  ],
+  attachments: [],
 }
 
-describe('PostActions', () => {
-  afterEach(cleanup)
-
-  it('edits a reply while removing one existing attachment', () => {
-    const onEdit = vi.fn()
-    render(
-      <PostActions
-        post={post}
-        kind="返信"
-        mutationDisabled={false}
-        onEdit={onEdit}
-        onDelete={vi.fn()}
-      />,
-      { wrapper: MotionTestProvider },
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: /返信を編集/ }))
-    const dialog = screen.getByRole('dialog', { name: '返信を編集' })
-    fireEvent.click(within(dialog).getByRole('checkbox', { name: /remove.txt/ }))
-    fireEvent.change(within(dialog).getByLabelText('本文'), { target: { value: 'edited reply' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
-
-    expect(onEdit).toHaveBeenCalledWith('edited reply', ['attachment-1'])
-  })
-
-  it('uses a native modal and restores focus after Escape', async () => {
-    render(
-      <PostActions
-        post={post}
-        kind="返信"
-        mutationDisabled={false}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-      />,
-      { wrapper: MotionTestProvider },
-    )
-    const trigger = screen.getByRole('button', { name: /返信を編集/ })
-    trigger.focus()
-    fireEvent.click(trigger)
-
-    const dialog = screen.getByRole('dialog', { name: '返信を編集' })
-    expect(dialog.tagName).toBe('DIALOG')
-    fireEvent(dialog, new Event('cancel', { cancelable: true }))
-
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '返信を編集' })).toBeNull())
-    await waitFor(() => expect(trigger).toHaveFocus())
-  })
-
-  it('reveals and reverses the action surface from its row hover state', async () => {
-    render(
+function renderActions(overrides: { onDelete?: () => void; mutationDisabled?: boolean } = {}) {
+  const onDelete = overrides.onDelete ?? vi.fn()
+  return {
+    onDelete,
+    ...render(
       <article className="group" data-testid="post-row">
         <PostActions
           post={post}
           kind="返信"
-          mutationDisabled={false}
-          onEdit={vi.fn()}
-          onDelete={vi.fn()}
+          mutationDisabled={overrides.mutationDisabled ?? false}
+          onDelete={onDelete}
         />
       </article>,
       { wrapper: MotionTestProvider },
-    )
+    ),
+  }
+}
+
+describe('PostActions', () => {
+  beforeEach(() => {
+    useUi.getState().setEditingPost(null)
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('starts editing the post instead of opening a dialog', () => {
+    renderActions()
+
+    fireEvent.click(screen.getByRole('button', { name: /返信を編集/ }))
+
+    expect(useUi.getState().editingPostId).toBe('post-1')
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('does not advertise a dialog on the edit trigger', () => {
+    renderActions()
+    const trigger = screen.getByRole('button', { name: /返信を編集/ })
+
+    expect(trigger).not.toHaveAttribute('aria-haspopup')
+    expect(trigger).not.toHaveAttribute('aria-expanded')
+  })
+
+  it('returns focus to the edit trigger once the edit ends', async () => {
+    renderActions()
+    const trigger = screen.getByRole('button', { name: /返信を編集/ })
+    trigger.focus()
+    fireEvent.click(trigger)
+
+    act(() => useUi.getState().setEditingPost(null))
+
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it('deletes only after the confirmation is accepted', () => {
+    const { onDelete } = renderActions()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    fireEvent.click(screen.getByRole('button', { name: /返信を削除/ }))
+    expect(confirm).toHaveBeenCalledWith('この返信を削除しますか？')
+    expect(onDelete).not.toHaveBeenCalled()
+
+    confirm.mockReturnValue(true)
+    fireEvent.click(screen.getByRole('button', { name: /返信を削除/ }))
+    expect(onDelete).toHaveBeenCalledTimes(1)
+  })
+
+  it('reveals and reverses the action surface from its row hover state', async () => {
+    renderActions()
     const row = screen.getByTestId('post-row')
 
     expect(screen.getByTestId('post-actions')).toHaveAttribute('data-visible', 'false')
