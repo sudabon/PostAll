@@ -344,9 +344,9 @@ test('narrow shell keeps long links and code blocks inside the viewport width', 
     .toBeLessThanOrEqual(0)
 })
 
-test('wide window centers the post column and the composer card at the reading width', async ({ page }) => {
+test('wide window keeps posts full width and left aligned with a padded composer', async ({ page }) => {
   const mock = await installApiMock(page)
-  mock.seedChannel('inbox', ['読み幅の確認用ポスト'])
+  mock.seedChannel('inbox', ['幅の確認用ポスト'])
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/')
   await page.getByTestId('channel-inbox').click()
@@ -354,41 +354,44 @@ test('wide window centers the post column and the composer card at the reading w
 
   const measure = () =>
     page.evaluate(() => {
-      const box = (el: Element) => {
-        const parent = el.parentElement!
-        const r = el.getBoundingClientRect()
-        const pr = parent.getBoundingClientRect()
-        const ps = getComputedStyle(parent)
-        return {
-          width: Math.round(r.width),
-          left: Math.round(r.left - pr.left),
-          right: Math.round(pr.right - r.right),
-          // 親のパディングを除いた「置ける最大幅」。読み幅が効いていなければこれと一致する。
-          parentInner: Math.round(parent.clientWidth - parseFloat(ps.paddingLeft) - parseFloat(ps.paddingRight)),
-        }
-      }
+      const scroller = document.querySelector('[data-testid="timeline"]')!
+      const content = scroller.querySelector(':scope > div:nth-child(2)')!
+      const article = scroller.querySelector('article')!
+      const form = document.querySelector('[data-testid="composer"]')!
+      const card = form.querySelector(':scope > div')!
+      const style = getComputedStyle(scroller)
+      const scrollerRect = scroller.getBoundingClientRect()
       return {
-        // タイムラインは中身だけ絞る（スクローラは全幅のまま）
-        content: box(document.querySelector('[data-testid="timeline"] > div:nth-child(2)')!),
-        // コンポーザは背景バーが全幅、入力カードだけ読み幅
-        card: box(document.querySelector('[data-testid="composer"] > div')!),
-        bar: Math.round(document.querySelector('[data-testid="composer"]')!.getBoundingClientRect().width),
+        // 本文は読み幅で絞らず、スクローラのパディング内いっぱいを左寄せで使う
+        contentWidth: Math.round(content.getBoundingClientRect().width),
+        contentInner: Math.round(
+          scroller.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+        ),
+        // 入力カードの左端はポストの本文ブロックの左端と揃い、右端にも同じ余白が残る
+        articleLeft: Math.round(article.getBoundingClientRect().left - scrollerRect.left),
+        cardLeft: Math.round(card.getBoundingClientRect().left - form.getBoundingClientRect().left),
+        cardRight: Math.round(form.getBoundingClientRect().right - card.getBoundingClientRect().right),
+        // 折り返すと高さが倍になるので、行数はツールバー高 ÷ ボタン行高で見る
+        toolbarRows: Math.round(
+          card.firstElementChild!.getBoundingClientRect().height /
+            card.firstElementChild!.querySelector('button')!.getBoundingClientRect().height,
+        ),
       }
     })
 
   const wide = await measure()
-  expect(wide.content.width).toBe(864)
-  expect(wide.card.width).toBe(864)
-  expect(Math.abs(wide.content.left - wide.content.right)).toBeLessThanOrEqual(1)
-  expect(Math.abs(wide.card.left - wide.card.right)).toBeLessThanOrEqual(1)
-  expect(wide.bar).toBeGreaterThan(1000)
-  expect(wide.content.parentInner).toBeGreaterThan(864)
+  expect(wide.contentWidth).toBe(wide.contentInner)
+  expect(wide.contentInner).toBeGreaterThan(1000)
+  expect(wide.cardLeft).toBe(16)
+  expect(wide.cardRight).toBe(16)
+  expect(wide.cardLeft).toBe(wide.articleLeft)
 
-  // 狭幅では読み幅の上限が効かず、画面幅いっぱいに広がる。
+  // 狭幅では書式ツールバーを 1 段に保つため、入力カードは端まで使う。
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByTestId('narrow-shell')).toBeVisible()
   const narrow = await measure()
-  expect(narrow.content.width).toBe(narrow.content.parentInner)
-  expect(narrow.card.width).toBe(narrow.card.parentInner)
-  expect(narrow.content.width).toBeLessThan(390)
+  expect(narrow.contentWidth).toBe(narrow.contentInner)
+  expect(narrow.cardLeft).toBe(0)
+  expect(narrow.cardRight).toBe(0)
+  expect(narrow.toolbarRows).toBe(1)
 })

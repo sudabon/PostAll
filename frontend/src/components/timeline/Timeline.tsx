@@ -127,8 +127,7 @@ export function Timeline({
         data-testid="timeline"
       >
         <div ref={sentinelRef} className="h-px" aria-hidden="true" />
-        {/* スクロールバーは端に残したいので、幅を絞るのはスクローラではなく中身側。 */}
-        <div ref={contentRef} className="mx-auto w-full max-w-reading">
+        <div ref={contentRef}>
           {timelineAnchorId ? (
             <div className="material-thin mb-3 rounded-lg px-4 py-2 text-center shadow-sm">
               <Button type="button" variant="ghost" size="sm" className="text-primary" onClick={() => useUi.getState().returnToLatest()}>
