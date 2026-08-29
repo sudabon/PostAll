@@ -158,7 +158,7 @@ function NarrowShell() {
 
   return (
     <div
-      className="relative flex h-dvh min-w-0 w-full flex-col overflow-x-hidden bg-background text-foreground"
+      className="relative flex h-dvh min-w-0 w-full flex-col scroll-clip-x bg-background text-foreground"
       data-testid="narrow-shell"
     >
       <header

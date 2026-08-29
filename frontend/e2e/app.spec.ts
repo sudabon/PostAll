@@ -327,13 +327,68 @@ test('narrow shell keeps long links and code blocks inside the viewport width', 
   await page.getByTestId(`post-${posts[0]!.id}`).getByText('スレッドで返信').click()
   await expect(page.getByTestId('thread-panel')).toBeVisible()
   // パネルは右から差し込むので、登場アニメーションが終わってから幅を測る。
+  // スレッドの縦スクローラも横には溢れさせない（コードブロックは自前のスクローラで横スクロールする）。
   await expect
     .poll(() =>
       page.evaluate(() => {
         const shell = document.querySelector('[data-testid="narrow-shell"]')!
         const panel = document.querySelector('[data-testid="thread-panel"]')!
-        return Math.max(shell.scrollWidth - shell.clientWidth, panel.scrollWidth - panel.clientWidth)
+        const scroller = panel.firstElementChild!
+        return Math.max(
+          shell.scrollWidth - shell.clientWidth,
+          panel.scrollWidth - panel.clientWidth,
+          scroller.scrollWidth - scroller.clientWidth,
+        )
       }),
     )
     .toBeLessThanOrEqual(0)
+})
+
+test('wide window centers the post column and the composer card at the reading width', async ({ page }) => {
+  const mock = await installApiMock(page)
+  mock.seedChannel('inbox', ['読み幅の確認用ポスト'])
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+  await page.getByTestId('channel-inbox').click()
+  await expect(page.getByTestId('timeline')).toBeVisible()
+
+  const measure = () =>
+    page.evaluate(() => {
+      const box = (el: Element) => {
+        const parent = el.parentElement!
+        const r = el.getBoundingClientRect()
+        const pr = parent.getBoundingClientRect()
+        const ps = getComputedStyle(parent)
+        return {
+          width: Math.round(r.width),
+          left: Math.round(r.left - pr.left),
+          right: Math.round(pr.right - r.right),
+          // 親のパディングを除いた「置ける最大幅」。読み幅が効いていなければこれと一致する。
+          parentInner: Math.round(parent.clientWidth - parseFloat(ps.paddingLeft) - parseFloat(ps.paddingRight)),
+        }
+      }
+      return {
+        // タイムラインは中身だけ絞る（スクローラは全幅のまま）
+        content: box(document.querySelector('[data-testid="timeline"] > div:nth-child(2)')!),
+        // コンポーザは背景バーが全幅、入力カードだけ読み幅
+        card: box(document.querySelector('[data-testid="composer"] > div')!),
+        bar: Math.round(document.querySelector('[data-testid="composer"]')!.getBoundingClientRect().width),
+      }
+    })
+
+  const wide = await measure()
+  expect(wide.content.width).toBe(864)
+  expect(wide.card.width).toBe(864)
+  expect(Math.abs(wide.content.left - wide.content.right)).toBeLessThanOrEqual(1)
+  expect(Math.abs(wide.card.left - wide.card.right)).toBeLessThanOrEqual(1)
+  expect(wide.bar).toBeGreaterThan(1000)
+  expect(wide.content.parentInner).toBeGreaterThan(864)
+
+  // 狭幅では読み幅の上限が効かず、画面幅いっぱいに広がる。
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByTestId('narrow-shell')).toBeVisible()
+  const narrow = await measure()
+  expect(narrow.content.width).toBe(narrow.content.parentInner)
+  expect(narrow.card.width).toBe(narrow.card.parentInner)
+  expect(narrow.content.width).toBeLessThan(390)
 })
