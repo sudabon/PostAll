@@ -136,7 +136,7 @@ describe('narrow screen', () => {
     stop()
   })
 
-  it('opens timeline on a saved selected channel', async () => {
+  it('restores the saved channel but still starts on the channel list', async () => {
     useUi.getState().hydrate({ selectedChannelId: null, narrowScreen: 'channels' })
     const adapter = createFakeAdapter()
     await adapter.setItem(
@@ -153,7 +153,7 @@ describe('narrow screen', () => {
     await loadUi(adapter)
 
     expect(useUi.getState().selectedChannelId).toBe(channelA)
-    expect(useUi.getState().narrowScreen).toBe('timeline')
+    expect(useUi.getState().narrowScreen).toBe('channels')
   })
 
   it('keeps the selected channel when going back to the channel list', () => {

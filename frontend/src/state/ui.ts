@@ -199,7 +199,9 @@ export function watchNarrowHistory() {
 
 export function seedNarrowHistory() {
   if (isWideViewport()) return
-  if (historyScreen()) return
+  // 履歴 state はリロードをまたいで残る。起動時は必ず現在の画面で上書きしないと、
+  // 一覧を表示しているのに state が 'timeline' のままになり、
+  // pushNarrow が重複とみなして push を省略し、戻るでアプリの外へ出てしまう。
   window.history.replaceState(
     { postallNarrow: useUi.getState().narrowScreen } satisfies NarrowHistoryState,
     '',
@@ -245,9 +247,8 @@ export async function loadUi(adapter: PlatformAdapter) {
   if (!raw) return
   const parsed = JSON.parse(raw) as Partial<UiState>
   useUi.getState().hydrate(pickPersisted(parsed))
-  if (useUi.getState().selectedChannelId) {
-    useUi.setState({ narrowScreen: 'timeline' })
-  }
+  // 起動時は常にチャネル一覧から始める。選択チャネルは復元するので、
+  // サイドバーが常時見えている広幅では前回のチャネルが開いたままになる。
 }
 
 export function watchUi(adapter: PlatformAdapter) {
