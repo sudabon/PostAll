@@ -9,14 +9,21 @@ describe('browser adapter', () => {
     await adapter.deleteSecret('auth.tokens')
   })
 
-  it('persists settings in localStorage but not tokens', async () => {
+  it('persists settings and tokens in localStorage, not sessionStorage', async () => {
     const adapter = createBrowserAdapter()
     await adapter.setItem('settings', '{"theme":"dark"}')
     await adapter.setSecret('auth.tokens', '{"accessToken":"secret"}')
     expect(localStorage.getItem('postall:settings')).toBe('{"theme":"dark"}')
-    expect(Object.keys(localStorage).some((k) => localStorage.getItem(k)?.includes('secret'))).toBe(false)
+    expect(localStorage.getItem('postall:secret:auth.tokens')).toBe('{"accessToken":"secret"}')
+    expect(sessionStorage.getItem('postall:secret:auth.tokens')).toBeNull()
     expect(await adapter.getSecret('auth.tokens')).toBe('{"accessToken":"secret"}')
-    expect(sessionStorage.getItem('postall:secret:auth.tokens')).toBe('{"accessToken":"secret"}')
+  })
+
+  it('restores tokens from localStorage after a new adapter is created', async () => {
+    const first = createBrowserAdapter()
+    await first.setSecret('auth.tokens', '{"refreshToken":"keep"}')
+    const second = createBrowserAdapter()
+    expect(await second.getSecret('auth.tokens')).toBe('{"refreshToken":"keep"}')
   })
 
   it('reports browser capabilities', () => {

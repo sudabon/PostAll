@@ -13,6 +13,21 @@ test.describe('pwa', () => {
     expect(icon.headers()['content-type']).toMatch(/png/)
   })
 
+  test('serves iOS home-screen metadata', async ({ request }) => {
+    const htmlRes = await request.get('/')
+    expect(htmlRes.ok()).toBeTruthy()
+    const html = await htmlRes.text()
+    expect(html).toContain('name="apple-mobile-web-app-capable"')
+    expect(html).toContain('name="mobile-web-app-capable"')
+    expect(html).toContain('name="apple-mobile-web-app-title"')
+    expect(html).toContain('content="black-translucent"')
+    expect(html).toContain('viewport-fit=cover')
+    expect(html).toContain('rel="apple-touch-icon"')
+    const manifestRes = await request.get('/manifest.webmanifest')
+    const manifest = (await manifestRes.json()) as { display: string }
+    expect(manifest.display).toBe('standalone')
+  })
+
   test('service worker does not cache API routes', async ({ request }) => {
     const sw = await request.get('/sw.js')
     expect(sw.ok()).toBeTruthy()
@@ -93,6 +108,15 @@ test.describe('pwa', () => {
     expect(tokenJson.auth_code).toBe('authorization-code')
     expect(tokenJson.code_verifier).toBeTruthy()
     await expect(page.getByTestId('sign-in-button')).toHaveCount(0)
+    await expect(page.getByTestId('channel-tree')).toBeVisible()
+    const stored = await page.evaluate(() => ({
+      local: localStorage.getItem('postall:secret:auth.tokens'),
+      session: sessionStorage.getItem('postall:secret:auth.tokens'),
+    }))
+    expect(stored.local).toBeTruthy()
+    expect(stored.session).toBeNull()
+    await page.evaluate(() => sessionStorage.clear())
+    await page.reload()
     await expect(page.getByTestId('channel-tree')).toBeVisible()
   })
 

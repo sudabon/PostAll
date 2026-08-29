@@ -1,11 +1,16 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SearchResult } from '@/api/client'
 import { createFakeAdapter } from '@/platform'
-import { loadUi, useUi } from './ui'
+import { loadUi, seedNarrowHistory, useUi, watchNarrowHistory, watchUi } from './ui'
+import { WIDE_VIEWPORT_QUERY } from '@/lib/viewport'
+
+const channelA = '44444444-4444-4444-4444-444444444444'
+const channelB = '55555555-5555-5555-5555-555555555555'
+const postId = '22222222-2222-2222-2222-222222222222'
 
 const rootResult: SearchResult = {
-  postId: '22222222-2222-2222-2222-222222222222',
-  timelinePostId: '22222222-2222-2222-2222-222222222222',
+  postId,
+  timelinePostId: postId,
   channelId: '11111111-1111-1111-1111-111111111111',
   channelName: 'メモ',
   threadRootId: null,
@@ -13,7 +18,22 @@ const rootResult: SearchResult = {
   createdAt: '2026-08-23T01:00:00Z',
 }
 
+function mockViewport(wide: boolean) {
+  vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+    matches: query === WIDE_VIEWPORT_QUERY ? wide : false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }))
+}
+
 beforeEach(() => {
+  window.history.replaceState({}, '', '/')
+  mockViewport(false)
   useUi.getState().hydrate({
     selectedChannelId: null,
     threadPostId: null,
@@ -21,7 +41,13 @@ beforeEach(() => {
     timelineAnchorId: null,
     targetPostId: null,
     targetThreadReplyId: null,
+    narrowScreen: 'channels',
   })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  window.history.replaceState({}, '', '/')
 })
 
 describe('search result navigation', () => {
@@ -35,6 +61,7 @@ describe('search result navigation', () => {
       timelineAnchorId: rootResult.timelinePostId,
       targetPostId: rootResult.postId,
       targetThreadReplyId: null,
+      narrowScreen: 'timeline',
     })
   })
 
@@ -54,12 +81,13 @@ describe('search result navigation', () => {
       timelineAnchorId: replyResult.timelinePostId,
       targetPostId: replyResult.timelinePostId,
       targetThreadReplyId: replyResult.postId,
+      narrowScreen: 'thread',
     })
   })
 
   it('clears a search anchor when navigating normally', () => {
     useUi.getState().navigateToSearchResult(rootResult)
-    useUi.getState().selectChannel('44444444-4444-4444-4444-444444444444')
+    useUi.getState().selectChannel(channelA)
 
     expect(useUi.getState()).toMatchObject({
       timelineAnchorId: null,
@@ -93,5 +121,105 @@ describe('thread width', () => {
 
     expect(useUi.getState().sidebarWidth).toBe(300)
     expect(useUi.getState().threadWidth).toBe(384)
+  })
+})
+
+describe('narrow screen', () => {
+  it('does not persist narrowScreen', async () => {
+    const adapter = createFakeAdapter()
+    const stop = watchUi(adapter)
+    useUi.getState().selectChannel(channelA)
+    expect(useUi.getState().narrowScreen).toBe('timeline')
+    await Promise.resolve()
+    const stored = JSON.parse((await adapter.getItem('ui')) ?? '{}') as Record<string, unknown>
+    expect(stored).not.toHaveProperty('narrowScreen')
+    stop()
+  })
+
+  it('opens timeline on a saved selected channel', async () => {
+    useUi.getState().hydrate({ selectedChannelId: null, narrowScreen: 'channels' })
+    const adapter = createFakeAdapter()
+    await adapter.setItem(
+      'ui',
+      JSON.stringify({
+        sidebarWidth: 260,
+        sidebarCollapsed: false,
+        selectedChannelId: channelA,
+        expandedIds: [],
+        threadWidth: 384,
+      }),
+    )
+
+    await loadUi(adapter)
+
+    expect(useUi.getState().selectedChannelId).toBe(channelA)
+    expect(useUi.getState().narrowScreen).toBe('timeline')
+  })
+
+  it('keeps the selected channel when going back to the channel list', () => {
+    const stop = watchNarrowHistory()
+    seedNarrowHistory()
+    useUi.getState().selectChannel(channelA)
+    expect(useUi.getState().narrowScreen).toBe('timeline')
+    useUi.getState().backNarrow()
+    expect(useUi.getState().narrowScreen).toBe('channels')
+    expect(useUi.getState().selectedChannelId).toBe(channelA)
+    stop()
+  })
+
+  it('opens a thread and returns to the timeline', () => {
+    const stop = watchNarrowHistory()
+    seedNarrowHistory()
+    useUi.getState().selectChannel(channelA)
+    useUi.getState().openThread(postId)
+    expect(useUi.getState().narrowScreen).toBe('thread')
+    expect(useUi.getState().threadPostId).toBe(postId)
+    useUi.getState().backNarrow()
+    expect(useUi.getState().narrowScreen).toBe('timeline')
+    expect(useUi.getState().threadPostId).toBeNull()
+    expect(useUi.getState().selectedChannelId).toBe(channelA)
+    stop()
+  })
+
+  it('does not push history on a wide viewport', () => {
+    mockViewport(true)
+    const length = window.history.length
+    useUi.getState().selectChannel(channelA)
+    useUi.getState().openThread(postId)
+    expect(window.history.length).toBe(length)
+    expect(useUi.getState().narrowScreen).toBe('thread')
+    expect(useUi.getState().selectedChannelId).toBe(channelA)
+  })
+
+  it('keeps the selected channel when the viewport crosses the breakpoint', () => {
+    useUi.getState().selectChannel(channelA)
+    useUi.getState().openThread(postId)
+    mockViewport(true)
+    expect(useUi.getState().selectedChannelId).toBe(channelA)
+    expect(useUi.getState().threadPostId).toBe(postId)
+    mockViewport(false)
+    expect(useUi.getState().selectedChannelId).toBe(channelA)
+    expect(useUi.getState().threadPostId).toBe(postId)
+  })
+
+  it('restores the previous screen on popstate', () => {
+    const stop = watchNarrowHistory()
+    useUi.getState().selectChannel(channelA)
+    useUi.getState().openThread(postId)
+    window.dispatchEvent(new PopStateEvent('popstate', { state: { postallNarrow: 'timeline' } }))
+    expect(useUi.getState().narrowScreen).toBe('timeline')
+    expect(useUi.getState().selectedChannelId).toBe(channelA)
+    window.dispatchEvent(new PopStateEvent('popstate', { state: { postallNarrow: 'channels' } }))
+    expect(useUi.getState().narrowScreen).toBe('channels')
+    expect(useUi.getState().selectedChannelId).toBe(channelA)
+    stop()
+  })
+
+  it('does not drop the selected channel when switching to another channel from the list', () => {
+    useUi.getState().selectChannel(channelA)
+    useUi.setState({ narrowScreen: 'channels' })
+    useUi.getState().selectChannel(channelB)
+    expect(useUi.getState().selectedChannelId).toBe(channelB)
+    expect(useUi.getState().narrowScreen).toBe('timeline')
   })
 })

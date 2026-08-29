@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFakeAdapter } from '@/platform'
 import { useSettings } from '@/state/settings'
 import { TokenRequestError } from './pkce'
-import { accessTokenForRequest, rememberTokens } from './session'
+import { accessTokenForRequest, persistTokens, rememberTokens } from './session'
 
 const mocks = vi.hoisted(() => ({
   refreshTokens: vi.fn(),
@@ -67,12 +67,33 @@ describe('accessTokenForRequest', () => {
 
   it('signs out when the refresh token itself is rejected', async () => {
     const platform = createFakeAdapter()
-    rememberTokens({ accessToken: 'expired', refreshToken: 'refresh', expiresAt: 0 })
+    await persistTokens(platform, { accessToken: 'expired', refreshToken: 'refresh', expiresAt: 0 })
     mocks.refreshTokens.mockRejectedValue(new TokenRequestError('invalid_grant', 400))
 
     await expect(accessTokenForRequest(platform)).resolves.toBeNull()
-    // 破棄済みなので 2 回目は refresh を試みない。
+    expect(await platform.getSecret('auth.tokens')).toBeNull()
     await expect(accessTokenForRequest(platform)).resolves.toBeNull()
     expect(mocks.refreshTokens).toHaveBeenCalledTimes(1)
+  })
+
+  it('deletes persisted tokens when refresh is rejected with 401', async () => {
+    const platform = createFakeAdapter()
+    await persistTokens(platform, { accessToken: 'expired', refreshToken: 'refresh', expiresAt: 0 })
+    mocks.refreshTokens.mockRejectedValue(new TokenRequestError('unauthorized', 401))
+
+    await expect(accessTokenForRequest(platform)).resolves.toBeNull()
+    expect(await platform.getSecret('auth.tokens')).toBeNull()
+  })
+
+  it('deletes persisted tokens on sign-out', async () => {
+    const platform = createFakeAdapter()
+    await persistTokens(platform, {
+      accessToken: 'access',
+      refreshToken: 'refresh',
+      expiresAt: Date.now() + 60_000,
+    })
+    expect(await platform.getSecret('auth.tokens')).toBeTruthy()
+    await persistTokens(platform, null)
+    expect(await platform.getSecret('auth.tokens')).toBeNull()
   })
 })

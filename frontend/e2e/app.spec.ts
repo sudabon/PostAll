@@ -263,3 +263,40 @@ test('Enter inserts a newline and Shift+Enter sends it as a line break', async (
   await expect(body).toContainText('1行目')
   expect(await body.locator('br').count()).toBe(1)
 })
+
+test('narrow stack navigates channel timeline thread without forcing horizontal scroll', async ({ page }) => {
+  await installApiMock(page)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  await expect(page.getByTestId('narrow-shell')).toBeVisible()
+  await expect(page.getByTestId('sidebar')).toHaveCount(0)
+
+  await page.getByTestId('new-channel-button').click()
+  await page.getByTestId('channel-name-input').fill('inbox')
+  await page.getByTestId('channel-name-input').press('Enter')
+  await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
+  await expect(page.getByTestId('timeline')).toBeVisible()
+  await expect(page.getByTestId('channel-tree')).toHaveCount(0)
+
+  await page.getByTestId('composer-input').fill('hello memo')
+  await page.getByRole('button', { name: '送信' }).click()
+  await expect(page.getByText('hello memo')).toBeVisible()
+
+  await page.getByText('スレッドで返信').click()
+  await expect(page.getByTestId('thread-panel')).toBeVisible()
+  await expect(page.getByTestId('timeline')).toHaveCount(0)
+
+  await page.getByTestId('narrow-back').click()
+  await expect(page.getByTestId('timeline')).toBeVisible()
+  await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
+
+  await page.getByTestId('narrow-back').click()
+  await expect(page.getByTestId('channel-tree')).toBeVisible()
+  await expect(page.getByTestId('channel-inbox')).toBeVisible()
+
+  const overflow = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }))
+  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
+})

@@ -1,8 +1,19 @@
 # インストール
 
-PostAll を手元の端末へ入れる手順。macOS はビルドした Electron アプリを `/Applications` へ置き、iPhone は自分の Apple ID で署名した開発ビルドを実機へ直接入れる。どちらも本番の API（`https://memo.sudabon.com`）を見る構成でビルドする。
+PostAll を手元の端末へ入れる手順。macOS はビルドした Electron アプリを `/Applications` へ置く。iPhone の常用経路は Safari（またはホーム画面に追加した PWA）で、証明書は不要。Flutter の開発ビルドは、有償の Apple Developer Program がある場合の選択肢として残している（無料 Apple ID の署名は 7 日で失効する）。どちらも本番の API（`https://memo.sudabon.com`）を見る。
 
 ローカルスタックへ繋いで開発する場合は [README.md](README.md) の「ローカル起動」を参照。
+
+## iPhone（Safari / ホーム画面 PWA）
+
+証明書や Xcode は不要。iOS 16.4 以降を想定する（ホーム画面 Web アプリの Service Worker と、Safari から隔離されたストレージ）。
+
+1. iPhone の Safari で `https://memo.sudabon.com` を開く
+2. 共有メニューから **ホーム画面に追加** する（常用するならこの手順を推奨。Safari タブだけの利用では、未使用サイトデータの削除で再ログインが起きやすい）
+3. 初回のサインインは、**今開いている画面の中で完了する**。ホーム画面から起動したアプリで GitHub が Safari に切り替わった場合は、そちら（Safari）で使い続けるか、ホーム画面のアプリに戻ってもう一度サインインする。ホーム画面アプリと Safari タブではサインイン状態が共有されない
+4. チャネルの閲覧・投稿・スレッドは、狭い画面では「チャネル一覧 → タイムライン → スレッド」の階層で操作する
+
+Flutter の開発ビルドが必要な場合のみ、下の「iPhone 開発者版」へ進む。
 
 ## 事前に用意するもの
 

@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-PostAll は Slack 風のポスト型メモアプリケーションで、macOS（Electron）・ブラウザ（PWA）・iOS（Flutter）の 3 クライアントが、Vercel 上の単一の Go API と Supabase（PostgreSQL + Auth + Storage + Realtime）を共有する。
+PostAll は Slack 風のポスト型メモアプリケーションで、macOS（Electron）・ブラウザおよび iPhone の PWA・iOS ネイティブ（Flutter）が、Vercel 上の単一の Go API と Supabase（PostgreSQL + Auth + Storage + Realtime）を共有する。iPhone の常用経路は Safari / ホーム画面 PWA であり、Flutter は有償の Developer Program 向けの選択肢として残している。
 
 3 クライアントの契約は `api/openapi.yaml` に一本化し、Go のサーバスタブ（oapi-codegen）・TypeScript の型（openapi-typescript）・Dart のモデル（swagger_parser）をすべてそこから生成する。手書きの型定義をクライアントごとに持たないことが、この構成の中心的な制約になっている。
 
@@ -15,7 +15,7 @@ PostAll は Slack 風のポスト型メモアプリケーションで、macOS（
 flowchart LR
     subgraph clients["クライアント"]
         electron["Electron<br/>(macOS)"]
-        pwa["PWA<br/>(ブラウザ)"]
+        pwa["PWA<br/>(ブラウザ / iPhone)"]
         ios["Flutter<br/>(iOS)"]
     end
 
@@ -260,11 +260,11 @@ PostAll/
 
 frontend の React コードは Electron と PWA で完全に共有し、差異は `frontend/src/platform/` の抽象で吸収する（`browser.ts` / `electron.ts` を `create.ts` が選択し、テストでは `fake.ts` を使う）。認証リダイレクト URI、トークン保管、外部リンクの開き方がここに集約される。
 
-iOS のみ Flutter で独立実装だが、API 契約とドメインの語彙（チャネル階層、keyset カーソル、変更イベント、`after=latest`、`resetRequired`）は共通で、`mobile/lib/util/` と `frontend/src/lib/` に対応するユーティリティが並ぶ。Mermaid の描画だけは WebView に React 側と同一の `mermaid.min.js` バンドルを載せて揃えている。
+iOS ネイティブは Flutter で独立実装だが、API 契約とドメインの語彙（チャネル階層、keyset カーソル、変更イベント、`after=latest`、`resetRequired`）は共通で、`mobile/lib/util/` と `frontend/src/lib/` に対応するユーティリティが並ぶ。Mermaid の描画だけは WebView に React 側と同一の `mermaid.min.js` バンドルを載せて揃えている。iPhone では同じ React シェルを PWA としても配信し、768px 未満ではチャネル一覧 → タイムライン → スレッドの階層画面、それ以上では 3 ペインになる。
 
 | 関心事 | frontend（Electron / PWA） | mobile（iOS） |
 |---|---|---|
 | 状態管理 | TanStack Query + Zustand | Riverpod |
-| トークン保管 | `safeStorage`（Electron）/ 非永続（ブラウザ） | Keychain（flutter_secure_storage） |
+| トークン保管 | `safeStorage`（Electron）/ origin の `localStorage`（ブラウザ / PWA） | Keychain（flutter_secure_storage） |
 | 接続設定 | `VITE_*` 環境変数 | `--dart-define` + アプリ内設定で上書き |
 | リダイレクト URI | `https://memo.sudabon.com/auth/callback`（PWA）/ `postall://auth/callback`（Electron） | `postall://auth/callback` |

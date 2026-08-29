@@ -53,6 +53,14 @@
   --material-thick-filter: blur(32px) saturate(1.55);
   --material-edge: oklch(0.995 0.004 75 / 0.88);
   --theme-transition-duration: 180ms;
+  --keyboard-inset: 0px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --shell-header-height: 3rem;
+  --shell-chrome-top: calc(var(--shell-header-height) + var(--safe-top));
+  --shell-content-pad-top: calc(3.5rem + var(--safe-top));
 }
 
 .dark {
@@ -207,6 +215,27 @@
 
   .scroll-edge-mask {
     background: linear-gradient(to bottom, var(--material-edge), transparent);
+  }
+
+  .shell-header {
+    padding-top: var(--safe-top);
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
+    height: var(--shell-chrome-top);
+  }
+
+  .shell-content-pad {
+    padding-top: var(--shell-content-pad-top);
+  }
+
+  .shell-list-bottom {
+    padding-bottom: var(--safe-bottom);
+  }
+
+  .shell-composer {
+    padding-bottom: calc(var(--safe-bottom) + var(--keyboard-inset));
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
   }
 }
 
