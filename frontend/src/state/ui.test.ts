@@ -41,6 +41,7 @@ beforeEach(() => {
     timelineAnchorId: null,
     targetPostId: null,
     targetThreadReplyId: null,
+    editingPostId: null,
     narrowScreen: 'channels',
   })
 })
@@ -94,6 +95,46 @@ describe('search result navigation', () => {
       targetPostId: null,
       targetThreadReplyId: null,
     })
+  })
+})
+
+describe('editing post', () => {
+  it('keeps only one post in edit at a time', () => {
+    useUi.getState().setEditingPost(postId)
+    expect(useUi.getState().editingPostId).toBe(postId)
+
+    const other = '66666666-6666-6666-6666-666666666666'
+    useUi.getState().setEditingPost(other)
+    expect(useUi.getState().editingPostId).toBe(other)
+
+    useUi.getState().setEditingPost(null)
+    expect(useUi.getState().editingPostId).toBeNull()
+  })
+
+  it('does not persist editingPostId', async () => {
+    const adapter = createFakeAdapter()
+    const stop = watchUi(adapter)
+    useUi.getState().setEditingPost(postId)
+    await Promise.resolve()
+    const stored = JSON.parse((await adapter.getItem('ui')) ?? '{}') as Record<string, unknown>
+    expect(stored).not.toHaveProperty('editingPostId')
+    stop()
+  })
+
+  it('drops the edit when switching channels', () => {
+    useUi.getState().setEditingPost(postId)
+    useUi.getState().selectChannel(channelA)
+    expect(useUi.getState().editingPostId).toBeNull()
+  })
+
+  it('drops the edit when opening or closing a thread', () => {
+    useUi.getState().setEditingPost(postId)
+    useUi.getState().openThread(postId)
+    expect(useUi.getState().editingPostId).toBeNull()
+
+    useUi.getState().setEditingPost(postId)
+    useUi.getState().openThread(null)
+    expect(useUi.getState().editingPostId).toBeNull()
   })
 })
 

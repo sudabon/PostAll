@@ -122,21 +122,22 @@ test('edits and deletes a thread reply and refreshes the root reply count', asyn
   await panel.getByTestId('composer-input').press('Shift+Enter')
   await expect(root.getByRole('button', { name: /1 件の返信/ })).toBeVisible()
 
-  let reply = panel.locator('article').filter({ hasText: 'reply before edit' })
+  const reply = panel.locator('article')
   await reply.hover()
   const editTrigger = reply.getByRole('button', { name: /返信を編集/ })
   await editTrigger.click()
-  const editDialog = page.getByRole('dialog', { name: '返信を編集' })
-  await expect(editDialog).toHaveJSProperty('tagName', 'DIALOG')
+  const editor = reply.getByTestId('post-editor')
+  await expect(editor).toBeVisible()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.keyboard.press('Escape')
-  await expect(editDialog).toHaveCount(0)
+  await expect(editor).toHaveCount(0)
   await expect(editTrigger).toBeFocused()
   await editTrigger.click()
-  await editDialog.getByLabel('本文').fill('reply after edit')
-  await editDialog.getByRole('button', { name: '保存' }).click()
+  await editor.getByTestId('composer-input').fill('reply after edit')
+  await editor.getByRole('button', { name: '保存' }).click()
   await expect(panel.getByText('reply after edit')).toBeVisible()
+  await expect(editor).toHaveCount(0)
 
-  reply = panel.locator('article').filter({ hasText: 'reply after edit' })
   await reply.hover()
   page.once('dialog', (dialog) => dialog.accept())
   await reply.getByRole('button', { name: /返信を削除/ }).click()
@@ -513,4 +514,128 @@ test('mermaid and code blocks survive a timeline refetch without re-rendering', 
     expect(state.codeKept).toBe(true)
     expect(state.hasSvg).toBe(true)
   }
+})
+
+test('opens the post editor in place instead of a modal', async ({ page }) => {
+  const mock = await installApiMock(page)
+  const { posts } = mock.seedChannel('inline-edit', ['first memo', 'second memo'])
+  await page.setViewportSize({ width: 1000, height: 700 })
+  await page.goto('/')
+  await page.getByTestId('channel-inline-edit').click()
+
+  const row = page.getByTestId(`post-${posts[0].id}`)
+  await row.hover()
+  await row.getByRole('button', { name: /ポストを編集/ }).click()
+
+  const editor = row.getByTestId('post-editor')
+  await expect(editor).toBeVisible()
+  // モーダルではなく当該ポストの位置に開く
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(editor.getByTestId('composer-input')).toBeFocused()
+
+  // 後続のポストは編集フォームの下に残り、並び順が保たれる
+  const editorBox = await editor.boundingBox()
+  const nextBox = await page.getByTestId(`post-${posts[1].id}`).boundingBox()
+  expect(nextBox!.y).toBeGreaterThan(editorBox!.y)
+
+  // 新規投稿と同じ入力フォームなので書式ツールバーが使える
+  await editor.getByTestId('composer-format-codeBlock').click()
+  await expect(editor.getByTestId('composer-input')).toHaveValue(/```/)
+
+  await editor.getByTestId('composer-input').fill('first memo edited')
+  await editor.getByRole('button', { name: '保存' }).click()
+  await expect(page.getByText('first memo edited')).toBeVisible()
+  await expect(page.getByTestId('post-editor')).toHaveCount(0)
+})
+
+test('keeps the editor in place when another post arrives', async ({ page }) => {
+  const mock = await installApiMock(page)
+  // 1 ページ（10 件）に収まる件数にする。溢れると再取得で先頭のポストが落ち、
+  // 追従とは無関係に scrollTop がずれてしまう。
+  const long = 'あ'.repeat(400)
+  const bodies = Array.from({ length: 8 }, (_, i) => `追従メモ ${i} ${long}`)
+  const { channel, posts } = mock.seedChannel('no-follow', bodies)
+  await page.setViewportSize({ width: 1000, height: 700 })
+  await page.goto('/')
+  await page.getByTestId('channel-no-follow').click()
+
+  const timeline = page.getByTestId('timeline')
+  // 最下部に追従した状態から編集を始める
+  await expect
+    .poll(() => timeline.evaluate((el) => el.scrollHeight - el.clientHeight - Math.round(el.scrollTop)))
+    .toBeLessThanOrEqual(1)
+
+  const target = page.getByTestId(`post-${posts[posts.length - 1].id}`)
+  await target.hover()
+  await target.getByRole('button', { name: /ポストを編集/ }).click()
+  await expect(target.getByTestId('post-editor')).toBeVisible()
+
+  const before = await timeline.evaluate((el) => Math.round(el.scrollTop))
+  const editorBefore = (await target.getByTestId('post-editor').boundingBox())!
+  await mock.createExternalPost(channel.id, '外部からのポスト')
+  await expect(page.getByText('外部からのポスト')).toHaveCount(1)
+
+  // 届いたポストで最下部へ飛ばず、編集フォームの位置を保つ
+  await expect
+    .poll(() => timeline.evaluate((el) => el.scrollHeight - el.clientHeight - Math.round(el.scrollTop)))
+    .toBeGreaterThan(32)
+  expect(await timeline.evaluate((el) => Math.round(el.scrollTop))).toBe(before)
+  const editorAfter = (await target.getByTestId('post-editor').boundingBox())!
+  expect(Math.abs(editorAfter.y - editorBefore.y)).toBeLessThanOrEqual(1)
+
+  // 編集を終えると追従が戻る
+  await target.getByTestId('post-editor').getByRole('button', { name: '取り消し', exact: true }).click()
+  await expect(page.getByTestId('post-editor')).toHaveCount(0)
+  await mock.createExternalPost(channel.id, '追従が戻ったあとのポスト')
+  await expect(page.getByText('追従が戻ったあとのポスト')).toBeVisible()
+  await expect
+    .poll(() => timeline.evaluate((el) => el.scrollHeight - el.clientHeight - Math.round(el.scrollTop)))
+    .toBeLessThanOrEqual(1)
+})
+
+test('keeps only one post editor open at a time', async ({ page }) => {
+  const mock = await installApiMock(page)
+  const { posts } = mock.seedChannel('one-editor', ['first memo', 'second memo'])
+  await page.setViewportSize({ width: 1000, height: 700 })
+  await page.goto('/')
+  await page.getByTestId('channel-one-editor').click()
+
+  const first = page.getByTestId(`post-${posts[0].id}`)
+  const second = page.getByTestId(`post-${posts[1].id}`)
+
+  await first.hover()
+  await first.getByRole('button', { name: /ポストを編集/ }).click()
+  await expect(first.getByTestId('post-editor')).toBeVisible()
+
+  await second.hover()
+  await second.getByRole('button', { name: /ポストを編集/ }).click()
+  await expect(second.getByTestId('post-editor')).toBeVisible()
+  await expect(first.getByTestId('post-editor')).toHaveCount(0)
+  await expect(page.getByTestId('post-editor')).toHaveCount(1)
+})
+
+test('reveals the post editor inside a narrow viewport', async ({ page }) => {
+  const mock = await installApiMock(page)
+  const bodies = Array.from({ length: 12 }, (_, i) => `狭幅メモ ${i}`)
+  const { posts } = mock.seedChannel('narrow-edit', bodies)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  await page.getByTestId('channel-narrow-edit').click()
+  await expect(page.getByTestId('timeline')).toBeVisible()
+
+  // 最下部から離れた位置にあるポストを編集する
+  const target = page.getByTestId(`post-${posts[2].id}`)
+  await target.scrollIntoViewIfNeeded()
+  await target.hover()
+  await target.getByRole('button', { name: /ポストを編集/ }).click()
+
+  const editor = target.getByTestId('post-editor')
+  await expect(editor).toBeVisible()
+  await expect(editor).toBeInViewport({ ratio: 1 })
+
+  const overflow = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }))
+  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
 })

@@ -24,6 +24,7 @@ export type UiState = {
   searchOpen: boolean
   creating: { parentId: string | null } | null
   renamingId: string | null
+  editingPostId: string | null
   composerEpoch: number
   connectionState: ConnectionState
   canMutate: boolean
@@ -49,6 +50,7 @@ const initial: UiState = {
   searchOpen: false,
   creating: null,
   renamingId: null,
+  editingPostId: null,
   composerEpoch: 0,
   connectionState: 'connecting',
   canMutate: true,
@@ -73,6 +75,7 @@ type UiStore = UiState & {
   setSearchOpen: (open: boolean) => void
   startCreate: (parentId: string | null) => void
   setRenaming: (id: string | null) => void
+  setEditingPost: (id: string | null) => void
   focusComposer: () => void
   setConnectionState: (state: ConnectionState) => void
   setConnectionError: (message: string | null) => void
@@ -120,6 +123,7 @@ export const useUi = create<UiStore>((set, get) => ({
       timelineAnchorId: null,
       targetPostId: null,
       targetThreadReplyId: null,
+      editingPostId: null,
       narrowScreen,
     })
     if (selectedChannelId && from !== 'timeline') pushNarrow('timeline')
@@ -134,12 +138,13 @@ export const useUi = create<UiStore>((set, get) => ({
       set({
         threadPostId: null,
         targetThreadReplyId: null,
+        editingPostId: null,
         narrowScreen: get().narrowScreen === 'thread' ? 'timeline' : get().narrowScreen,
       })
       return
     }
     const from = get().narrowScreen
-    set({ threadPostId, targetThreadReplyId: null, narrowScreen: 'thread' })
+    set({ threadPostId, targetThreadReplyId: null, editingPostId: null, narrowScreen: 'thread' })
     if (from !== 'thread') pushNarrow('thread')
   },
   backNarrow: () => {
@@ -173,6 +178,8 @@ export const useUi = create<UiStore>((set, get) => ({
   setSearchOpen: (searchOpen) => set({ searchOpen }),
   startCreate: (parentId) => set({ creating: { parentId } }),
   setRenaming: (renamingId) => set({ renamingId }),
+  // 編集フォームは同時に 1 件だけ開く。別のポストを指定すると先の編集は破棄される。
+  setEditingPost: (editingPostId) => set({ editingPostId }),
   focusComposer: () => set({ composerEpoch: get().composerEpoch + 1 }),
   setConnectionState: (connectionState) => set({
     connectionState,

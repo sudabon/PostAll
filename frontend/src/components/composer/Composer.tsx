@@ -1,5 +1,6 @@
 import { CirclePlus, Send } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import type { Attachment } from '@/api/client'
 import { usePlatform, type PickedFile } from '@/platform'
 import { useUi } from '@/state/ui'
 import { Button } from '@/components/ui/button'
@@ -12,12 +13,29 @@ import { ACCEPT_ATTR, checkAttachment, formatBytes, inferMime, isImageType } fro
 
 type DraftFile = {
   key: string
-  file: PickedFile
+  name: string
+  size: number
+  contentType: string
+  // 新規に選ばれた添付だけがバイト列を持つ。既存添付は名前・サイズ・id しか持たない。
+  file?: PickedFile
   progress: number
   status: 'uploading' | 'ready' | 'error'
   id?: string
+  // 新規添付の objectURL。既存添付のサムネイルは id から署名付き URL を取得する。
   preview?: string
   error?: string
+}
+
+function toDraftFile(attachment: Attachment): DraftFile {
+  return {
+    key: attachment.id,
+    name: attachment.fileName,
+    size: attachment.sizeBytes,
+    contentType: attachment.contentType,
+    progress: 1,
+    status: 'ready',
+    id: attachment.id,
+  }
 }
 
 export function Composer({
@@ -27,6 +45,13 @@ export function Composer({
   onSubmit,
   uploadFile,
   placeholder = 'メッセージを入力',
+  initialBody = '',
+  initialAttachments,
+  submitLabel = '送信',
+  onCancel,
+  persistDraft = true,
+  autoFocus = false,
+  resolveAttachmentUrl,
 }: {
   storageKey: string
   disabled?: boolean
@@ -34,14 +59,30 @@ export function Composer({
   onSubmit: (body: string, attachmentIds: string[]) => Promise<void>
   uploadFile?: (file: PickedFile, onProgress: (ratio: number) => void) => Promise<string>
   placeholder?: string
+  /** 編集モードの初期本文 */
+  initialBody?: string
+  /** 編集モードへ引き継ぐ既存添付 */
+  initialAttachments?: Attachment[]
+  /** 確定操作のラベル。編集モードでは「保存」 */
+  submitLabel?: string
+  /** 指定したときだけ取り消しボタンを出す。編集モードの目印も兼ねる */
+  onCancel?: () => void
+  /** 偽なら下書きを読まない・書かない */
+  persistDraft?: boolean
+  /** タッチ端末でもマウント時に本文へフォーカスする */
+  autoFocus?: boolean
+  /** 既存添付のサムネイル用に署名付き URL を取得する */
+  resolveAttachmentUrl?: (id: string) => Promise<string>
 }) {
   const platform = usePlatform()
   const epoch = useUi((s) => s.composerEpoch)
-  const [value, setValue] = useState('')
+  const editing = Boolean(onCancel)
+  const [value, setValue] = useState(initialBody)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [drafts, setDraftState] = useState<DraftFile[]>([])
-  const draftsRef = useRef<DraftFile[]>([])
+  const [drafts, setDraftState] = useState<DraftFile[]>(() => (initialAttachments ?? []).map(toDraftFile))
+  // 初回描画の drafts をそのまま持たせる。以降 useRef は引数を無視するので同期はずれない。
+  const draftsRef = useRef<DraftFile[]>(drafts)
   const [dragging, setDragging] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
   const lastEpoch = useRef<number | null>(null)
@@ -57,6 +98,8 @@ export function Composer({
   }
 
   useEffect(() => {
+    // 編集中の入力は下書きにしない。新規投稿の下書きを読むことも書くこともしない。
+    if (!persistDraft) return
     let cancelled = false
     void platform.getItem(storageKey).then((raw) => {
       if (cancelled) return
@@ -66,12 +109,12 @@ export function Composer({
     return () => {
       cancelled = true
     }
-  }, [platform, storageKey])
+  }, [persistDraft, platform, storageKey])
 
   useEffect(() => {
-    if (!loaded) return
+    if (!persistDraft || !loaded) return
     void platform.setItem(storageKey, value)
-  }, [loaded, platform, storageKey, value])
+  }, [loaded, persistDraft, platform, storageKey, value])
 
   useEffect(() => {
     const el = area.current
@@ -83,12 +126,13 @@ export function Composer({
     // epoch が実際に変わったときだけ「明示的なフォーカス要求」とみなす。
     // 初回マウント時の実行（StrictMode の二重実行を含む）は epoch が動かないので
     // タッチ端末では何もしない。
+    // 編集モードは利用者が明示的に開いた操作なので、この抑止の例外とする（autoFocus）。
     const requested = lastEpoch.current !== null && lastEpoch.current !== epoch
     lastEpoch.current = epoch
-    if (!requested && isTouchDevice()) return
+    if (!requested && !autoFocus && isTouchDevice()) return
     el.focus()
     el.selectionStart = el.value.length
-  }, [epoch])
+  }, [autoFocus, epoch])
 
   useEffect(() => {
     const el = area.current
@@ -99,7 +143,11 @@ export function Composer({
 
   const uploading = drafts.some((d) => d.status === 'uploading')
   const readyIds = drafts.filter((d) => d.status === 'ready' && d.id).map((d) => d.id!)
-  const canSend = !disabled && !mutationDisabled && !sending && !uploading && (Boolean(value.trim()) || readyIds.length > 0)
+  const hasContent = Boolean(value.trim()) || readyIds.length > 0
+  const ready = !disabled && !mutationDisabled && !sending && !uploading
+  // 新規投稿は空のとき送信ボタンを無効にする。編集は「なぜ保存できないか」を示す必要が
+  // あるので押せるままにし、submit でエラーを出す。
+  const canSend = ready && (editing || hasContent)
 
   const runUpload = (key: string, file: PickedFile) => {
     if (mutationDisabled) {
@@ -145,7 +193,16 @@ export function Composer({
         isImageType(type) && typeof URL.createObjectURL === 'function'
           ? URL.createObjectURL(new Blob([typed.data], { type }))
           : undefined
-      next.push({ key, file: typed, progress: 0, status: 'uploading', preview })
+      next.push({
+        key,
+        name: typed.name,
+        size: typed.data.byteLength,
+        contentType: type,
+        file: typed,
+        progress: 0,
+        status: 'uploading',
+        preview,
+      })
       uploads.push({ key, file: typed })
     }
     setError(nextError)
@@ -163,11 +220,16 @@ export function Composer({
 
   const submit = async () => {
     if (!canSend) return
+    if (!hasContent) {
+      setError('本文または添付のいずれかが必要です')
+      return
+    }
     setSending(true)
     setError(null)
     const snapshot = value
     try {
       await onSubmit(value, readyIds)
+      if (!persistDraft) return
       setValue('')
       draftsRef.current.forEach((d) => {
         if (d.preview) URL.revokeObjectURL(d.preview)
@@ -176,7 +238,7 @@ export function Composer({
       await platform.removeItem(storageKey)
     } catch {
       setValue(snapshot)
-      setError('送信に失敗しました。入力は保持されています。')
+      setError(`${submitLabel}に失敗しました。入力は保持されています。`)
     } finally {
       setSending(false)
     }
@@ -197,12 +259,27 @@ export function Composer({
 
   return (
     <form
-      // 左右のパディングは shell-composer が safe-area 込みで持つ
-      className={cn('material-regular relative z-10 rounded-t-xl py-3 shadow-sm transition-[background-color,box-shadow] shell-composer', dragging && 'bg-accent/60 shadow-md')}
-      data-testid={storageKey.startsWith('draft:thread') ? 'thread-composer' : 'composer'}
+      // 左右のパディングは shell-composer が safe-area 込みで持つ。
+      // 編集モードはポスト行の内側に置くので、その余白と影は付けない。
+      className={cn(
+        'relative',
+        editing
+          ? 'py-1'
+          : 'material-regular z-10 rounded-t-xl py-3 shadow-sm transition-[background-color,box-shadow] shell-composer',
+        dragging && (editing ? 'bg-accent/40' : 'bg-accent/60 shadow-md'),
+      )}
+      data-testid={editing ? 'post-editor' : storageKey.startsWith('draft:thread') ? 'thread-composer' : 'composer'}
       onSubmit={(e) => {
         e.preventDefault()
         void submit()
+      }}
+      onKeyDown={(e) => {
+        // Escape で編集を取り消す。IME 変換中の Escape は変換の取り消しなので拾わない。
+        if (e.key !== 'Escape' || !onCancel) return
+        if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
+        e.preventDefault()
+        e.stopPropagation()
+        onCancel()
       }}
       onDragOver={(e) => {
         e.preventDefault()
@@ -245,9 +322,9 @@ export function Composer({
             void platform.ingestFiles(files).then(addPicked)
           }}
           onKeyDown={(e) => {
-            // Enter は改行、送信は Shift+Enter
+            // Enter は改行、確定は Shift+Enter（編集モードの保存も同じ操作）
             if (e.key !== 'Enter' || !e.shiftKey) return
-            // IME 変換中（変換候補の確定 Enter）は送信しない
+            // IME 変換中（変換候補の確定 Enter）は確定しない
             if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
             const pos = e.currentTarget.selectionStart ?? value.length
             if (isInsideUnclosedFence(value, pos)) return
@@ -259,13 +336,13 @@ export function Composer({
           <ul className="space-y-1 px-2 pb-1">
             {drafts.map((d) => (
               <li key={d.key} className="flex items-center gap-2 rounded-lg border border-border bg-card px-2 py-1 text-caption shadow-sm">
-                {d.preview ? <img src={d.preview} alt="" className="h-8 w-8 rounded-lg object-cover" /> : null}
-                <span className="min-w-0 flex-1 truncate">{d.file.name}</span>
-                <span className="text-muted-foreground">{formatBytes(d.file.data.byteLength)}</span>
+                <DraftThumb draft={d} resolveAttachmentUrl={resolveAttachmentUrl} />
+                <span className="min-w-0 flex-1 truncate">{d.name}</span>
+                <span className="text-muted-foreground">{formatBytes(d.size)}</span>
                 {d.status === 'uploading' ? <span>{Math.round(d.progress * 100)}%</span> : null}
                 {d.status === 'error' ? <span className="text-destructive">{d.error}</span> : null}
-                {d.status === 'error' ? (
-                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-caption" disabled={mutationDisabled} onClick={() => runUpload(d.key, d.file)}>
+                {d.status === 'error' && d.file ? (
+                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-caption" disabled={mutationDisabled} onClick={() => runUpload(d.key, d.file!)}>
                     再試行
                   </Button>
                 ) : null}
@@ -293,13 +370,61 @@ export function Composer({
             >
               <CirclePlus className="size-5" />
             </Button>
-            {error ? <p className="min-w-0 text-caption text-destructive">{error}</p> : null}
+            {error ? <p role="alert" className="min-w-0 text-caption text-destructive">{error}</p> : null}
           </div>
-          <Button type="submit" size="icon" className="size-9" aria-label="送信" title="送信 (Shift+Enter)" disabled={!canSend}>
-            <Send className="size-4" />
-          </Button>
+          {onCancel ? (
+            <div className="flex shrink-0 items-center gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={onCancel}>
+                取り消し
+              </Button>
+              <Button type="submit" size="sm" title={`${submitLabel} (Shift+Enter)`} disabled={!canSend}>
+                {submitLabel}
+              </Button>
+            </div>
+          ) : (
+            <Button type="submit" size="icon" className="size-9" aria-label={submitLabel} title={`${submitLabel} (Shift+Enter)`} disabled={!canSend}>
+              <Send className="size-4" />
+            </Button>
+          )}
         </div>
       </div>
     </form>
   )
+}
+
+function DraftThumb({
+  draft,
+  resolveAttachmentUrl,
+}: {
+  draft: DraftFile
+  resolveAttachmentUrl?: (id: string) => Promise<string>
+}) {
+  if (draft.preview) return <img src={draft.preview} alt="" className="h-8 w-8 rounded-lg object-cover" />
+  if (!isImageType(draft.contentType) || !draft.id || !resolveAttachmentUrl) return null
+  return <RemoteThumb id={draft.id} resolveAttachmentUrl={resolveAttachmentUrl} />
+}
+
+function RemoteThumb({
+  id,
+  resolveAttachmentUrl,
+}: {
+  id: string
+  resolveAttachmentUrl: (id: string) => Promise<string>
+}) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void resolveAttachmentUrl(id)
+      .then((next) => {
+        if (!cancelled) setUrl(next)
+      })
+      .catch(() => {
+        // サムネイルは補助的な表示なので、取得できなくても添付そのものは扱える
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [id, resolveAttachmentUrl])
+  if (!url) return <span className="h-8 w-8 shrink-0 rounded-lg bg-muted" aria-hidden="true" />
+  return <img src={url} alt="" className="h-8 w-8 rounded-lg object-cover" />
 }

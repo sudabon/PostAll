@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { m, useReducedMotion } from 'motion/react'
 import { X } from 'lucide-react'
+import type { Post } from '@/api/client'
 import { usePostMutations, useThread } from '@/hooks/usePosts'
 import { formatDateTime } from '@/lib/dates'
 import { THREAD_MAX_WIDTH, THREAD_MIN_WIDTH, useUi } from '@/state/ui'
@@ -8,6 +9,7 @@ import { useAuth } from '@/auth/AuthProvider'
 import { Composer } from '@/components/composer/Composer'
 import { PostBody } from '@/components/post/PostBody'
 import { PostActions } from '@/components/post/PostActions'
+import { PostEditor } from '@/components/post/PostEditor'
 import { ReactionBar } from '@/components/reactions/ReactionBar'
 import { uploadPickedFile } from '@/lib/upload'
 import { Button } from '@/components/ui/button'
@@ -131,25 +133,17 @@ export function ThreadPanel({
             </div>
           )}
           {data?.replies.map((reply) => (
-            <article
+            <ThreadReply
               key={reply.id}
-              id={`thread-reply-${reply.id}`}
-              tabIndex={-1}
-              className={`group relative mb-3 border-t border-border pt-3 focus:outline-none ${
-                reply.id === targetReplyId ? 'rounded-md bg-accent p-2 ring-2 ring-primary' : ''
-              }`}
-            >
-              <p className="text-caption text-muted-foreground">{formatDateTime(reply.createdAt)}</p>
-              <PostBody post={reply} />
-              <ReactionBar postId={reply.id} reactions={reply.reactions ?? []} />
-              <PostActions
-                post={reply}
-                kind="返信"
-                mutationDisabled={!canMutate}
-                onEdit={(body, attachmentIds) => mutations.edit.mutate({ id: reply.id, body, attachmentIds })}
-                onDelete={() => mutations.remove.mutate(reply.id)}
-              />
-            </article>
+              reply={reply}
+              highlighted={reply.id === targetReplyId}
+              mutationDisabled={!canMutate}
+              onSave={async (body, attachmentIds) => {
+                await mutations.edit.mutateAsync({ id: reply.id, body, attachmentIds })
+                useUi.getState().setEditingPost(null)
+              }}
+              onDelete={() => mutations.remove.mutate(reply.id)}
+            />
           ))}
         </div>
         <Composer
@@ -164,5 +158,45 @@ export function ThreadPanel({
         />
       </aside>
     </m.div>
+  )
+}
+
+function ThreadReply({
+  reply,
+  highlighted,
+  mutationDisabled,
+  onSave,
+  onDelete,
+}: {
+  reply: Post
+  highlighted: boolean
+  mutationDisabled: boolean
+  onSave: (body: string, attachmentIds: string[]) => Promise<void>
+  onDelete: () => void
+}) {
+  // 返信ごとに真偽値で購読するので、編集の開始・終了で再描画されるのは当該返信だけになる
+  const editing = useUi((s) => s.editingPostId === reply.id)
+  return (
+    <article
+      id={`thread-reply-${reply.id}`}
+      tabIndex={-1}
+      className={`group relative mb-3 border-t border-border pt-3 focus:outline-none ${
+        highlighted ? 'rounded-md bg-accent p-2 ring-2 ring-primary' : ''
+      }`}
+    >
+      <p className="text-caption text-muted-foreground">{formatDateTime(reply.createdAt)}</p>
+      {editing ? (
+        <PostEditor post={reply} mutationDisabled={mutationDisabled} onSave={onSave} />
+      ) : (
+        <PostBody post={reply} />
+      )}
+      <ReactionBar postId={reply.id} reactions={reply.reactions ?? []} />
+      <PostActions
+        post={reply}
+        kind="返信"
+        mutationDisabled={mutationDisabled}
+        onDelete={onDelete}
+      />
+    </article>
   )
 }
