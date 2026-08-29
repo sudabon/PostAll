@@ -477,3 +477,40 @@ test('every device starts on the channel list even when a channel was open', asy
   await expect(page.getByTestId('channel-title')).toHaveCount(0)
   await expect(page.getByText('チャネルが選択されていません')).toBeVisible()
 })
+
+test('mermaid and code blocks survive a timeline refetch without re-rendering', async ({ page }) => {
+  // MarkdownBody が components を作り直すと、上書きしたタグのコンポーネント型が
+  // 毎回変わり React がサブツリーを再マウントする。Mermaid は描画をやり直すため
+  // 「描画中…」と図が入れ替わって点滅していた。
+  const mock = await installApiMock(page)
+  const mermaid = '```mermaid\ngraph TD\n  A[開始] --> B[処理]\n  B --> C{判定}\n```'
+  const { channel } = mock.seedChannel('inbox', [mermaid, '```ts\nconst a = 1\n```'])
+  await page.goto('/')
+  await page.getByTestId('channel-inbox').click()
+  await expect(page.getByTestId('mermaid-block').locator('svg')).toBeVisible()
+  await expect(page.getByTestId('code-block')).toBeVisible()
+
+  // 描画済みの DOM ノードに印を付けておき、再取得後も同じノードのままか見る
+  await page.evaluate(() => {
+    document.querySelectorAll('[data-testid="mermaid-block"], [data-testid="code-block"]').forEach((el) => {
+      ;(el as HTMLElement).dataset.kept = 'yes'
+    })
+  })
+
+  for (let i = 0; i < 2; i += 1) {
+    await mock.createExternalPost(channel.id, `外部ポスト ${i}`)
+    await expect(page.getByText(`外部ポスト ${i}`)).toBeVisible()
+    const state = await page.evaluate(() => {
+      const mermaidBlock = document.querySelector('[data-testid="mermaid-block"]') as HTMLElement
+      const codeBlock = document.querySelector('[data-testid="code-block"]') as HTMLElement
+      return {
+        mermaidKept: mermaidBlock.dataset.kept === 'yes',
+        codeKept: codeBlock.dataset.kept === 'yes',
+        hasSvg: !!mermaidBlock.querySelector('svg'),
+      }
+    })
+    expect(state.mermaidKept).toBe(true)
+    expect(state.codeKept).toBe(true)
+    expect(state.hasSvg).toBe(true)
+  }
+})

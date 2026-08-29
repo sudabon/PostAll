@@ -1,5 +1,5 @@
-import { Children, isValidElement, type ReactNode } from 'react'
-import Markdown from 'react-markdown'
+import { Children, isValidElement, useMemo, type ReactNode } from 'react'
+import Markdown, { type Components, type Options } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeRaw from 'rehype-raw'
@@ -35,53 +35,61 @@ function textOf(node: ReactNode): string {
   return ''
 }
 
+const remarkPlugins: Options['remarkPlugins'] = [remarkGfm, remarkBreaks]
+const rehypePlugins: Options['rehypePlugins'] = [rehypeRaw, [rehypeSanitize, schema]]
+
 export function MarkdownBody({ markdown }: { markdown: string }) {
   const platform = usePlatform()
+  // components をレンダーのたびに作り直すと、上書きしたタグのコンポーネント「型」が
+  // 毎回別物になり、React が該当サブツリーをアンマウント→再マウントする。
+  // Mermaid は再マウントのたびに描画をやり直すので点滅して落ち着かず、
+  // コードブロックもハイライトをやり直す。
+  const components = useMemo<Components>(
+    () => ({
+      a: ({ href, children }) => {
+        if (!href || !/^(https?:|mailto:)/i.test(href)) {
+          return <span>{children}</span>
+        }
+        return (
+          <a
+            href={href}
+            onClick={(e) => {
+              e.preventDefault()
+              void platform.openExternal(href)
+            }}
+          >
+            {children}
+          </a>
+        )
+      },
+      pre: ({ children }) => {
+        const child = Children.toArray(children)[0]
+        if (isValidElement<{ className?: string; children?: ReactNode }>(child)) {
+          const lang = languageOf(child.props.className)
+          const code = textOf(child.props.children).replace(/\n$/, '')
+          if (lang === 'mermaid') return <MermaidBlock source={code} />
+          return <CodeBlock code={code} language={lang} />
+        }
+        return <pre>{children}</pre>
+      },
+      code: ({ className, children }) => {
+        if (className || String(children).includes('\n')) {
+          return <code className={className}>{children}</code>
+        }
+        return <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-caption">{children}</code>
+      },
+      table: ({ children }) => (
+        <div className="my-2 overflow-x-auto">
+          <table>{children}</table>
+        </div>
+      ),
+    }),
+    [platform],
+  )
+
   return (
     <div className="markdown-body text-body" data-testid="markdown-body">
-      <Markdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, schema]]}
-        components={{
-          a: ({ href, children }) => {
-            if (!href || !/^(https?:|mailto:)/i.test(href)) {
-              return <span>{children}</span>
-            }
-            return (
-              <a
-                href={href}
-                onClick={(e) => {
-                  e.preventDefault()
-                  void platform.openExternal(href)
-                }}
-              >
-                {children}
-              </a>
-            )
-          },
-          pre: ({ children }) => {
-            const child = Children.toArray(children)[0]
-            if (isValidElement<{ className?: string; children?: ReactNode }>(child)) {
-              const lang = languageOf(child.props.className)
-              const code = textOf(child.props.children).replace(/\n$/, '')
-              if (lang === 'mermaid') return <MermaidBlock source={code} />
-              return <CodeBlock code={code} language={lang} />
-            }
-            return <pre>{children}</pre>
-          },
-          code: ({ className, children }) => {
-            if (className || String(children).includes('\n')) {
-              return <code className={className}>{children}</code>
-            }
-            return <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-caption">{children}</code>
-          },
-          table: ({ children }) => (
-            <div className="my-2 overflow-x-auto">
-              <table>{children}</table>
-            </div>
-          ),
-        }}
-      >
+      <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
         {markdown}
       </Markdown>
     </div>
