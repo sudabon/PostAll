@@ -321,6 +321,9 @@
   font-size: var(--text-body);
   line-height: var(--leading-body);
   letter-spacing: var(--tracking-body);
+  /* 長い URL や英単語が折り返さないと最小コンテンツ幅が画面幅を超え、
+     狭幅表示で横スクロールが出る。white-space:pre のコードブロックには効かない。 */
+  overflow-wrap: anywhere;
 }
 .markdown-body h1,
 .markdown-body h2,

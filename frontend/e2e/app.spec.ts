@@ -300,3 +300,40 @@ test('narrow stack navigates channel timeline thread without forcing horizontal 
   }))
   expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
 })
+
+test('narrow shell keeps long links and code blocks inside the viewport width', async ({ page }) => {
+  const mock = await installApiMock(page)
+  const longUrl = 'https://example.com/very/long/path/that/never/breaks/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?q=bbbbbbbbbbbbbbbbbbbbbbbb'
+  const codeBlock = '```ts\nconst veryLongIdentifierName = someFunctionCall(argumentOne, argumentTwo, argumentThree)\n```'
+  const { posts } = mock.seedChannel('inbox', [longUrl, 'ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKL', codeBlock])
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  await page.getByTestId('channel-inbox').click()
+  await expect(page.getByTestId('timeline')).toBeVisible()
+  await expect(page.getByTestId('code-block')).toBeVisible()
+
+  // 横スクロールはコードブロック等の専用スクローラだけに閉じ込め、シェルと本文には出さない。
+  const timelineFit = await page.evaluate(() => {
+    const shell = document.querySelector('[data-testid="narrow-shell"]')!
+    const timeline = document.querySelector('[data-testid="timeline"]')!
+    return {
+      shellOverflow: shell.scrollWidth - shell.clientWidth,
+      timelineOverflow: timeline.scrollWidth - timeline.clientWidth,
+    }
+  })
+  expect(timelineFit.shellOverflow).toBeLessThanOrEqual(0)
+  expect(timelineFit.timelineOverflow).toBeLessThanOrEqual(0)
+
+  await page.getByTestId(`post-${posts[0]!.id}`).getByText('スレッドで返信').click()
+  await expect(page.getByTestId('thread-panel')).toBeVisible()
+  // パネルは右から差し込むので、登場アニメーションが終わってから幅を測る。
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const shell = document.querySelector('[data-testid="narrow-shell"]')!
+        const panel = document.querySelector('[data-testid="thread-panel"]')!
+        return Math.max(shell.scrollWidth - shell.clientWidth, panel.scrollWidth - panel.clientWidth)
+      }),
+    )
+    .toBeLessThanOrEqual(0)
+})
