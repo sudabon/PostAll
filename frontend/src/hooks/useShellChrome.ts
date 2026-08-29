@@ -18,6 +18,10 @@ export function useShellChrome() {
           { id: 'settings', label: '設定...', accelerator: 'CmdOrCtrl+,' },
           { type: 'separator' },
           { id: 'signOut', label: 'サインアウト' },
+          { type: 'separator' },
+          // Menu.setApplicationMenu は macOS の既定メニューごと置き換えるので、
+          // quit ロールを自前で置かないと Cmd+Q が効かない。
+          { type: 'role', role: 'quit' },
         ],
       },
       {
