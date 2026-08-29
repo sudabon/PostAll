@@ -327,12 +327,18 @@ test('narrow shell keeps long links and code blocks inside the viewport width', 
   await page.getByTestId(`post-${posts[0]!.id}`).getByText('スレッドで返信').click()
   await expect(page.getByTestId('thread-panel')).toBeVisible()
   // パネルは右から差し込むので、登場アニメーションが終わってから幅を測る。
+  // スレッドの縦スクローラも横には溢れさせない（コードブロックは自前のスクローラで横スクロールする）。
   await expect
     .poll(() =>
       page.evaluate(() => {
         const shell = document.querySelector('[data-testid="narrow-shell"]')!
         const panel = document.querySelector('[data-testid="thread-panel"]')!
-        return Math.max(shell.scrollWidth - shell.clientWidth, panel.scrollWidth - panel.clientWidth)
+        const scroller = panel.firstElementChild!
+        return Math.max(
+          shell.scrollWidth - shell.clientWidth,
+          panel.scrollWidth - panel.clientWidth,
+          scroller.scrollWidth - scroller.clientWidth,
+        )
       }),
     )
     .toBeLessThanOrEqual(0)

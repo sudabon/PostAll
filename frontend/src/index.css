@@ -220,6 +220,15 @@
     background: linear-gradient(to bottom, var(--material-edge), transparent);
   }
 
+  /* 縦スクローラは overflow-x が既定で visible のため auto に格上げされ、
+     はみ出した要素があると横スクロールバーが出る。iOS Safari は overflow:hidden の
+     要素も指で横に振れてしまうので、対応ブラウザでは clip まで上げる。
+     コード・表・Mermaid は各自の overflow-x-auto で従来どおり横スクロールできる。 */
+  .scroll-clip-x {
+    overflow-x: hidden;
+    overflow-x: clip;
+  }
+
   .shell-header {
     padding-top: var(--safe-top);
     padding-left: var(--safe-left);

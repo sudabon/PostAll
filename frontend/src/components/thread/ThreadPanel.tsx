@@ -115,7 +115,7 @@ export function ThreadPanel({
           </Button>
         </header>
         )}
-        <div className={cn('min-h-0 flex-1 overflow-y-auto p-3', fullScreen && 'shell-content-pad')}>
+        <div className={cn('min-h-0 flex-1 overflow-y-auto scroll-clip-x p-3', fullScreen && 'shell-content-pad')}>
           {isLoading ? <p className="text-body text-muted-foreground">読み込み中…</p> : null}
           {data?.root.deleted ? (
             <p className="rounded-lg bg-muted p-3 text-body text-muted-foreground">このポストは削除されました</p>
