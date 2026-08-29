@@ -25,18 +25,19 @@ PostAll を手元の端末へ入れる手順。macOS はビルドした Electron
 
 ### 1. フロントエンドを本番向けにビルドする
 
-Electron は `frontend/dist` を `app://localhost` から読む。このオリジンに API はいないので、**API のベース URL をビルド時に埋め込む必要がある**。ここを省くとサインインが通らない。
-
 ```bash
 cd frontend
 npm ci
-VITE_API_BASE_URL=https://memo.sudabon.com \
 VITE_SUPABASE_URL=https://<project-ref>.supabase.co \
 VITE_SUPABASE_PUBLISHABLE_KEY=<publishable-key> \
   npm run build
 ```
 
 `frontend/.env.local` があっても、コマンド行で渡した `VITE_*` が優先される。
+
+**`VITE_API_BASE_URL` は渡さない。** Electron は `frontend/dist` を `app://localhost` から読むため、ここに API の絶対 URL を入れるとクロスオリジンになる。API は CORS ヘッダを返さない（ブラウザ版は `memo.sudabon.com` が frontend と API を同一オリジンで配信する構成、iOS は CORS の適用外）ので、レンダラからの直接呼び出しは必ずブロックされる。
+
+代わりに `electron/main.mjs` がメインプロセスで `/health`・`/ready`・`/v1/*` を上流の API へ中継する。メインプロセスの `net.fetch` は CORS の制約を受けないため、レンダラからは同一オリジンに見える。上流の既定は `https://memo.sudabon.com` で、`POSTALL_API_BASE_URL` 環境変数で差し替えられる（Flutter 側の `--dart-define` と同じ名前・同じ既定値）。
 
 ### 2. .app を作る
 
@@ -70,13 +71,17 @@ cp -R dist/mac-arm64/PostAll.app /Applications/
 
 ### 5. 接続を確かめる
 
-サインイン画面が出れば API に届いている。接続先を後から変えるときは、アプリ内の **設定** で `API 接続先` / `Supabase プロジェクト URL` / `Supabase publishable key` を上書きできる。ここで入れた値はビルド時に埋め込んだ値より優先される。
+サインインしてチャネルが読めれば API に届いている。画面下部に「接続されていません。変更操作は利用できません」が出る場合は API へ到達できていない。
 
-保存先は次の 2 つ。トークンは macOS の `safeStorage` で暗号化される。
+アプリ内の **設定** で `Supabase プロジェクト URL` / `Supabase publishable key` を上書きできる。ここで入れた値はビルド時に埋め込んだ値より優先され、`postall-store.json` に永続化される。
+
+**`API 接続先` は空のままにする。** 埋めるとその絶対 URL へレンダラが直接リクエストし、上の CORS の問題に戻る。上流を変えたいときは、アプリを起動する側で `POSTALL_API_BASE_URL` を渡す。
+
+保存先は次の 2 つ。ディレクトリ名は `electron/package.json` の `name` に由来する。トークンは macOS の `safeStorage` で暗号化される。
 
 ```
-~/Library/Application Support/PostAll/postall-store.json    # ウィンドウ位置など
-~/Library/Application Support/PostAll/postall-secrets.bin   # 暗号化されたトークン
+~/Library/Application Support/postall-desktop/postall-store.json    # 設定とウィンドウ位置
+~/Library/Application Support/postall-desktop/postall-secrets.bin   # 暗号化されたトークン
 ```
 
 ### 更新する
@@ -161,7 +166,7 @@ flutter run --release -d <device-id> \
 |---|---|
 | 「開発元を検証できないため開けません」 | 未署名アプリの Gatekeeper。手順 4 の右クリック → 開く、または `xattr -dr com.apple.quarantine` |
 | ウィンドウが真っ白のまま | `frontend/dist` が無い状態で `npm run pack` した。手順 1 からやり直す |
-| サインインできない／API がエラーになる | `VITE_API_BASE_URL` を渡さずにビルドした。手順 1 からやり直すか、アプリ内の設定で `API 接続先` を入れる |
+| 「接続されていません。変更操作は利用できません」と出る | API へ到達できていない。アプリ内の設定で `API 接続先` が空か確認する（値が入っていると CORS で必ず失敗する）。空でも出るなら `POSTALL_API_BASE_URL` の指す上流に届いているかを確認する |
 | アイコンが Electron の既定のまま | `electron/build/icon.icns` が無い。`electron/package.json` の `build.mac.icon` が指す先を確認する |
 
 ### iOS
@@ -169,6 +174,7 @@ flutter run --release -d <device-id> \
 | 症状 | 原因と対処 |
 |---|---|
 | `flutter devices` に実機が出ない | デベロッパモードが未有効、または「このコンピュータを信頼」が未実施。手順 1 |
+| `Timed out waiting for all destinations` ／ `The developer disk image could not be mounted` | iPhone の画面がロックされている。iOS 17 以降は個別化された DDI をビルドのたびにマウントするため、ロック解除中でないと失敗する。ロックを解除したまま実行する。ビルドは 1 分以上かかるので **設定 > 画面表示と明るさ > 自動ロック > なし** にしておく。`xcrun devicectl device info ddiServices --device <id>` でマウント可否だけ先に確かめられる |
 | `Signing for "Runner" requires a development team` | Xcode で `Team` が未選択。手順 2 |
 | `Unable to install` / bundle id が衝突する | `Bundle Identifier` が他のアカウントで登録済み。自分だけの値へ変える。手順 2 |
 | インストールできたのに起動しない | 「信頼されていないデベロッパ」。手順 4 |

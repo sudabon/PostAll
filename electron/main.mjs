@@ -15,6 +15,8 @@ const persist = new Map()
 const secrets = new Map()
 
 function frontendDir() {
+  // テストから配信元を差し替えるための口。
+  if (process.env.POSTALL_FRONTEND_DIR) return process.env.POSTALL_FRONTEND_DIR
   if (app.isPackaged) {
     return path.join(process.resourcesPath, 'frontend')
   }
@@ -28,6 +30,36 @@ function resolveFrontendFile(pathname) {
   if (!candidate.startsWith(dist)) return path.join(dist, 'index.html')
   if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
   return path.join(dist, 'index.html')
+}
+
+// API のオリジン。既定値は Flutter 側（mobile/lib/state/settings.dart）と揃える。
+const apiOrigin = (process.env.POSTALL_API_BASE_URL || 'https://memo.sudabon.com').replace(/\/+$/, '')
+
+function isApiPath(pathname) {
+  return pathname === '/health' || pathname === '/ready' || pathname.startsWith('/v1/')
+}
+
+// レンダラのオリジンは app://localhost なので、API を直接呼ぶとクロスオリジンになる。
+// API は CORS ヘッダを返さない（ブラウザ版は同一オリジン配信、iOS は CORS の適用外）
+// ため、レンダラからの直接呼び出しは必ずブロックされる。メインプロセスの net.fetch は
+// CORS の制約を受けないので、ここで中継してレンダラには同一オリジンとして見せる。
+async function proxyToApi(request, url) {
+  const headers = new Headers(request.headers)
+  for (const name of ['origin', 'referer', 'host', 'connection']) headers.delete(name)
+  const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
+  try {
+    return await net.fetch(`${apiOrigin}${url.pathname}${url.search}`, {
+      method: request.method,
+      headers,
+      body: hasBody ? await request.text() : undefined,
+    })
+  } catch (err) {
+    // 上流へ届かないときは API と同じエラー形で返し、レンダラ側の判定に載せる。
+    return new Response(JSON.stringify({ code: 'upstream_unreachable', message: String(err) }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
 }
 
 function storePath() {
@@ -215,8 +247,9 @@ function registerProtocol() {
 
 app.whenReady().then(async () => {
   protocol.handle('app', (request) => {
-    const { pathname } = new URL(request.url)
-    const file = resolveFrontendFile(pathname)
+    const url = new URL(request.url)
+    if (isApiPath(url.pathname)) return proxyToApi(request, url)
+    const file = resolveFrontendFile(url.pathname)
     return net.fetch(pathToFileURL(file).href)
   })
   await loadStores()

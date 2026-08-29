@@ -95,7 +95,7 @@ export function ChannelTree() {
   return (
     <div className="flex h-full min-w-0 flex-col" data-testid="channel-tree">
       <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-caption font-semibold uppercase text-muted-foreground">チャネル</span>
+        <span className="text-body font-semibold uppercase text-muted-foreground">チャネル</span>
         <button
           type="button"
           className="rounded-lg p-1.5 text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:text-disabled-foreground"
