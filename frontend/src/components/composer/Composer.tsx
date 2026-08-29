@@ -233,6 +233,8 @@ export function Composer({
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
+              // IME 変換中（変換候補の確定 Enter）は送信しない
+              if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
               const pos = e.currentTarget.selectionStart ?? value.length
               if (isInsideUnclosedFence(value, pos)) return
               e.preventDefault()
