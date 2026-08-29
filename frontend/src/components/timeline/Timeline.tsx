@@ -117,7 +117,9 @@ export function Timeline({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    // min-w-0: 横並び flex の子は既定の min-width:auto で最小コンテンツ幅まで広がるため、
+    // 長い URL やコードブロックがあると iPhone 幅を超えて横スクロールが生まれる。
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         ref={scroller}
         onScroll={onScroll}
