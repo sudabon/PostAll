@@ -203,9 +203,10 @@ export function Composer({
         void platform.ingestFiles([...e.dataTransfer.files]).then(addPicked)
       }}
     >
+      {/* 背景バーは全幅のまま下端を支え、入力カードだけタイムライン本文と同じ読み幅に揃える。 */}
       <div
         className={cn(
-          'rounded-xl border border-input bg-background shadow-sm focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring',
+          'mx-auto w-full max-w-reading rounded-xl border border-input bg-background shadow-sm focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring',
           disabled && 'shadow-none',
         )}
       >

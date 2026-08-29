@@ -172,6 +172,9 @@
   --leading-brand: 1.2;
   --text-brand--line-height: var(--leading-brand);
   --font-script: "Snell Roundhand", "Apple Chancery", "Segoe Script", "Brush Script MT", cursive;
+  /* 本文とコンポーザの読み幅。14px の日本語で 1 行 ≈55 文字に収まり、
+     コードブロックや 4 列程度の表も窮屈にならない上限。max-w-reading として使う。 */
+  --container-reading: 54rem;
   --shadow-sm: var(--elevation-sm);
   --shadow-md: var(--elevation-md);
   --shadow-lg: var(--elevation-lg);
