@@ -639,3 +639,29 @@ test('reveals the post editor inside a narrow viewport', async ({ page }) => {
   }))
   expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
 })
+
+test('renames a channel by double click and commits on outside click', async ({ page }) => {
+  await installApiMock(page)
+  await page.goto('/')
+  await expect(page.getByTestId('channel-tree')).toBeVisible()
+
+  await page.getByTestId('new-channel-button').click()
+  await page.getByTestId('channel-name-input').fill('inbox')
+  await page.getByTestId('channel-name-input').press('Enter')
+  await expect(page.getByTestId('channel-inbox')).toBeVisible()
+
+  await page.getByTestId('channel-inbox').dblclick()
+  const input = page.getByTestId('channel-name-input')
+  await expect(input).toHaveValue('inbox')
+  // 選択中の行の文字色を継承すると背景と同色になり、名前が見えなくなる
+  const colors = await input.evaluate((el) => {
+    const style = getComputedStyle(el)
+    return { color: style.color, background: style.backgroundColor }
+  })
+  expect(colors.color).not.toBe(colors.background)
+
+  await input.fill('archive')
+  await page.getByTestId('channel-tree').click({ position: { x: 5, y: 5 } })
+  await expect(page.getByTestId('channel-archive')).toBeVisible()
+  await expect(page.getByTestId('channel-name-input')).toHaveCount(0)
+})
