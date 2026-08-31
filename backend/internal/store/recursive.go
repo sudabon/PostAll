@@ -20,6 +20,9 @@ select exists(select 1 from tree where channel_id = $2)`
 	return ok, err
 }
 
+// CountLivePostsInTree は、チャネル削除を阻むポスト数を数える。論理削除された
+// 親ポストの返信はタイムラインから辿れず、削除済みのスレッドの一部として扱うため
+// 数えない。
 func (q *Queries) CountLivePostsInTree(ctx context.Context, id uuid.UUID) (int64, error) {
 	const query = `
 with recursive tree (channel_id) as (
@@ -31,7 +34,9 @@ with recursive tree (channel_id) as (
 select count(*)::bigint
 from posts p
 inner join tree t on p.channel_id = t.channel_id
-where p.deleted_at is null`
+left join posts root on root.id = p.thread_root_id
+where p.deleted_at is null
+  and (p.thread_root_id is null or root.deleted_at is null)`
 	var n int64
 	err := q.db.QueryRow(ctx, query, id).Scan(&n)
 	return n, err
