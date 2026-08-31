@@ -11,7 +11,7 @@ import {
 } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { Channel } from '@/api/client'
 import { buildForest, descendantIds, flattenVisible } from '@/lib/tree'
 import { useChannelMutations, useChannels, errorMessage } from '@/hooks/useChannels'
@@ -247,6 +247,7 @@ function TreeRow({
         <NameForm
           initial={channel.name}
           disabled={mutationDisabled}
+          submitOnBlur
           onSubmit={onRename}
           onCancel={() => useUi.getState().setRenaming(null)}
         />
@@ -305,34 +306,62 @@ function NameForm({
   initial = '',
   placeholder,
   disabled = false,
+  submitOnBlur = false,
   onSubmit,
   onCancel,
 }: {
   initial?: string
   placeholder?: string
   disabled?: boolean
+  /** フォーカスが外れた時点で確定する（名前の変更） */
+  submitOnBlur?: boolean
   onSubmit: (name: string) => void
   onCancel: () => void
 }) {
   const [value, setValue] = useState(initial)
+  // 確定・取り消しの直後に発火する blur で二重に確定させない。
+  // 入力が再開されたら解除して、失敗した変更をやり直せるようにする。
+  const settled = useRef(false)
+
+  const finish = (run: () => void) => {
+    if (settled.current) return
+    settled.current = true
+    run()
+  }
+
   return (
     <form
-      className="px-2 py-1"
+      className="min-w-0 flex-1 px-2 py-1"
       onSubmit={(e) => {
         e.preventDefault()
         if (disabled) return
-        if (value.trim()) onSubmit(value.trim())
+        if (value.trim()) finish(() => onSubmit(value.trim()))
       }}
     >
       <input
         autoFocus
         data-testid="channel-name-input"
-        className="w-full rounded-lg border border-input bg-background px-2 py-1 text-body focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className={cn(
+          'w-full rounded-lg border border-input bg-background px-2 py-1 text-body',
+          // 選択中の行は text-primary-foreground を継承する。色を明示しないと
+          // 背景と同色の文字になり、入っている名前が見えなくなる。
+          'text-foreground',
+          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+        )}
         placeholder={placeholder}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          settled.current = false
+          setValue(e.target.value)
+        }}
         onKeyDown={(e) => {
-          if (e.key === 'Escape') onCancel()
+          if (e.key === 'Escape') finish(onCancel)
+        }}
+        onBlur={() => {
+          if (!submitOnBlur) return
+          const name = value.trim()
+          if (disabled || !name || name === initial.trim()) finish(onCancel)
+          else finish(() => onSubmit(name))
         }}
       />
     </form>
