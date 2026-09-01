@@ -21,6 +21,11 @@ function renderComposer(
   }
 }
 
+/** textarea の値を差し替え、カーソルを末尾に置く。入力 1 回ぶんに相当する。 */
+function type(value: string, input: HTMLTextAreaElement) {
+  fireEvent.change(input, { target: { value, selectionStart: value.length, selectionEnd: value.length } })
+}
+
 describe('Composer', () => {
   afterEach(() => {
     cleanup()
@@ -62,6 +67,94 @@ describe('Composer', () => {
     renderComposer()
     fireEvent.click(screen.getByTestId('composer-format-codeBlock'))
     expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toContain('```')
+  })
+
+  it('expands three backticks typed at the start of a line', async () => {
+    renderComposer()
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement
+    type('``', input)
+    type('```', input)
+    expect(input.value).toBe('```\n\n```')
+    // カーソルは言語指定の位置ではなくフェンスに囲まれた本文の行に置く
+    await waitFor(() => expect(input.selectionStart).toBe(4))
+    expect(input.selectionEnd).toBe(4)
+  })
+
+  it('does not expand a pasted text that contains three backticks', () => {
+    renderComposer()
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement
+    // 貼り付けは 2 文字以上まとめて増える
+    type('```js', input)
+    expect(input.value).toBe('```js')
+  })
+
+  it('does not expand three backticks typed in the middle of a line', () => {
+    renderComposer()
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement
+    type('x``', input)
+    type('x```', input)
+    expect(input.value).toBe('x```')
+  })
+
+  it('does not expand three backticks typed inside an unclosed fence', () => {
+    renderComposer()
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement
+    type('```js\nfoo\n``', input)
+    type('```js\nfoo\n```', input)
+    expect(input.value).toBe('```js\nfoo\n```')
+  })
+
+  it('indents a list line with Tab and restores it with Shift+Tab', async () => {
+    renderComposer()
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement
+    type('- a\n- b', input)
+
+    input.setSelectionRange(0, 7)
+    expect(fireEvent.keyDown(input, { key: 'Tab' })).toBe(false)
+    await waitFor(() => expect(input.value).toBe('    - a\n    - b'))
+    // 複数行の選択が解除されず、インデント後の同じ本文を指したままである
+    await waitFor(() => expect([input.selectionStart, input.selectionEnd]).toEqual([0, 15]))
+
+    expect(fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })).toBe(false)
+    await waitFor(() => expect(input.value).toBe('- a\n- b'))
+    await waitFor(() => expect([input.selectionStart, input.selectionEnd]).toEqual([0, 7]))
+  })
+
+  it('leaves Tab to move focus outside a list', () => {
+    renderComposer()
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement
+    // fireEvent は preventDefault されなかったときだけ true を返す。jsdom は Tab の
+    // フォーカス移動を実装しないので、既定動作を残したことをこれで確かめる。
+    expect(fireEvent.keyDown(input, { key: 'Tab' })).toBe(true)
+    expect(fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })).toBe(true)
+    expect(input.value).toBe('')
+
+    type('ふつうの文章', input)
+    input.setSelectionRange(3, 3)
+    expect(fireEvent.keyDown(input, { key: 'Tab' })).toBe(true)
+    expect(fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })).toBe(true)
+    expect(input.value).toBe('ふつうの文章')
+
+    type('```js\nconst x = 1\n```', input)
+    input.setSelectionRange(8, 8)
+    expect(fireEvent.keyDown(input, { key: 'Tab' })).toBe(true)
+    expect(fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })).toBe(true)
+    expect(input.value).toBe('```js\nconst x = 1\n```')
+
+    type('> 引用', input)
+    input.setSelectionRange(4, 4)
+    expect(fireEvent.keyDown(input, { key: 'Tab' })).toBe(true)
+    expect(fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })).toBe(true)
+    expect(input.value).toBe('> 引用')
+  })
+
+  it('leaves Shift+Tab to move focus when no line can be outdented', () => {
+    renderComposer()
+    const input = screen.getByTestId('composer-input') as HTMLTextAreaElement
+    type('- a', input)
+    input.setSelectionRange(3, 3)
+    expect(fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })).toBe(true)
+    expect(input.value).toBe('- a')
   })
 
   it('rejects an 11th attachment', async () => {
