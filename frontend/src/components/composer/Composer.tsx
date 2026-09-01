@@ -5,9 +5,9 @@ import { usePlatform, type PickedFile } from '@/platform'
 import { useUi } from '@/state/ui'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { isInsideUnclosedFence } from '@/lib/fence'
+import { expandFenceTrigger, isInsideUnclosedFence } from '@/lib/fence'
 import { isTouchDevice } from '@/lib/viewport'
-import { applyFormat, type FormatAction } from '@/lib/markdown-format'
+import { applyFormat, indentLines, type FormatAction } from '@/lib/markdown-format'
 import { FormatToolbar } from './FormatToolbar'
 import { ACCEPT_ATTR, checkAttachment, formatBytes, inferMime, isImageType } from '@/lib/attachments'
 
@@ -244,17 +244,23 @@ export function Composer({
     }
   }
 
+  /** setValue で本文を書き換えたあと、描画を待ってからカーソルを置き直す。 */
+  const restoreSelection = (start: number, end: number) => {
+    const el = area.current
+    requestAnimationFrame(() => {
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(start, end)
+    })
+  }
+
   const runFormat = (action: FormatAction) => {
     const el = area.current
     const start = el?.selectionStart ?? value.length
     const end = el?.selectionEnd ?? start
     const next = applyFormat(action, value, start, end)
     setValue(next.value)
-    requestAnimationFrame(() => {
-      if (!el) return
-      el.focus()
-      el.setSelectionRange(next.selectionStart, next.selectionEnd)
-    })
+    restoreSelection(next.selectionStart, next.selectionEnd)
   }
 
   return (
@@ -310,7 +316,19 @@ export function Composer({
           )}
           placeholder={disabled ? 'チャネルを選択してください' : placeholder}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value
+            const caret = e.target.selectionStart ?? next.length
+            // IME 変換中は展開しない。1 文字ずつ増えて見える変換途中を拾わないための保険。
+            const composing = (e.nativeEvent as InputEvent).isComposing
+            const expanded = composing ? null : expandFenceTrigger(value, next, caret)
+            if (!expanded) {
+              setValue(next)
+              return
+            }
+            setValue(expanded.value)
+            restoreSelection(expanded.cursor, expanded.cursor)
+          }}
           onPaste={(e) => {
             const files = [...e.clipboardData.files]
             if (files.length === 0) return
@@ -322,6 +340,18 @@ export function Composer({
             void platform.ingestFiles(files).then(addPicked)
           }}
           onKeyDown={(e) => {
+            if (e.key === 'Tab') {
+              const start = e.currentTarget.selectionStart ?? value.length
+              const end = e.currentTarget.selectionEnd ?? start
+              const next = indentLines(value, start, end, { outdent: e.shiftKey })
+              // 箇条書きでない行では Tab を奪わない。Tab は textarea から抜ける唯一の
+              // キーボード手段であり（送信は Shift+Enter）、奪うとここに閉じ込められる。
+              if (!next) return
+              e.preventDefault()
+              setValue(next.value)
+              restoreSelection(next.selectionStart, next.selectionEnd)
+              return
+            }
             // Enter は改行、確定は Shift+Enter（編集モードの保存も同じ操作）
             if (e.key !== 'Enter' || !e.shiftKey) return
             // IME 変換中（変換候補の確定 Enter）は確定しない
