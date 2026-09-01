@@ -2,8 +2,8 @@
 
 `apple-design-ui-modernization` で確定したトークンの正本です。実体は
 `frontend/src/index.css`（色・タイポグラフィ・角丸・エレベーション・材質）と
-`frontend/src/lib/motion/`（バネ・ジェスチャ定数）にあります。Flutter 版など
-他プラットフォームへ意匠を展開するときは、この表の値を移植してください。
+`frontend/src/lib/motion/`（バネ・ジェスチャ定数）にあります。他プラットフォームへ
+意匠を展開するときは、この表の値を移植してください。
 
 ## 1. 色（oklch）
 

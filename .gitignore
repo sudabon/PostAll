@@ -45,12 +45,6 @@ frontend/playwright-report/
 frontend/test-results/
 frontend/blob-report/
 
-# Flutter
-mobile/.dart_tool/
-mobile/.flutter-plugins
-mobile/.flutter-plugins-dependencies
-mobile/build/
-
 # OS
 .DS_Store
 

@@ -155,7 +155,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 
 ### 3.8 API キーを控える
 
-- [x] Project Settings → API Keys の **publishable key**（クライアント配布用）を控える。フロントの `VITE_SUPABASE_PUBLISHABLE_KEY` と iOS の `--dart-define=POSTALL_SUPABASE_PUBLISHABLE_KEY` に使う。
+- [x] Project Settings → API Keys の **publishable key**（クライアント配布用）を控える。フロントの `VITE_SUPABASE_PUBLISHABLE_KEY` に使う。
 - [x] secret / service_role キーは**どこにも配置しない**。この構成では使わない。
 
 

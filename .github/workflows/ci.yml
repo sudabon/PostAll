@@ -51,23 +51,6 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
 
-  flutter:
-    runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: mobile
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          # pubspec.lock を解決したローカル環境と揃える。stable 任せだと
-          # SDK が上がった際に lock が再解決され、analyzer と source_gen が非互換になる。
-          flutter-version: "3.32.8"
-          channel: stable
-      - run: flutter pub get
-      - run: flutter analyze
-      - run: flutter test
-
   openapi-generated:
     runs-on: ubuntu-latest
     steps:
@@ -76,15 +59,6 @@ jobs:
         with:
           go-version: "1.26"
           cache-dependency-path: backend/go.sum
-      - uses: subosito/flutter-action@v2
-        with:
-          # pubspec.lock を解決したローカル環境と揃える。stable 任せだと
-          # SDK が上がった際に lock が再解決され、analyzer と source_gen が非互換になる。
-          flutter-version: "3.32.8"
-          channel: stable
-      - name: Install mobile dependencies
-        working-directory: mobile
-        run: flutter pub get
       - name: Generate from OpenAPI and fail on drift
         run: |
           make generate
