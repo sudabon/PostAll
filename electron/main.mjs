@@ -32,7 +32,7 @@ function resolveFrontendFile(pathname) {
   return path.join(dist, 'index.html')
 }
 
-// API のオリジン。既定値は Flutter 側（mobile/lib/state/settings.dart）と揃える。
+// API のオリジン。
 const apiOrigin = (process.env.POSTALL_API_BASE_URL || 'https://memo.sudabon.com').replace(/\/+$/, '')
 
 function isApiPath(pathname) {

@@ -12,8 +12,6 @@
 | Node.js | 22 以上 | frontend / Electron | `node -v` |
 | Docker | 起動していること | `supabase start`、テストの testcontainers | `docker info` |
 | Supabase CLI | 最新 | ローカルスタック、DB ダンプ | `supabase --version` |
-| Flutter | 3.32 系 | iOS クライアント（不要なら省略可） | `flutter --version` |
-| Xcode | Flutter を使う場合 | iOS シミュレータ・実機 | `xcodebuild -version` |
 | Vercel CLI | 最新（任意） | `vercel dev` で web+api を同時起動 | `npx vercel --version` |
 
 macOS を想定している。`emoji-sync` を試すには Supabase のローカル Storage が要るため、Docker は必須と考えてよい。
@@ -22,7 +20,6 @@ macOS を想定している。`emoji-sync` を試すには Supabase のローカ
 
 ```bash
 brew install go node docker supabase/tap/supabase
-brew install --cask flutter        # iOS が必要な場合のみ
 ```
 
 ## 2. リポジトリの取得
@@ -213,31 +210,11 @@ cd ../electron && npm install && npm start
 
 フロントを変更したら `npm run build` をやり直す。パッケージング（macOS, 未署名）は `npm run pack`。
 
-## 12. iOS（Flutter）を動かす
-
-接続先は `--dart-define` で渡す。アプリ内の「接続設定」から実行時に上書きもできる。
+## 12. テストと lint
 
 ```bash
-cd mobile
-flutter pub get
-flutter run -d iphone \
-  --dart-define=POSTALL_API_BASE_URL=http://127.0.0.1:8080 \
-  --dart-define=POSTALL_SUPABASE_URL=http://127.0.0.1:54321 \
-  --dart-define=POSTALL_SUPABASE_PUBLISHABLE_KEY=<publishable key>
-```
-
-Mermaid 描画用の `assets/mermaid/mermaid.min.js` はリポジトリに含まれている。更新するときだけ、frontend の依存を入れたうえで取り込む。
-
-```bash
-cd frontend && npm install
-make -C mobile assets
-```
-
-## 13. テストと lint
-
-```bash
-make test       # go test ./... / vitest / flutter test
-make lint       # go vet / oxlint + eslint / flutter analyze
+make test       # go test ./... / vitest
+make lint       # go vet / oxlint + eslint
 make typecheck  # tsc -b
 ```
 
@@ -249,12 +226,12 @@ npx playwright install
 npm run test:e2e     # app（:4173）と pwa（:4174）の 2 プロジェクト
 ```
 
-## 14. コード生成
+## 13. コード生成
 
 `api/openapi.yaml` を変更したら生成物を更新する。CI は生成物の差分を `git diff --exit-code` で落とす。
 
 ```bash
-make generate            # backend（oapi-codegen）+ mobile（swagger_parser）
+make generate            # backend（oapi-codegen）
 cd frontend && npm run generate   # src/api/schema.d.ts
 cd backend && go tool sqlc generate  # SQL を変更したとき
 ```

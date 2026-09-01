@@ -1,8 +1,8 @@
 # ARCHITECTURE
 
-PostAll は Slack 風のポスト型メモアプリケーションで、macOS（Electron）・ブラウザおよび iPhone の PWA・iOS ネイティブ（Flutter）が、Vercel 上の単一の Go API と Supabase（PostgreSQL + Auth + Storage + Realtime）を共有する。iPhone の常用経路は Safari / ホーム画面 PWA であり、Flutter は有償の Developer Program 向けの選択肢として残している。
+PostAll は Slack 風のポスト型メモアプリケーションで、macOS（Electron）とブラウザおよび iPhone の PWA が、Vercel 上の単一の Go API と Supabase（PostgreSQL + Auth + Storage + Realtime）を共有する。iPhone の経路は Safari / ホーム画面 PWA である。
 
-3 クライアントの契約は `api/openapi.yaml` に一本化し、Go のサーバスタブ（oapi-codegen）・TypeScript の型（openapi-typescript）・Dart のモデル（swagger_parser）をすべてそこから生成する。手書きの型定義をクライアントごとに持たないことが、この構成の中心的な制約になっている。
+クライアントの契約は `api/openapi.yaml` に一本化し、Go のサーバスタブ（oapi-codegen）と TypeScript の型（openapi-typescript）をそこから生成する。手書きの型定義をクライアントごとに持たないことが、この構成の中心的な制約になっている。
 
 - API 一覧: [API_REFERENCE.md](API_REFERENCE.md)
 - テーブル定義: [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md)
@@ -16,7 +16,6 @@ flowchart LR
     subgraph clients["クライアント"]
         electron["Electron<br/>(macOS)"]
         pwa["PWA<br/>(ブラウザ / iPhone)"]
-        ios["Flutter<br/>(iOS)"]
     end
 
     subgraph web["React SPA (frontend/)"]
@@ -42,10 +41,8 @@ flowchart LR
     pwa --> spa
     spa --> static
     spa -- "Bearer JWT" --> api
-    ios -- "Bearer JWT" --> api
 
     spa -.-> auth
-    ios -.-> auth
     electron -.-> auth
 
     api -- "JWKS 取得" --> auth
@@ -53,11 +50,9 @@ flowchart LR
     api -- "署名付き URL 発行" --> storage
 
     spa -- "署名付き URL で直接 PUT/GET" --> storage
-    ios -- "署名付き URL で直接 PUT/GET" --> storage
 
     pg -- "トリガー: realtime.send()" --> realtime
     realtime -- "subscribe" --> spa
-    realtime -- "subscribe" --> ios
 
     cron --> api
     gha -- "keep-alive / 保守" --> api
@@ -68,15 +63,14 @@ flowchart LR
 
 ### 1. OpenAPI を単一の契約とする
 
-`api/openapi.yaml` が唯一の正で、`make generate` が backend と mobile の生成物を作り直す。CI は `git diff --exit-code` で生成物の追従漏れを落とす。frontend は `npm run generate` で `src/api/schema.d.ts` を再生成する。
+`api/openapi.yaml` が唯一の正で、`make generate` が backend の生成物を作り直す。CI は `git diff --exit-code` で生成物の追従漏れを落とす。frontend は `npm run generate` で `src/api/schema.d.ts` を再生成する。
 
 | 生成先 | ツール | 出力 |
 |---|---|---|
 | Go | oapi-codegen | `backend/internal/api/openapi.gen.go`（`ServerInterface` とルーティング） |
 | TypeScript | openapi-typescript | `frontend/src/api/schema.d.ts`（型のみ。クライアントは手書き） |
-| Dart | swagger_parser + build_runner | `mobile/lib/api/generated/models/`（モデルのみ。クライアントは手書き） |
 
-Dart と TypeScript は「モデルだけ生成し、HTTP クライアントは手書き」で統一している。生成 REST クライアントは認証・リトライ・カーソル処理の差し込み口が乏しく、3 クライアントで挙動を揃えにくいため採用していない。
+TypeScript は「型だけ生成し、HTTP クライアントは手書き」としている。生成 REST クライアントは認証・リトライ・カーソル処理の差し込み口が乏しいため採用していない。
 
 ### 2. バックエンドのレイヤー構成
 
@@ -130,7 +124,7 @@ flowchart LR
 - JWKS は `internal/auth.Verifier` がキャッシュし、未知の `kid` は TTL・クールダウン付きで再取得する（`singleflight` で同時再取得を 1 本に畳む）。JWKS 到達不可は 401 ではなく 503 を返し、鍵配布の一時障害をサインアウト扱いにしない。
 - `sub` から `users` 行を解決（無ければ作成）して `Principal{UserID, AuthSubject}` を context に載せる。以降のサービス層は Supabase の概念を知らない。
 - 認証をスキップするのは `/health`・`/ready`・`/internal/*` の 4 経路のみ。`/internal/*` は `CRON_SECRET` の Bearer を定数時間比較で検証する。
-- トークン保管はプラットフォーム任せ: iOS は Keychain、Electron は `safeStorage`、ブラウザは永続ストレージへ平文で置かない。
+- トークン保管はプラットフォーム任せ: Electron は `safeStorage`、ブラウザは永続ストレージへ平文で置かない。
 
 ### 4. 変更同期（SSE を使わない理由）
 
@@ -157,7 +151,7 @@ sequenceDiagram
 
 - Realtime のペイロードはイベント ID のみで、本文を載せない。購読者は必ず API 経由で取り直すため、RLS を通さない経路でデータが漏れる余地を作らない。
 - 初回接続は `after=latest`。履歴を 0 番から走査しない。
-- Realtime が切れたら 15 秒間隔のポーリングへ退避し、指数バックオフで再接続する（`frontend/src/hooks/useChangeSync.ts`、`mobile/lib/state/sync.dart`）。
+- Realtime が切れたら 15 秒間隔のポーリングへ退避し、指数バックオフで再接続する（`frontend/src/hooks/useChangeSync.ts`）。
 - 通知は**ベストエフォート**。`postall_notify_change_event()` は `realtime.send` の失敗を握り潰し、`postall_notify_failures` に日次カウントだけ残す。通知の失敗で本体の書き込みをロールバックしない。
 - `change_events` は 30 日保持。`POST /internal/events/prune` が古い行を削除し、削除済み最大 ID を `change_event_retention` に記録する。保持期間外のカーソルには `resetRequired: true` を返し、クライアントは表示中データを全再取得して復旧する。
 
@@ -250,7 +244,6 @@ PostAll/
 │       ├── components/     # 機能単位（channels / timeline / thread / ...）
 │       └── pwa/            # Service Worker 登録と更新導線
 ├── electron/          # メインプロセス、preload、electron-builder 設定
-├── mobile/            # Flutter（iOS）。Riverpod + 手書き API クライアント
 ├── emoji/             # カスタム絵文字 png（emoji-sync が Storage と DB へ同期）
 ├── supabase/          # ローカルスタック設定。スキーマ本体は置かない
 └── openspec/          # 仕様と change 管理
@@ -260,11 +253,11 @@ PostAll/
 
 frontend の React コードは Electron と PWA で完全に共有し、差異は `frontend/src/platform/` の抽象で吸収する（`browser.ts` / `electron.ts` を `create.ts` が選択し、テストでは `fake.ts` を使う）。認証リダイレクト URI、トークン保管、外部リンクの開き方がここに集約される。
 
-iOS ネイティブは Flutter で独立実装だが、API 契約とドメインの語彙（チャネル階層、keyset カーソル、変更イベント、`after=latest`、`resetRequired`）は共通で、`mobile/lib/util/` と `frontend/src/lib/` に対応するユーティリティが並ぶ。Mermaid の描画だけは WebView に React 側と同一の `mermaid.min.js` バンドルを載せて揃えている。iPhone では同じ React シェルを PWA としても配信し、768px 未満ではチャネル一覧 → タイムライン → スレッドの階層画面、それ以上では 3 ペインになる。
+iPhone では同じ React シェルを PWA として配信し、768px 未満ではチャネル一覧 → タイムライン → スレッドの階層画面、それ以上では 3 ペインになる。
 
-| 関心事 | frontend（Electron / PWA） | mobile（iOS） |
+| 関心事 | Electron（macOS） | PWA（ブラウザ / iPhone） |
 |---|---|---|
-| 状態管理 | TanStack Query + Zustand | Riverpod |
-| トークン保管 | `safeStorage`（Electron）/ origin の `localStorage`（ブラウザ / PWA） | Keychain（flutter_secure_storage） |
-| 接続設定 | `VITE_*` 環境変数 | `--dart-define` + アプリ内設定で上書き |
-| リダイレクト URI | `https://memo.sudabon.com/auth/callback`（PWA）/ `postall://auth/callback`（Electron） | `postall://auth/callback` |
+| 状態管理 | TanStack Query + Zustand | TanStack Query + Zustand |
+| トークン保管 | `safeStorage` | origin の `localStorage`（永続ストレージへ平文で置かない） |
+| 接続設定 | `POSTALL_API_BASE_URL` 環境変数 | `VITE_*` 環境変数 |
+| リダイレクト URI | `postall://auth/callback` | `https://memo.sudabon.com/auth/callback` |
