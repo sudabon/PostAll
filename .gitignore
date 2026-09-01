@@ -60,6 +60,7 @@ mobile/build/
 .serena/
 
 # CodingAgent
+.agents/
 .claude/
 .codex/
 .cursor/
