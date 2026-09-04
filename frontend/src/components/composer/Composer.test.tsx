@@ -60,7 +60,7 @@ describe('Composer', () => {
     const input = screen.getByTestId('composer-input')
     fireEvent.change(input, { target: { value: 'こんにちは' } })
     fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('こんにちは', []))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('こんにちは', [], []))
   })
 
   it('inserts a code fence template', () => {
@@ -214,7 +214,7 @@ describe('Composer', () => {
     )
     expect(screen.getByTestId('composer-input')).toHaveValue('切断中の下書き')
     fireEvent.click(screen.getByRole('button', { name: '送信' }))
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('切断中の下書き', []))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('切断中の下書き', [], []))
   })
 })
 
@@ -284,7 +284,39 @@ describe('Composer edit mode', () => {
     fireEvent.change(screen.getByTestId('composer-input'), { target: { value: 'edited body' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('edited body', ['attachment-1']))
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith('edited body', ['attachment-1'], [
+        {
+          id: 'attachment-1',
+          fileName: 'keep.txt',
+          contentType: 'text/plain',
+          sizeBytes: 4,
+          checksum: '',
+          createdAt: '',
+        },
+      ]),
+    )
+  })
+
+  it('passes attachment metadata for an optimistic edit', async () => {
+    const { onSubmit } = renderEditor({ initialAttachments: [keepAttachment] })
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() =>
+      expect(onSubmit).toHaveBeenCalledWith(
+        'original body',
+        ['attachment-1'],
+        [
+          expect.objectContaining({
+            id: 'attachment-1',
+            fileName: 'keep.txt',
+            contentType: 'text/plain',
+            sizeBytes: 4,
+          }),
+        ],
+      ),
+    )
   })
 
   it('saves on Shift+Enter like a new post', async () => {
@@ -295,7 +327,14 @@ describe('Composer edit mode', () => {
     fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
 
     await waitFor(() =>
-      expect(onSubmit).toHaveBeenCalledWith('edited body', ['attachment-1', 'attachment-2']),
+      expect(onSubmit).toHaveBeenCalledWith(
+        'edited body',
+        ['attachment-1', 'attachment-2'],
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'attachment-1', fileName: 'keep.txt' }),
+          expect.objectContaining({ id: 'attachment-2', fileName: 'remove.txt' }),
+        ]),
+      ),
     )
   })
 
@@ -307,6 +346,12 @@ describe('Composer edit mode', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('本文または添付のいずれかが必要です')
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('shows an initial save error before the next submission', () => {
+    renderEditor({ initialError: '保存に失敗しました。入力は保持されています。' })
+
+    expect(screen.getByRole('alert')).toHaveTextContent('保存に失敗しました。入力は保持されています。')
   })
 
   it('neither reads nor writes the new-post draft', async () => {

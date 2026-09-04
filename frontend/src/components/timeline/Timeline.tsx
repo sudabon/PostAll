@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { Post } from '@/api/client'
+import type { Attachment, Post } from '@/api/client'
 import { flattenPages, usePostMutations, useTimeline } from '@/hooks/usePosts'
 import { formatDateLabel, formatTime, localDateKey } from '@/lib/dates'
 import { useUi } from '@/state/ui'
@@ -177,9 +177,9 @@ export function Timeline({
                   post={post}
                   highlighted={post.id === targetPostId}
                   mutationDisabled={!canMutate}
-                  onSave={async (body, attachmentIds) => {
-                    await mutations.edit.mutateAsync({ id: post.id, body, attachmentIds })
+                  onSave={(body, _attachmentIds, attachments) => {
                     useUi.getState().setEditingPost(null)
+                    mutations.edit.mutate({ id: post.id, body, attachments, postUpdatedAt: post.updatedAt })
                   }}
                   onDelete={() => mutations.remove.mutate(post.id)}
                 />
@@ -216,7 +216,7 @@ function PostRow({
   post: Post
   highlighted: boolean
   mutationDisabled: boolean
-  onSave: (body: string, attachmentIds: string[]) => Promise<void>
+  onSave: (body: string, attachmentIds: string[], attachments: Attachment[]) => void | Promise<void>
   onDelete: () => void
 }) {
   // 行ごとに真偽値で購読するので、編集の開始・終了で再描画されるのは当該行だけになる

@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { m, useReducedMotion } from 'motion/react'
 import { X } from 'lucide-react'
-import type { Post } from '@/api/client'
+import type { Attachment, Post } from '@/api/client'
 import { usePostMutations, useThread } from '@/hooks/usePosts'
 import { formatDateTime } from '@/lib/dates'
 import { THREAD_MAX_WIDTH, THREAD_MIN_WIDTH, useUi } from '@/state/ui'
@@ -138,9 +138,9 @@ export function ThreadPanel({
               reply={reply}
               highlighted={reply.id === targetReplyId}
               mutationDisabled={!canMutate}
-              onSave={async (body, attachmentIds) => {
-                await mutations.edit.mutateAsync({ id: reply.id, body, attachmentIds })
+              onSave={(body, _attachmentIds, attachments) => {
                 useUi.getState().setEditingPost(null)
+                mutations.edit.mutate({ id: reply.id, body, attachments, postUpdatedAt: reply.updatedAt })
               }}
               onDelete={() => mutations.remove.mutate(reply.id)}
             />
@@ -171,7 +171,7 @@ function ThreadReply({
   reply: Post
   highlighted: boolean
   mutationDisabled: boolean
-  onSave: (body: string, attachmentIds: string[]) => Promise<void>
+  onSave: (body: string, attachmentIds: string[], attachments: Attachment[]) => void | Promise<void>
   onDelete: () => void
 }) {
   // 返信ごとに真偽値で購読するので、編集の開始・終了で再描画されるのは当該返信だけになる

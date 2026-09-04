@@ -548,6 +548,139 @@ test('opens the post editor in place instead of a modal', async ({ page }) => {
   await expect(page.getByTestId('post-editor')).toHaveCount(0)
 })
 
+test('shows an edited post before the delayed save response arrives', async ({ page }) => {
+  const mock = await installApiMock(page)
+  const { posts } = mock.seedChannel('optimistic-edit', ['before optimistic edit'])
+  let releaseResponse!: () => void
+  const responseGate = new Promise<void>((resolve) => {
+    releaseResponse = resolve
+  })
+  await page.route('**/v1/posts/**', async (route) => {
+    if (route.request().method() === 'PATCH') await responseGate
+    await route.fallback()
+  })
+  await page.goto('/')
+  await page.getByTestId('channel-optimistic-edit').click()
+
+  const row = page.getByTestId(`post-${posts[0]!.id}`)
+  await row.hover()
+  await row.getByRole('button', { name: /ポストを編集/ }).click()
+  const editor = row.getByTestId('post-editor')
+  await editor.getByTestId('composer-input').fill('after optimistic edit')
+  const response = page.waitForResponse(
+    (candidate) => candidate.request().method() === 'PATCH' && candidate.url().includes(`/v1/posts/${posts[0]!.id}`),
+  )
+
+  try {
+    await editor.getByRole('button', { name: '保存' }).click()
+
+    await expect(editor).toHaveCount(0)
+    await expect(row.getByText('after optimistic edit')).toBeVisible()
+    await expect(row.getByText('編集済み')).toBeVisible()
+  } finally {
+    releaseResponse()
+  }
+  await response
+})
+
+test('rolls back a rejected edit and restores its input with an error', async ({ page }) => {
+  const mock = await installApiMock(page)
+  const { posts } = mock.seedChannel('rejected-edit', ['before rejected edit'])
+  let rejectResponse!: () => void
+  const responseGate = new Promise<void>((resolve) => {
+    rejectResponse = resolve
+  })
+  await page.route('**/v1/posts/**', async (route) => {
+    if (route.request().method() !== 'PATCH') {
+      await route.fallback()
+      return
+    }
+    await responseGate
+    await route.fulfill({
+      status: 500,
+      json: { code: 'rejected', message: 'save failed' },
+    })
+  })
+  await page.goto('/')
+  await page.getByTestId('channel-rejected-edit').click()
+
+  const row = page.getByTestId(`post-${posts[0]!.id}`)
+  await row.hover()
+  await row.getByRole('button', { name: /ポストを編集/ }).click()
+  const editor = row.getByTestId('post-editor')
+  await editor.getByTestId('composer-input').fill('rejected input')
+
+  try {
+    await editor.getByRole('button', { name: '保存' }).click()
+    await expect(editor).toHaveCount(0)
+    await expect(row.getByText('rejected input')).toBeVisible()
+  } finally {
+    rejectResponse()
+  }
+
+  const restoredEditor = row.getByTestId('post-editor')
+  await expect(restoredEditor).toBeVisible()
+  await expect(restoredEditor.getByTestId('composer-input')).toHaveValue('rejected input')
+  await expect(restoredEditor.getByRole('alert')).toHaveText('保存に失敗しました。入力は保持されています。')
+  await restoredEditor.getByRole('button', { name: '取り消し', exact: true }).click()
+  await expect(row.getByText('before rejected edit')).toBeVisible()
+})
+
+test('rolls back a rejected thread reply edit and restores its input with an error', async ({ page }) => {
+  await installApiMock(page)
+  await page.goto('/')
+
+  await page.getByTestId('new-channel-button').click()
+  await page.getByTestId('channel-name-input').fill('rejected-reply-edit')
+  await page.getByTestId('channel-name-input').press('Enter')
+  await page.getByTestId('channel-rejected-reply-edit').click()
+  await page.getByTestId('composer-input').fill('reply edit root')
+  await page.getByTestId('composer-input').press('Shift+Enter')
+
+  const root = page.getByTestId('timeline').locator('article').filter({ hasText: 'reply edit root' })
+  await root.getByRole('button', { name: 'スレッドで返信' }).click()
+  const panel = page.getByTestId('thread-panel')
+  await panel.getByTestId('composer-input').fill('reply before rejected edit')
+  await panel.getByTestId('composer-input').press('Shift+Enter')
+
+  let rejectResponse!: () => void
+  const responseGate = new Promise<void>((resolve) => {
+    rejectResponse = resolve
+  })
+  await page.route('**/v1/posts/**', async (route) => {
+    if (route.request().method() !== 'PATCH') {
+      await route.fallback()
+      return
+    }
+    await responseGate
+    await route.fulfill({
+      status: 500,
+      json: { code: 'rejected', message: 'save failed' },
+    })
+  })
+
+  const reply = panel.locator('article')
+  await reply.hover()
+  await reply.getByRole('button', { name: /返信を編集/ }).click()
+  const editor = reply.getByTestId('post-editor')
+  await editor.getByTestId('composer-input').fill('rejected reply input')
+
+  try {
+    await editor.getByRole('button', { name: '保存' }).click()
+    await expect(editor).toHaveCount(0)
+    await expect(reply.getByText('rejected reply input')).toBeVisible()
+  } finally {
+    rejectResponse()
+  }
+
+  const restoredEditor = reply.getByTestId('post-editor')
+  await expect(restoredEditor).toBeVisible()
+  await expect(restoredEditor.getByTestId('composer-input')).toHaveValue('rejected reply input')
+  await expect(restoredEditor.getByRole('alert')).toHaveText('保存に失敗しました。入力は保持されています。')
+  await restoredEditor.getByRole('button', { name: '取り消し', exact: true }).click()
+  await expect(reply.getByText('reply before rejected edit')).toBeVisible()
+})
+
 test('keeps the editor in place when another post arrives', async ({ page }) => {
   const mock = await installApiMock(page)
   // 1 ページ（10 件）に収まる件数にする。溢れると再取得で先頭のポストが落ち、

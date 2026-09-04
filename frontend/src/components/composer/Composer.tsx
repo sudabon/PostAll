@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { expandFenceTrigger, isInsideUnclosedFence } from '@/lib/fence'
 import { isTouchDevice } from '@/lib/viewport'
 import { applyFormat, indentLines, type FormatAction } from '@/lib/markdown-format'
+import { submitFailureMessage } from '@/lib/submit-failure'
 import { FormatToolbar } from './FormatToolbar'
 import { ACCEPT_ATTR, checkAttachment, formatBytes, inferMime, isImageType } from '@/lib/attachments'
 
@@ -47,22 +48,26 @@ export function Composer({
   placeholder = 'メッセージを入力',
   initialBody = '',
   initialAttachments,
+  initialError,
   submitLabel = '送信',
   onCancel,
   persistDraft = true,
   autoFocus = false,
+  suppressAutoFocus = false,
   resolveAttachmentUrl,
 }: {
   storageKey: string
   disabled?: boolean
   mutationDisabled?: boolean
-  onSubmit: (body: string, attachmentIds: string[]) => Promise<void>
+  onSubmit: (body: string, attachmentIds: string[], attachments: Attachment[]) => void | Promise<void>
   uploadFile?: (file: PickedFile, onProgress: (ratio: number) => void) => Promise<string>
   placeholder?: string
   /** 編集モードの初期本文 */
   initialBody?: string
   /** 編集モードへ引き継ぐ既存添付 */
   initialAttachments?: Attachment[]
+  /** 編集フォームを開いた時点から表示するエラー */
+  initialError?: string
   /** 確定操作のラベル。編集モードでは「保存」 */
   submitLabel?: string
   /** 指定したときだけ取り消しボタンを出す。編集モードの目印も兼ねる */
@@ -71,6 +76,8 @@ export function Composer({
   persistDraft?: boolean
   /** タッチ端末でもマウント時に本文へフォーカスする */
   autoFocus?: boolean
+  /** 真ならマウント時に本文へフォーカスしない。明示的なフォーカス要求（epoch 更新）は従来どおり効く */
+  suppressAutoFocus?: boolean
   /** 既存添付のサムネイル用に署名付き URL を取得する */
   resolveAttachmentUrl?: (id: string) => Promise<string>
 }) {
@@ -79,7 +86,14 @@ export function Composer({
   const editing = Boolean(onCancel)
   const [value, setValue] = useState(initialBody)
   const [sending, setSending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(initialError ?? null)
+  // 編集フォームを開いたまま保存失敗が届くことがある。マウント済みでも表示できるよう、
+  // initialError の変化を描画中に取り込む（本文は入力中のものを優先するので触らない）。
+  const [lastInitialError, setLastInitialError] = useState(initialError)
+  if (initialError !== lastInitialError) {
+    setLastInitialError(initialError)
+    if (initialError) setError(initialError)
+  }
   const [drafts, setDraftState] = useState<DraftFile[]>(() => (initialAttachments ?? []).map(toDraftFile))
   // 初回描画の drafts をそのまま持たせる。以降 useRef は引数を無視するので同期はずれない。
   const draftsRef = useRef<DraftFile[]>(drafts)
@@ -129,10 +143,11 @@ export function Composer({
     // 編集モードは利用者が明示的に開いた操作なので、この抑止の例外とする（autoFocus）。
     const requested = lastEpoch.current !== null && lastEpoch.current !== epoch
     lastEpoch.current = epoch
+    if (!requested && suppressAutoFocus) return
     if (!requested && !autoFocus && isTouchDevice()) return
     el.focus()
     el.selectionStart = el.value.length
-  }, [autoFocus, epoch])
+  }, [autoFocus, epoch, suppressAutoFocus])
 
   useEffect(() => {
     const el = area.current
@@ -142,7 +157,16 @@ export function Composer({
   }, [value])
 
   const uploading = drafts.some((d) => d.status === 'uploading')
-  const readyIds = drafts.filter((d) => d.status === 'ready' && d.id).map((d) => d.id!)
+  const readyDrafts = drafts.filter((d) => d.status === 'ready' && d.id)
+  const readyIds = readyDrafts.map((d) => d.id!)
+  const readyAttachments: Attachment[] = readyDrafts.map((draft) => ({
+    id: draft.id!,
+    fileName: draft.name,
+    contentType: draft.contentType,
+    sizeBytes: draft.size,
+    checksum: '',
+    createdAt: '',
+  }))
   const hasContent = Boolean(value.trim()) || readyIds.length > 0
   const ready = !disabled && !mutationDisabled && !sending && !uploading
   // 新規投稿は空のとき送信ボタンを無効にする。編集は「なぜ保存できないか」を示す必要が
@@ -228,7 +252,7 @@ export function Composer({
     setError(null)
     const snapshot = value
     try {
-      await onSubmit(value, readyIds)
+      await onSubmit(value, readyIds, readyAttachments)
       if (!persistDraft) return
       setValue('')
       draftsRef.current.forEach((d) => {
@@ -237,8 +261,10 @@ export function Composer({
       replaceDrafts([])
       await platform.removeItem(storageKey)
     } catch {
+      // 編集モードでは呼び出し側が mutate を投げっぱなしにするため onSubmit は reject しない。
+      // 編集の失敗処理は usePosts の edit mutation の onError で行う。
       setValue(snapshot)
-      setError(`${submitLabel}に失敗しました。入力は保持されています。`)
+      setError(submitFailureMessage(submitLabel))
     } finally {
       setSending(false)
     }

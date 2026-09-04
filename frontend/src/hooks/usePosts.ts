@@ -1,7 +1,33 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryKey,
+} from '@tanstack/react-query'
 import { useAuth } from '@/auth/AuthProvider'
-import type { Post } from '@/api/client'
-import { requireMutationConnection } from '@/state/ui'
+import type { Attachment, Post } from '@/api/client'
+import {
+  applyPostEdit,
+  queryDataHasPost,
+  replacePostInQueryData,
+  updatePostInQueryData,
+} from '@/lib/post-cache'
+import { submitFailureMessage } from '@/lib/submit-failure'
+import { requireMutationConnection, useUi } from '@/state/ui'
+
+type EditPostInput = {
+  id: string
+  body: string
+  attachments: Attachment[]
+  postUpdatedAt: string
+}
+
+type EditMutationContext = {
+  snapshots: [QueryKey, unknown][]
+}
+
+const editFailureMessage = submitFailureMessage('保存')
 
 export function useTimeline(channelId: string | null, around: string | null = null) {
   const { api, signedIn } = useAuth()
@@ -43,12 +69,58 @@ export function usePostMutations(channelId: string | null) {
       },
       onSuccess: invalidate,
     }),
-    edit: useMutation({
-      mutationFn: (input: { id: string; body: string; attachmentIds?: string[] }) => {
+    edit: useMutation<Post, Error, EditPostInput, EditMutationContext>({
+      networkMode: 'always',
+      mutationFn: (input) => {
         requireMutationConnection()
-        return api.editPost(input.id, input.body, input.attachmentIds)
+        return api.editPost(input.id, input.body, input.attachments.map((attachment) => attachment.id))
       },
-      onSuccess: invalidate,
+      onMutate: async (input) => {
+        requireMutationConnection()
+        await Promise.all([
+          qc.cancelQueries({ queryKey: ['posts'] }),
+          qc.cancelQueries({ queryKey: ['thread'] }),
+        ])
+        const snapshots = [
+          ...qc.getQueriesData({ queryKey: ['posts'] }),
+          ...qc.getQueriesData({ queryKey: ['thread'] }),
+        ] as [QueryKey, unknown][]
+        updatePostCaches(qc, (data) =>
+          updatePostInQueryData(data, input.id, (post) =>
+            applyPostEdit(post, { body: input.body, attachments: input.attachments }),
+          ),
+        )
+        return { snapshots }
+      },
+      onError: (_error, input, context) => {
+        for (const [key, snapshot] of context?.snapshots ?? []) {
+          qc.setQueryData(key, snapshot)
+        }
+        const ui = useUi.getState()
+        ui.setFailedEdit(input.id, {
+          body: input.body,
+          attachments: input.attachments,
+          error: editFailureMessage,
+          postUpdatedAt: input.postUpdatedAt,
+        })
+        // キャッシュから落ちたポストに editingPostId を立てると、以後 editingPostId が
+        // null に戻らず後続の失敗がすべて無通知になる。表示できるときだけ開く。
+        const cached = [
+          ...qc.getQueriesData({ queryKey: ['posts'] }),
+          ...qc.getQueriesData({ queryKey: ['thread'] }),
+        ].some(([, data]) => queryDataHasPost(data, input.id))
+        if (ui.editingPostId === null && cached) ui.openEditorForFailure(input.id)
+      },
+      onSuccess: (post, input) => {
+        updatePostCaches(qc, (data) => replacePostInQueryData(data, post))
+        useUi.getState().clearFailedEdit(input.id)
+      },
+      onSettled: async () => {
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ['posts'] }),
+          qc.invalidateQueries({ queryKey: ['thread'] }),
+        ])
+      },
     }),
     remove: useMutation({
       mutationFn: (id: string) => {
@@ -65,6 +137,14 @@ export function usePostMutations(channelId: string | null) {
       onSuccess: invalidate,
     }),
   }
+}
+
+function updatePostCaches(
+  queryClient: ReturnType<typeof useQueryClient>,
+  update: (data: unknown) => unknown,
+) {
+  queryClient.setQueriesData({ queryKey: ['posts'] }, update)
+  queryClient.setQueriesData({ queryKey: ['thread'] }, update)
 }
 
 export function flattenPages(pages: { posts: Post[] }[] | undefined): Post[] {
