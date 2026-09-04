@@ -47,6 +47,7 @@ export function Composer({
   placeholder = 'メッセージを入力',
   initialBody = '',
   initialAttachments,
+  initialError,
   submitLabel = '送信',
   onCancel,
   persistDraft = true,
@@ -56,13 +57,15 @@ export function Composer({
   storageKey: string
   disabled?: boolean
   mutationDisabled?: boolean
-  onSubmit: (body: string, attachmentIds: string[]) => Promise<void>
+  onSubmit: (body: string, attachmentIds: string[], attachments: Attachment[]) => void | Promise<void>
   uploadFile?: (file: PickedFile, onProgress: (ratio: number) => void) => Promise<string>
   placeholder?: string
   /** 編集モードの初期本文 */
   initialBody?: string
   /** 編集モードへ引き継ぐ既存添付 */
   initialAttachments?: Attachment[]
+  /** 編集フォームを開いた時点から表示するエラー */
+  initialError?: string
   /** 確定操作のラベル。編集モードでは「保存」 */
   submitLabel?: string
   /** 指定したときだけ取り消しボタンを出す。編集モードの目印も兼ねる */
@@ -79,7 +82,7 @@ export function Composer({
   const editing = Boolean(onCancel)
   const [value, setValue] = useState(initialBody)
   const [sending, setSending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(initialError ?? null)
   const [drafts, setDraftState] = useState<DraftFile[]>(() => (initialAttachments ?? []).map(toDraftFile))
   // 初回描画の drafts をそのまま持たせる。以降 useRef は引数を無視するので同期はずれない。
   const draftsRef = useRef<DraftFile[]>(drafts)
@@ -142,7 +145,16 @@ export function Composer({
   }, [value])
 
   const uploading = drafts.some((d) => d.status === 'uploading')
-  const readyIds = drafts.filter((d) => d.status === 'ready' && d.id).map((d) => d.id!)
+  const readyDrafts = drafts.filter((d) => d.status === 'ready' && d.id)
+  const readyIds = readyDrafts.map((d) => d.id!)
+  const readyAttachments: Attachment[] = readyDrafts.map((draft) => ({
+    id: draft.id!,
+    fileName: draft.name,
+    contentType: draft.contentType,
+    sizeBytes: draft.size,
+    checksum: '',
+    createdAt: '',
+  }))
   const hasContent = Boolean(value.trim()) || readyIds.length > 0
   const ready = !disabled && !mutationDisabled && !sending && !uploading
   // 新規投稿は空のとき送信ボタンを無効にする。編集は「なぜ保存できないか」を示す必要が
@@ -228,7 +240,7 @@ export function Composer({
     setError(null)
     const snapshot = value
     try {
-      await onSubmit(value, readyIds)
+      await onSubmit(value, readyIds, readyAttachments)
       if (!persistDraft) return
       setValue('')
       draftsRef.current.forEach((d) => {

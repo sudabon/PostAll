@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change slack-style-memo-app. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: 単一の source of truth
 システムは、チャネル・ポスト・添付・リアクションのすべてを Go バックエンドとマネージド PostgreSQL（添付の実体はマネージドオブジェクトストレージ）に保持し、各クライアントはこれを唯一の正とみなさなければならない (SHALL)。
 
@@ -140,6 +142,10 @@ TBD - created by archiving change slack-style-memo-app. Update Purpose after arc
 - **WHEN** クライアントがポストをタイムラインへ即時表示した後、サーバーがその作成を拒否する
 - **THEN** システムは当該ポストを失敗状態として示し、入力内容を失わせずに再送または破棄をユーザーに選ばせる
 
+#### Scenario: ポストの編集がサーバーで失敗する
+- **WHEN** クライアントがポストの編集結果を即時反映した後、サーバーがその保存を拒否する
+- **THEN** システムは当該ポストの表示を編集前の内容へ戻し、確定時の入力内容を失わせずに、編集の再開と失敗の通知をユーザーへ提示する
+
 #### Scenario: 階層移動がサーバーで失敗する
 - **WHEN** クライアントが drag & drop の結果を即時反映した後、サーバーが移動を拒否する
 - **THEN** システムはチャネルツリーを取得し直して移動前の状態へ戻し、失敗を通知する
@@ -162,4 +168,3 @@ TBD - created by archiving change slack-style-memo-app. Update Purpose after arc
 #### Scenario: 接続回復後に最新化する
 - **WHEN** 接続が回復する
 - **THEN** システムは表示中のチャネルツリーとタイムラインを取得し直して最新の状態にする
-

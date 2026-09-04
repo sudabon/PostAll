@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change slack-style-memo-app. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: ポストへの返信
 システムは、チャネル直下のポストに対して返信を投稿できるようにしなければならない (SHALL)。返信は親ポストのスレッドに属し、チャネルのタイムラインに直接表示されてはならない (MUST NOT)。
 
@@ -62,9 +64,19 @@ TBD - created by archiving change slack-style-memo-app. Update Purpose after arc
 ### Requirement: スレッド内ポストの編集と削除
 システムは、スレッド内の返信に対しても、チャネル直下のポストと同じ編集・論理削除の規則を適用しなければならない (SHALL)。編集フォームは当該返信が表示されている位置に開かなければならない (SHALL)。
 
+返信の編集についても、確定操作の結果をサーバーの応答を待たずに反映し、保存が失敗した場合は編集前の表示へ戻さなければならない (SHALL)。
+
 #### Scenario: 返信を編集する
 - **WHEN** ユーザーがスレッド内の返信を編集して保存する
 - **THEN** システムは本文を上書きし、編集済み表示を付ける
+
+#### Scenario: 返信の保存を待たずに反映する
+- **WHEN** ユーザーがスレッド内の返信の編集を確定する
+- **THEN** システムはサーバーの応答を待たずに編集フォームを閉じ、変更後の本文と添付をスレッドビューへ反映する
+
+#### Scenario: 返信の保存がサーバーで失敗する
+- **WHEN** クライアントが返信の編集結果を即時反映した後、サーバーがその保存を拒否する
+- **THEN** システムはスレッドビューの表示を編集前の状態へ戻し、確定時の入力内容を保持したうえで、他の編集フォームが開いていなければ当該返信の位置に編集フォームを再度開いて復元する
 
 #### Scenario: 返信の編集フォームは元の位置に開く
 - **WHEN** ユーザーがスレッド内の返信の編集操作を実行する
@@ -84,4 +96,3 @@ TBD - created by archiving change slack-style-memo-app. Update Purpose after arc
 #### Scenario: 返信に Mermaid を含める
 - **WHEN** スレッドの返信に `mermaid` コードブロックが含まれる
 - **THEN** システムはチャネル直下のポストと同様に図として描画する
-

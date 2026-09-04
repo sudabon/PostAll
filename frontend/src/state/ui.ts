@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { SearchResult } from '@/api/client'
+import type { Attachment, SearchResult } from '@/api/client'
 import type { PlatformAdapter } from '@/platform'
 import { isWideViewport } from '@/lib/viewport'
 
@@ -8,6 +8,12 @@ export type NarrowScreen = 'channels' | 'timeline' | 'thread'
 
 export type NarrowHistoryState = {
   postallNarrow?: NarrowScreen
+}
+
+export type FailedEdit = {
+  body: string
+  attachments: Attachment[]
+  error: string
 }
 
 export type UiState = {
@@ -25,6 +31,7 @@ export type UiState = {
   creating: { parentId: string | null } | null
   renamingId: string | null
   editingPostId: string | null
+  failedEdits: Record<string, FailedEdit>
   composerEpoch: number
   connectionState: ConnectionState
   canMutate: boolean
@@ -51,6 +58,7 @@ const initial: UiState = {
   creating: null,
   renamingId: null,
   editingPostId: null,
+  failedEdits: {},
   composerEpoch: 0,
   connectionState: 'connecting',
   canMutate: true,
@@ -76,6 +84,8 @@ type UiStore = UiState & {
   startCreate: (parentId: string | null) => void
   setRenaming: (id: string | null) => void
   setEditingPost: (id: string | null) => void
+  setFailedEdit: (postId: string, failedEdit: FailedEdit) => void
+  clearFailedEdit: (postId: string) => void
   focusComposer: () => void
   setConnectionState: (state: ConnectionState) => void
   setConnectionError: (message: string | null) => void
@@ -180,6 +190,15 @@ export const useUi = create<UiStore>((set, get) => ({
   setRenaming: (renamingId) => set({ renamingId }),
   // 編集フォームは同時に 1 件だけ開く。別のポストを指定すると先の編集は破棄される。
   setEditingPost: (editingPostId) => set({ editingPostId }),
+  setFailedEdit: (postId, failedEdit) => set((state) => ({
+    failedEdits: { ...state.failedEdits, [postId]: failedEdit },
+  })),
+  clearFailedEdit: (postId) => set((state) => {
+    if (!(postId in state.failedEdits)) return state
+    const failedEdits = { ...state.failedEdits }
+    delete failedEdits[postId]
+    return { failedEdits }
+  }),
   focusComposer: () => set({ composerEpoch: get().composerEpoch + 1 }),
   setConnectionState: (connectionState) => set({
     connectionState,

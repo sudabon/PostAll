@@ -1,7 +1,27 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryKey,
+} from '@tanstack/react-query'
 import { useAuth } from '@/auth/AuthProvider'
-import type { Post } from '@/api/client'
-import { requireMutationConnection } from '@/state/ui'
+import type { Attachment, Post } from '@/api/client'
+import { applyPostEdit, replacePostInQueryData, updatePostInQueryData } from '@/lib/post-cache'
+import { requireMutationConnection, useUi } from '@/state/ui'
+
+type EditPostInput = {
+  id: string
+  body: string
+  attachmentIds?: string[]
+  attachments: Attachment[]
+}
+
+type EditMutationContext = {
+  snapshots: [QueryKey, unknown][]
+}
+
+const editFailureMessage = '保存に失敗しました。入力は保持されています。'
 
 export function useTimeline(channelId: string | null, around: string | null = null) {
   const { api, signedIn } = useAuth()
@@ -43,12 +63,50 @@ export function usePostMutations(channelId: string | null) {
       },
       onSuccess: invalidate,
     }),
-    edit: useMutation({
-      mutationFn: (input: { id: string; body: string; attachmentIds?: string[] }) => {
+    edit: useMutation<Post, Error, EditPostInput, EditMutationContext>({
+      mutationFn: (input) => {
         requireMutationConnection()
         return api.editPost(input.id, input.body, input.attachmentIds)
       },
-      onSuccess: invalidate,
+      onMutate: async (input) => {
+        requireMutationConnection()
+        await Promise.all([
+          qc.cancelQueries({ queryKey: ['posts'] }),
+          qc.cancelQueries({ queryKey: ['thread'] }),
+        ])
+        const snapshots = [
+          ...qc.getQueriesData({ queryKey: ['posts'] }),
+          ...qc.getQueriesData({ queryKey: ['thread'] }),
+        ] as [QueryKey, unknown][]
+        updatePostCaches(qc, (data) =>
+          updatePostInQueryData(data, input.id, (post) =>
+            applyPostEdit(post, { body: input.body, attachments: input.attachments }),
+          ),
+        )
+        return { snapshots }
+      },
+      onError: (_error, input, context) => {
+        for (const [key, snapshot] of context?.snapshots ?? []) {
+          qc.setQueryData(key, snapshot)
+        }
+        const ui = useUi.getState()
+        ui.setFailedEdit(input.id, {
+          body: input.body,
+          attachments: input.attachments,
+          error: editFailureMessage,
+        })
+        if (ui.editingPostId === null) ui.setEditingPost(input.id)
+      },
+      onSuccess: (post, input) => {
+        updatePostCaches(qc, (data) => replacePostInQueryData(data, post))
+        useUi.getState().clearFailedEdit(input.id)
+      },
+      onSettled: async () => {
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ['posts'] }),
+          qc.invalidateQueries({ queryKey: ['thread'] }),
+        ])
+      },
     }),
     remove: useMutation({
       mutationFn: (id: string) => {
@@ -65,6 +123,14 @@ export function usePostMutations(channelId: string | null) {
       onSuccess: invalidate,
     }),
   }
+}
+
+function updatePostCaches(
+  queryClient: ReturnType<typeof useQueryClient>,
+  update: (data: unknown) => unknown,
+) {
+  queryClient.setQueriesData({ queryKey: ['posts'] }, update)
+  queryClient.setQueriesData({ queryKey: ['thread'] }, update)
 }
 
 export function flattenPages(pages: { posts: Post[] }[] | undefined): Post[] {

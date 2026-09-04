@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { Post } from '@/api/client'
+import type { Attachment, Post } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
 import { Composer } from '@/components/composer/Composer'
 import { uploadPickedFile } from '@/lib/upload'
@@ -17,10 +17,11 @@ export function PostEditor({
 }: {
   post: Post
   mutationDisabled: boolean
-  onSave: (body: string, attachmentIds: string[]) => Promise<void>
+  onSave: (body: string, attachmentIds: string[], attachments: Attachment[]) => void | Promise<void>
 }) {
   const { api } = useAuth()
   const host = useRef<HTMLDivElement>(null)
+  const failedEdit = useUi((state) => state.failedEdits[post.id])
 
   useEffect(() => {
     const el = host.current
@@ -44,14 +45,19 @@ export function PostEditor({
         storageKey={`edit:${post.id}`}
         persistDraft={false}
         autoFocus
-        initialBody={post.body}
-        initialAttachments={post.attachments ?? []}
+        initialBody={failedEdit?.body ?? post.body}
+        initialAttachments={failedEdit?.attachments ?? post.attachments ?? []}
+        initialError={failedEdit?.error}
         submitLabel="保存"
         placeholder="本文を入力"
         mutationDisabled={mutationDisabled}
         uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress)}
         resolveAttachmentUrl={(id) => api.getDownloadUrl(id).then((r) => r.url)}
-        onCancel={() => useUi.getState().setEditingPost(null)}
+        onCancel={() => {
+          const ui = useUi.getState()
+          ui.clearFailedEdit(post.id)
+          ui.setEditingPost(null)
+        }}
         onSubmit={onSave}
       />
     </div>
