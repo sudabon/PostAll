@@ -14,6 +14,13 @@ export type FailedEdit = {
   body: string
   attachments: Attachment[]
   error: string
+  /** 保存を試みた時点のポストの updatedAt。復元してよいかの判定に使う */
+  postUpdatedAt: string
+  /**
+   * 保持入力より後にポストが更新されていたため復元をやめた印。
+   * エントリを消さずに残すのは、破棄した事実を編集フォームの再マウント後も伝えるため。
+   */
+  discarded?: boolean
 }
 
 export type UiState = {
@@ -31,6 +38,7 @@ export type UiState = {
   creating: { parentId: string | null } | null
   renamingId: string | null
   editingPostId: string | null
+  autoOpenedEditPostId: string | null
   failedEdits: Record<string, FailedEdit>
   composerEpoch: number
   connectionState: ConnectionState
@@ -58,6 +66,7 @@ const initial: UiState = {
   creating: null,
   renamingId: null,
   editingPostId: null,
+  autoOpenedEditPostId: null,
   failedEdits: {},
   composerEpoch: 0,
   connectionState: 'connecting',
@@ -84,6 +93,7 @@ type UiStore = UiState & {
   startCreate: (parentId: string | null) => void
   setRenaming: (id: string | null) => void
   setEditingPost: (id: string | null) => void
+  openEditorForFailure: (postId: string) => void
   setFailedEdit: (postId: string, failedEdit: FailedEdit) => void
   clearFailedEdit: (postId: string) => void
   focusComposer: () => void
@@ -189,7 +199,11 @@ export const useUi = create<UiStore>((set, get) => ({
   startCreate: (parentId) => set({ creating: { parentId } }),
   setRenaming: (renamingId) => set({ renamingId }),
   // 編集フォームは同時に 1 件だけ開く。別のポストを指定すると先の編集は破棄される。
-  setEditingPost: (editingPostId) => set({ editingPostId }),
+  // ただし保存に失敗した入力は failedEdits に残り、当該ポストの編集を確定または取り消すまで破棄されない。
+  // 例外として、保持入力より後にポストが更新されていた場合は編集フォームを開いた時点で
+  // 復元をやめ、discarded を立てる（PostEditor.tsx）。
+  setEditingPost: (editingPostId) => set({ editingPostId, autoOpenedEditPostId: null }),
+  openEditorForFailure: (postId) => set({ editingPostId: postId, autoOpenedEditPostId: postId }),
   setFailedEdit: (postId, failedEdit) => set((state) => ({
     failedEdits: { ...state.failedEdits, [postId]: failedEdit },
   })),

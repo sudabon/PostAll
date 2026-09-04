@@ -177,9 +177,9 @@ export function Timeline({
                   post={post}
                   highlighted={post.id === targetPostId}
                   mutationDisabled={!canMutate}
-                  onSave={(body, attachmentIds, attachments) => {
+                  onSave={(body, _attachmentIds, attachments) => {
                     useUi.getState().setEditingPost(null)
-                    mutations.edit.mutate({ id: post.id, body, attachmentIds, attachments })
+                    mutations.edit.mutate({ id: post.id, body, attachments, postUpdatedAt: post.updatedAt })
                   }}
                   onDelete={() => mutations.remove.mutate(post.id)}
                 />

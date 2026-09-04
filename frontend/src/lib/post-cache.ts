@@ -64,3 +64,13 @@ export function applyPostEdit(
 export function replacePostInQueryData<T>(data: T, post: Post): T {
   return updatePostInQueryData(data, post.id, () => post)
 }
+
+/** 与えられたクエリデータのどこかに当該ポストが載っているか。走査は updatePostInQueryData と共通。 */
+export function queryDataHasPost(data: unknown, postId: string): boolean {
+  let found = false
+  updatePostInQueryData(data, postId, (post) => {
+    found = true
+    return post
+  })
+  return found
+}

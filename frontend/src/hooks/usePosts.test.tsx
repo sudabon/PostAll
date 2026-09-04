@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -21,7 +21,12 @@ vi.mock('@/auth/AuthProvider', () => ({
 beforeEach(() => {
   mocks.listPosts.mockReset()
   mocks.editPost.mockReset()
-  useUi.setState({ canMutate: true, editingPostId: null, failedEdits: {} })
+  useUi.setState({
+    canMutate: true,
+    editingPostId: null,
+    autoOpenedEditPostId: null,
+    failedEdits: {},
+  })
 })
 
 const channelId = '11111111-1111-1111-1111-111111111111'
@@ -123,8 +128,8 @@ describe('usePostMutations edit', () => {
       result.current.edit.mutate({
         id: postId,
         body: 'optimistic body',
-        attachmentIds: [attachment.id],
         attachments: [attachment],
+        postUpdatedAt: post().updatedAt,
       })
     })
 
@@ -163,8 +168,8 @@ describe('usePostMutations edit', () => {
       result.current.edit.mutate({
         id: postId,
         body: 'optimistic body',
-        attachmentIds: [attachment.id],
         attachments: [attachment],
+        postUpdatedAt: post().updatedAt,
       })
     })
     await waitFor(() =>
@@ -187,14 +192,15 @@ describe('usePostMutations edit', () => {
     mocks.editPost.mockReturnValue(request.promise)
     const client = mutationClient()
     const snapshots = seedPostQueries(client)
+    const invalidateQueries = vi.spyOn(client, 'invalidateQueries').mockResolvedValue(undefined)
     const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
 
     act(() => {
       result.current.edit.mutate({
         id: postId,
         body: 'rejected body',
-        attachmentIds: [attachment.id],
         attachments: [attachment],
+        postUpdatedAt: post().updatedAt,
       })
     })
     await waitFor(() =>
@@ -204,14 +210,17 @@ describe('usePostMutations edit', () => {
 
     await act(async () => request.reject(new Error('save failed')))
 
+    expect(client.getQueryData(['posts', channelId])).toEqual(snapshots.timeline)
+    expect(client.getQueryData(['thread', 'root-post'])).toEqual(snapshots.thread)
+    expect(invalidateQueries).toHaveBeenCalled()
     await waitFor(() => {
-      expect(client.getQueryData(['posts', channelId])).toEqual(snapshots.timeline)
-      expect(client.getQueryData(['thread', 'root-post'])).toEqual(snapshots.thread)
       expect(useUi.getState().editingPostId).toBe(postId)
+      expect(useUi.getState().autoOpenedEditPostId).toBe(postId)
       expect(useUi.getState().failedEdits[postId]).toEqual({
         body: 'rejected body',
         attachments: [attachment],
         error: '保存に失敗しました。入力は保持されています。',
+        postUpdatedAt: post().updatedAt,
       })
     })
   })
@@ -228,11 +237,59 @@ describe('usePostMutations edit', () => {
         id: postId,
         body: 'rejected body',
         attachments: [attachment],
+        postUpdatedAt: post().updatedAt,
       })
     })
 
     await waitFor(() => expect(useUi.getState().failedEdits[postId]).toBeDefined())
     expect(useUi.getState().editingPostId).toBe('other-post')
+    expect(useUi.getState().autoOpenedEditPostId).toBeNull()
+  })
+
+  it('runs the edit mutation through onError while the browser is offline', async () => {
+    mocks.editPost.mockRejectedValue(new Error('save failed'))
+    const client = mutationClient()
+    seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    onlineManager.setOnline(false)
+    try {
+      act(() => {
+        result.current.edit.mutate({
+          id: postId,
+          body: 'offline rejected body',
+          attachments: [attachment],
+          postUpdatedAt: post().updatedAt,
+        })
+      })
+
+      await waitFor(() => expect(useUi.getState().failedEdits[postId]).toBeDefined())
+      expect(result.current.edit.isError).toBe(true)
+    } finally {
+      onlineManager.setOnline(true)
+    }
+  })
+
+  it('キャッシュに無いポストの失敗では編集フォームを開かない', async () => {
+    mocks.editPost.mockRejectedValue(new Error('save failed'))
+    const client = mutationClient()
+    seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+    const missingId = '99999999-9999-9999-9999-999999999999'
+
+    act(() => {
+      result.current.edit.mutate({
+        id: missingId,
+        body: 'rejected body',
+        attachments: [],
+        postUpdatedAt: post().updatedAt,
+      })
+    })
+
+    await waitFor(() => expect(useUi.getState().failedEdits[missingId]).toBeDefined())
+    // 描画されていないポストに editingPostId を立てると、以後の失敗がすべて無通知になる
+    expect(useUi.getState().editingPostId).toBeNull()
+    expect(useUi.getState().autoOpenedEditPostId).toBeNull()
   })
 
   it('clears a retained failed edit after a successful retry', async () => {
@@ -244,11 +301,17 @@ describe('usePostMutations edit', () => {
       body: 'saved body',
       attachments: [],
       error: 'previous failure',
+      postUpdatedAt: post().updatedAt,
     })
     const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
 
     act(() => {
-      result.current.edit.mutate({ id: postId, body: 'saved body', attachments: [] })
+      result.current.edit.mutate({
+        id: postId,
+        body: 'saved body',
+        attachments: [],
+        postUpdatedAt: post().updatedAt,
+      })
     })
 
     await waitFor(() => expect(result.current.edit.isSuccess).toBe(true))

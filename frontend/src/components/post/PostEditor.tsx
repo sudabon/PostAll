@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { Attachment, Post } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
 import { Composer } from '@/components/composer/Composer'
+import { postChangedElsewhereMessage, staleEditDiscardedMessage } from '@/lib/submit-failure'
 import { uploadPickedFile } from '@/lib/upload'
 import { useUi } from '@/state/ui'
 
@@ -22,22 +23,42 @@ export function PostEditor({
   const { api } = useAuth()
   const host = useRef<HTMLDivElement>(null)
   const failedEdit = useUi((state) => state.failedEdits[post.id])
+  const autoOpened = useUi((state) => state.autoOpenedEditPostId === post.id)
+  // 保持入力を書き留めた時点より後にポストが更新されていたら、その入力は復元しない。
+  const stale = Boolean(
+    failedEdit && !failedEdit.discarded && failedEdit.postUpdatedAt !== post.updatedAt,
+  )
+  const staleOnMount = useRef(stale)
+  const restored = failedEdit && !failedEdit.discarded && !stale ? failedEdit : undefined
+
+  useEffect(() => {
+    if (!stale) return
+    // 破棄した事実は再マウント後にも伝えたいので、エントリを消さず discarded を立てる。
+    // 開く前から古かった入力は復元しないので「破棄した」と伝える。開いている最中に
+    // 古くなった場合は画面の入力を勝手に捨てず、上書きになる旨だけを警告する。
+    useUi.getState().setFailedEdit(post.id, {
+      ...failedEdit!,
+      discarded: true,
+      error: staleOnMount.current ? staleEditDiscardedMessage : postChangedElsewhereMessage,
+    })
+  }, [stale, post.id, failedEdit])
 
   useEffect(() => {
     const el = host.current
     if (!el) return
     const reveal = () => el.scrollIntoView({ block: 'nearest' })
-    const frame = requestAnimationFrame(reveal)
+    // 失敗による自動再オープンはユーザー操作を起点としないので、勝手にスクロールしない。
+    const frame = autoOpened ? null : requestAnimationFrame(reveal)
     // 狭幅ではソフトキーボードの出現で可視領域が縮み、開いた直後に合わせた位置が
     // キーボードの下へ潜る。visualViewport の変化に合わせてもう一度引き上げる。
+    // こちらは利用者がフォームに触れた結果なので、自動再オープンでも効かせる。
     const viewport = window.visualViewport
     viewport?.addEventListener('resize', reveal)
     return () => {
-      cancelAnimationFrame(frame)
+      if (frame !== null) cancelAnimationFrame(frame)
       viewport?.removeEventListener('resize', reveal)
     }
-  }, [])
-
+  }, [autoOpened])
 
   return (
     <div ref={host} data-testid={`post-editor-${post.id}`}>
@@ -45,8 +66,9 @@ export function PostEditor({
         storageKey={`edit:${post.id}`}
         persistDraft={false}
         autoFocus
-        initialBody={failedEdit?.body ?? post.body}
-        initialAttachments={failedEdit?.attachments ?? post.attachments ?? []}
+        suppressAutoFocus={autoOpened}
+        initialBody={restored?.body ?? post.body}
+        initialAttachments={restored?.attachments ?? post.attachments ?? []}
         initialError={failedEdit?.error}
         submitLabel="保存"
         placeholder="本文を入力"

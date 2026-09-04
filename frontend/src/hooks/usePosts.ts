@@ -7,21 +7,27 @@ import {
 } from '@tanstack/react-query'
 import { useAuth } from '@/auth/AuthProvider'
 import type { Attachment, Post } from '@/api/client'
-import { applyPostEdit, replacePostInQueryData, updatePostInQueryData } from '@/lib/post-cache'
+import {
+  applyPostEdit,
+  queryDataHasPost,
+  replacePostInQueryData,
+  updatePostInQueryData,
+} from '@/lib/post-cache'
+import { submitFailureMessage } from '@/lib/submit-failure'
 import { requireMutationConnection, useUi } from '@/state/ui'
 
 type EditPostInput = {
   id: string
   body: string
-  attachmentIds?: string[]
   attachments: Attachment[]
+  postUpdatedAt: string
 }
 
 type EditMutationContext = {
   snapshots: [QueryKey, unknown][]
 }
 
-const editFailureMessage = '保存に失敗しました。入力は保持されています。'
+const editFailureMessage = submitFailureMessage('保存')
 
 export function useTimeline(channelId: string | null, around: string | null = null) {
   const { api, signedIn } = useAuth()
@@ -64,9 +70,10 @@ export function usePostMutations(channelId: string | null) {
       onSuccess: invalidate,
     }),
     edit: useMutation<Post, Error, EditPostInput, EditMutationContext>({
+      networkMode: 'always',
       mutationFn: (input) => {
         requireMutationConnection()
-        return api.editPost(input.id, input.body, input.attachmentIds)
+        return api.editPost(input.id, input.body, input.attachments.map((attachment) => attachment.id))
       },
       onMutate: async (input) => {
         requireMutationConnection()
@@ -94,8 +101,15 @@ export function usePostMutations(channelId: string | null) {
           body: input.body,
           attachments: input.attachments,
           error: editFailureMessage,
+          postUpdatedAt: input.postUpdatedAt,
         })
-        if (ui.editingPostId === null) ui.setEditingPost(input.id)
+        // キャッシュから落ちたポストに editingPostId を立てると、以後 editingPostId が
+        // null に戻らず後続の失敗がすべて無通知になる。表示できるときだけ開く。
+        const cached = [
+          ...qc.getQueriesData({ queryKey: ['posts'] }),
+          ...qc.getQueriesData({ queryKey: ['thread'] }),
+        ].some(([, data]) => queryDataHasPost(data, input.id))
+        if (ui.editingPostId === null && cached) ui.openEditorForFailure(input.id)
       },
       onSuccess: (post, input) => {
         updatePostCaches(qc, (data) => replacePostInQueryData(data, post))

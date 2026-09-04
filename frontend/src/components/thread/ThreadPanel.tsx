@@ -138,9 +138,9 @@ export function ThreadPanel({
               reply={reply}
               highlighted={reply.id === targetReplyId}
               mutationDisabled={!canMutate}
-              onSave={(body, attachmentIds, attachments) => {
+              onSave={(body, _attachmentIds, attachments) => {
                 useUi.getState().setEditingPost(null)
-                mutations.edit.mutate({ id: reply.id, body, attachmentIds, attachments })
+                mutations.edit.mutate({ id: reply.id, body, attachments, postUpdatedAt: reply.updatedAt })
               }}
               onDelete={() => mutations.remove.mutate(reply.id)}
             />
