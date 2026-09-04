@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiClient } from './client'
+import { ApiClient, ApiError } from './client'
 
 describe('ApiClient', () => {
   afterEach(() => {
@@ -54,5 +54,58 @@ describe('ApiClient', () => {
       body: 'with attachment',
       attachmentIds: ['attachment-1'],
     })
+  })
+
+  it('posts a stamp as multipart form data without setting Content-Type', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'emoji-1',
+          shortcode: 'uploaded',
+          imagePath: '/v1/emojis/uploaded/image',
+          checksum: 'sum',
+        }),
+        { status: 201 },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new ApiClient(() => 'https://api.example', async () => 'token-1')
+    const file = new File([new Uint8Array([1, 2, 3])], 'uploaded.png', { type: 'image/png' })
+
+    const created = await api.createEmoji(file, 'uploaded')
+
+    expect(created.shortcode).toBe('uploaded')
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example/v1/emojis')
+    const init = fetchMock.mock.calls[0]?.[1]
+    expect(init?.method).toBe('POST')
+
+    const body = init?.body as FormData
+    expect(body).toBeInstanceOf(FormData)
+    expect(body.get('shortcode')).toBe('uploaded')
+    expect(body.get('file')).toBe(file)
+
+    const headers = init?.headers as Headers
+    expect(headers.get('Authorization')).toBe('Bearer token-1')
+    // 境界文字列を含む Content-Type はブラウザが付ける。手で設定してはいけない。
+    expect(headers.get('Content-Type')).toBeNull()
+  })
+
+  it('surfaces a duplicate shortcode as an ApiError with the server code', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ code: 'shortcode_conflict', message: ':shipit: は既に登録されています' }),
+        { status: 409 },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new ApiClient(() => 'https://api.example', async () => 'token')
+    const file = new File([new Uint8Array([1])], 'shipit.png', { type: 'image/png' })
+
+    const error = await api.createEmoji(file, 'shipit').catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(409)
+    expect((error as ApiError).code).toBe('shortcode_conflict')
+    expect((error as ApiError).message).toContain('shipit')
   })
 })

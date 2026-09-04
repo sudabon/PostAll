@@ -4,17 +4,21 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"sort"
 	"sync"
 )
 
 type Memory struct {
 	mu      sync.Mutex
 	objects map[string][]byte
+	// types は Put で渡された content type を覚える。S3 と同じく、置いたときの
+	// 形式が Get で返ってくるようにするため。PutObject で置いた分は空のまま。
+	types   map[string]string
 	LastKey string
 }
 
 func NewMemory() *Memory {
-	return &Memory{objects: map[string][]byte{}}
+	return &Memory{objects: map[string][]byte{}, types: map[string]string{}}
 }
 
 func (m *Memory) PutObject(key string, data []byte) {
@@ -49,7 +53,7 @@ func (m *Memory) Get(_ context.Context, key string) (io.ReadCloser, string, int6
 	}
 	cp := make([]byte, len(data))
 	copy(cp, data)
-	return io.NopCloser(bytes.NewReader(cp)), "", int64(len(cp)), nil
+	return io.NopCloser(bytes.NewReader(cp)), m.types[key], int64(len(cp)), nil
 }
 
 func (m *Memory) Head(_ context.Context, key string) (bool, int64, error) {
@@ -66,16 +70,32 @@ func (m *Memory) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.objects, key)
+	delete(m.types, key)
 	return nil
 }
 
-func (m *Memory) Put(_ context.Context, key, _ string, body io.Reader, _ int64) error {
+func (m *Memory) Put(_ context.Context, key, contentType string, body io.Reader, _ int64) error {
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return err
 	}
 	m.PutObject(key, data)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.types[key] = contentType
 	return nil
+}
+
+// Keys は置かれているオブジェクトのキーを昇順で返す。
+func (m *Memory) Keys() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	keys := make([]string, 0, len(m.objects))
+	for key := range m.objects {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (m *Memory) Has(key string) bool {
