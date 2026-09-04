@@ -122,6 +122,13 @@ export class ApiClient {
     return this.fetchResponse(`/v1/emojis/${encodeURIComponent(shortcode)}/image`).then((r) => r.blob())
   }
 
+  createEmoji(file: File, shortcode: string) {
+    const formData = new FormData()
+    formData.set('shortcode', shortcode)
+    formData.set('file', file)
+    return this.request<Emoji>('/v1/emojis', { method: 'POST', formData })
+  }
+
   addReaction(postId: string, emojiId: string) {
     return this.request<Reaction>(`/v1/posts/${postId}/reactions/${emojiId}`, { method: 'PUT' })
   }
@@ -167,7 +174,7 @@ export class ApiClient {
 
   private async request<T>(
     path: string,
-    init: { method?: string; json?: unknown; auth?: boolean } = {},
+    init: { method?: string; json?: unknown; formData?: FormData; auth?: boolean } = {},
   ): Promise<T> {
     const res = await this.fetchResponse(path, init)
     if (res.status === 204) return undefined as T
@@ -180,12 +187,15 @@ export class ApiClient {
     init: {
       method?: string
       json?: unknown
+      formData?: FormData
       auth?: boolean
       headers?: HeadersInit
       signal?: AbortSignal
     } = {},
   ): Promise<Response> {
     const headers = new Headers(init.headers)
+    // FormData のときは Content-Type を設定しない。境界文字列を含むヘッダを
+    // ブラウザに組ませる必要がある。
     if (init.json !== undefined) headers.set('Content-Type', 'application/json')
     if (init.auth !== false) {
       const token = await this.getToken()
@@ -194,7 +204,7 @@ export class ApiClient {
     const res = await fetch(`${this.getBase()}${path}`, {
       method: init.method ?? 'GET',
       headers,
-      body: init.json !== undefined ? JSON.stringify(init.json) : undefined,
+      body: init.formData ?? (init.json !== undefined ? JSON.stringify(init.json) : undefined),
       signal: init.signal,
     })
     if (!res.ok) {

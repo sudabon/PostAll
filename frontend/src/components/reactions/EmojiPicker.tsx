@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { AnimatePresence, m } from 'motion/react'
-import { Search, SmilePlus, X } from 'lucide-react'
+import { Plus, Search, SmilePlus, X } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import type { Emoji } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
 import { useOverlayPresence } from '@/lib/motion/useOverlayPresence'
 import { EmojiImage } from './EmojiImage'
+import { StampUploadPanel } from './StampUploadPanel'
 
 export function EmojiPicker({ onSelect, disabled = false }: { onSelect: (emoji: Emoji) => void; disabled?: boolean }) {
   const { api, signedIn } = useAuth()
   const [open, setOpen] = useState(false)
   const [filter, setFilter] = useState('')
+  // 別のダイアログを重ねず、同じダイアログの中身を差し替える。
+  const [mode, setMode] = useState<'list' | 'upload'>('list')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const restoreFocus = useRef(false)
@@ -38,10 +41,10 @@ export function EmojiPicker({ onSelect, disabled = false }: { onSelect: (emoji: 
   }, [close, disabled])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || mode !== 'list') return
     const frame = requestAnimationFrame(() => searchRef.current?.focus())
     return () => cancelAnimationFrame(frame)
-  }, [open])
+  }, [mode, open])
 
   useEffect(() => {
     if (shouldRender || !restoreFocus.current) return
@@ -69,6 +72,7 @@ export function EmojiPicker({ onSelect, disabled = false }: { onSelect: (emoji: 
         onClick={() => {
           restoreFocus.current = true
           setFilter('')
+          setMode('list')
           setOpen(true)
         }}
       >
@@ -108,65 +112,84 @@ export function EmojiPicker({ onSelect, disabled = false }: { onSelect: (emoji: 
                       <X aria-hidden="true" size={16} />
                     </button>
                   </div>
-                  <label className="relative block">
-                    <span className="sr-only">ショートコードで絞り込み</span>
-                    <Search
-                      aria-hidden="true"
-                      size={15}
-                      className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  {mode === 'upload' ? (
+                    <StampUploadPanel
+                      onBack={() => setMode('list')}
+                      onRegistered={() => setMode('list')}
                     />
-                    <input
-                      ref={searchRef}
-                      autoFocus
-                      type="search"
-                      value={filter}
-                      onChange={(event) => setFilter(event.target.value)}
-                      className="w-full rounded-lg border border-input bg-background py-2 pl-8 pr-3 text-body outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                      placeholder="ショートコードを検索"
-                    />
-                  </label>
-                  <div className="mt-3 max-h-64 overflow-y-auto" aria-live="polite">
-                    {catalog.isLoading ? (
-                      <p className="py-6 text-center text-body text-muted-foreground">読み込み中…</p>
-                    ) : null}
-                    {catalog.isError ? (
-                      <p className="py-6 text-center text-body text-destructive">絵文字を読み込めませんでした</p>
-                    ) : null}
-                    {!catalog.isLoading && !catalog.isError && emojis.length === 0 ? (
-                      <p className="py-6 text-center text-body text-muted-foreground">
-                        絵文字はまだ登録されていません
-                      </p>
-                    ) : null}
-                    {!catalog.isLoading && !catalog.isError && emojis.length > 0 && filtered.length === 0 ? (
-                      <p className="py-6 text-center text-body text-muted-foreground">
-                        一致する絵文字がありません
-                      </p>
-                    ) : null}
-                    {filtered.length > 0 ? (
-                      <div className="grid grid-cols-3 gap-1">
-                        {filtered.map((emoji) => (
-                          <button
-                            key={emoji.id}
-                            type="button"
-                            disabled={disabled}
-                            className="flex min-w-0 flex-col items-center gap-1 rounded-lg p-2 text-caption hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                            onClick={() => {
-                              onSelect(emoji)
-                              close()
-                            }}
-                          >
-                            <EmojiImage
-                              emoji={emoji}
-                              decorative
-                              className="h-7 w-7"
-                              fallbackClassName="h-7 w-7"
-                            />
-                            <span className="max-w-full truncate">:{emoji.shortcode}:</span>
-                          </button>
-                        ))}
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <label className="relative block min-w-0 flex-1">
+                          <span className="sr-only">ショートコードで絞り込み</span>
+                          <Search
+                            aria-hidden="true"
+                            size={15}
+                            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+                          />
+                          <input
+                            ref={searchRef}
+                            autoFocus
+                            type="search"
+                            value={filter}
+                            onChange={(event) => setFilter(event.target.value)}
+                            className="w-full rounded-lg border border-input bg-background py-2 pl-8 pr-3 text-body outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                            placeholder="ショートコードを検索"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-input px-2 py-2 text-caption text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                          onClick={() => setMode('upload')}
+                        >
+                          <Plus aria-hidden="true" size={14} />
+                          スタンプを追加
+                        </button>
                       </div>
-                    ) : null}
-                  </div>
+                      <div className="mt-3 max-h-64 overflow-y-auto" aria-live="polite">
+                        {catalog.isLoading ? (
+                          <p className="py-6 text-center text-body text-muted-foreground">読み込み中…</p>
+                        ) : null}
+                        {catalog.isError ? (
+                          <p className="py-6 text-center text-body text-destructive">絵文字を読み込めませんでした</p>
+                        ) : null}
+                        {!catalog.isLoading && !catalog.isError && emojis.length === 0 ? (
+                          <p className="py-6 text-center text-body text-muted-foreground">
+                            絵文字はまだ登録されていません
+                          </p>
+                        ) : null}
+                        {!catalog.isLoading && !catalog.isError && emojis.length > 0 && filtered.length === 0 ? (
+                          <p className="py-6 text-center text-body text-muted-foreground">
+                            一致する絵文字がありません
+                          </p>
+                        ) : null}
+                        {filtered.length > 0 ? (
+                          <div className="grid grid-cols-3 gap-1">
+                            {filtered.map((emoji) => (
+                              <button
+                                key={emoji.id}
+                                type="button"
+                                disabled={disabled}
+                                className="flex min-w-0 flex-col items-center gap-1 rounded-lg p-2 text-caption hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                                onClick={() => {
+                                  onSelect(emoji)
+                                  close()
+                                }}
+                              >
+                                <EmojiImage
+                                  emoji={emoji}
+                                  decorative
+                                  className="h-7 w-7"
+                                  fallbackClassName="h-7 w-7"
+                                />
+                                <span className="max-w-full truncate">:{emoji.shortcode}:</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </>
+                  )}
                 </m.div>
               </m.div>
             ) : null}

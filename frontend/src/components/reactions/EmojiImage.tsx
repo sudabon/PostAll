@@ -1,8 +1,29 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { Emoji } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
 import { cn } from '@/lib/utils'
+
+// blob ごとのオブジェクト URL を 1 つだけ持つ。
+//
+// URL を useState の初期化子で作り、effect の cleanup で revoke する形にすると、
+// StrictMode が mount 時に effect を setup → cleanup → setup で回すため、
+// マウントしたままの img が revoke 済みの URL を指し続ける（開発ビルドで
+// すべての絵文字画像が読めなくなる）。逆に revoke をやめただけでは、ピッカーの
+// 開閉ごとの再マウントで同じ blob の URL が増え続ける。
+//
+// blob に紐づけて 1 つだけ作れば、二重描画でも再マウントでも同じ URL を返せる。
+// 残る URL は「描画されたことのある (ショートコード, チェックサム) の数」で
+// 上限されるので、カタログの件数に収まる。
+const objectUrls = new WeakMap<Blob, string>()
+
+function objectUrlFor(blob: Blob): string {
+  const existing = objectUrls.get(blob)
+  if (existing) return existing
+  const created = URL.createObjectURL(blob)
+  objectUrls.set(blob, created)
+  return created
+}
 
 export function EmojiImage({
   emoji,
@@ -27,6 +48,7 @@ export function EmojiImage({
   if (!image.data || image.isError) {
     return (
       <span
+        data-testid="emoji-fallback"
         className={cn(
           'inline-flex max-w-24 items-center justify-center truncate whitespace-nowrap text-[10px] leading-none',
           fallbackClassName,
@@ -64,14 +86,13 @@ function BlobImage({
   fallbackClassName?: string
   decorative: boolean
 }) {
-  const [source] = useState(() => URL.createObjectURL(blob))
   const [failed, setFailed] = useState(false)
-
-  useEffect(() => () => URL.revokeObjectURL(source), [source])
+  const source = objectUrlFor(blob)
 
   if (failed) {
     return (
       <span
+        data-testid="emoji-fallback"
         className={cn(
           'inline-flex max-w-24 items-center justify-center truncate whitespace-nowrap text-[10px] leading-none',
           fallbackClassName,
@@ -86,6 +107,7 @@ function BlobImage({
 
   return (
     <img
+      data-testid="emoji-image"
       src={source}
       alt={decorative ? '' : `:${shortcode}:`}
       className={cn('inline-block object-contain', className)}
