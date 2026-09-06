@@ -68,7 +68,38 @@ function now() {
   return new Date().toISOString()
 }
 
-export async function installApiMock(page: Page) {
+/** 1x1 の透過画像。アップロードされたスタンプの配信に使う。 */
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+)
+const ONE_PIXEL_GIF = Buffer.from(
+  'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+  'base64',
+)
+
+export type ApiMockOptions = {
+  /** カタログを空の状態から始める。fixture 名: mock:signed-in-empty-catalog */
+  emptyEmojiCatalog?: boolean
+  /**
+   * スタンプ登録要求への応答。
+   * mock:emoji-upload-conflict / mock:emoji-upload-error / mock:emoji-upload-slow
+   */
+  emojiUpload?: 'success' | 'conflict' | 'error' | 'slow'
+}
+
+/** multipart/form-data の本文から 1 つのフィールドの値を取り出す。 */
+function multipartField(body: string, name: string): string {
+  const match = body.match(new RegExp(`name="${name}"\\r\\n\\r\\n([\\s\\S]*?)\\r\\n--`))
+  return match?.[1] ?? ''
+}
+
+/** file パートの filename を取り出す。 */
+function multipartFileName(body: string): string {
+  return body.match(/name="file"; filename="([^"]*)"/)?.[1] ?? ''
+}
+
+export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
   await page.addInitScript(() => {
     let online = true
     Object.defineProperty(navigator, 'onLine', {
@@ -85,26 +116,39 @@ export async function installApiMock(page: Page) {
     }
   })
 
-  const emojis: Emoji[] = [
-    {
-      id: '11111111-1111-1111-1111-111111111111',
-      shortcode: 'shipit',
-      imagePath: '/v1/emojis/shipit/image',
-      checksum: 'sum-shipit',
-    },
-    {
-      id: '22222222-2222-2222-2222-222222222222',
-      shortcode: 'party',
-      imagePath: '/v1/emojis/party/image',
-      checksum: 'sum-party',
-    },
-    {
-      id: '33333333-3333-3333-3333-333333333333',
-      shortcode: 'fail',
-      imagePath: '/v1/emojis/fail/image',
-      checksum: 'sum-fail',
-    },
-  ]
+  const emojis: Emoji[] = options.emptyEmojiCatalog
+    ? []
+    : [
+      {
+        id: '11111111-1111-1111-1111-111111111111',
+        shortcode: 'shipit',
+        imagePath: '/v1/emojis/shipit/image',
+        checksum: 'sum-shipit',
+      },
+      {
+        id: '22222222-2222-2222-2222-222222222222',
+        shortcode: 'party',
+        imagePath: '/v1/emojis/party/image',
+        checksum: 'sum-party',
+      },
+      {
+        id: '33333333-3333-3333-3333-333333333333',
+        shortcode: 'fail',
+        imagePath: '/v1/emojis/fail/image',
+        checksum: 'sum-fail',
+      },
+    ]
+  // 登録されたスタンプの配信形式。アップロードされたファイル名から決める。
+  const uploadedKinds = new Map<string, 'png' | 'gif'>()
+  const uploadMode = options.emojiUpload ?? 'success'
+  let emojiUploadRequests = 0
+  let releaseEmojiUpload: (() => void) | undefined
+  const emojiUploadGate = uploadMode === 'slow'
+    ? new Promise<void>((resolve) => {
+      releaseEmojiUpload = resolve
+    })
+    : null
+  let nextEmojiId = 100
   const db = {
     channels: [] as Channel[],
     posts: [] as Post[],
@@ -200,6 +244,39 @@ export async function installApiMock(page: Page) {
       await route.fulfill({ json: { emojis } })
       return
     }
+    if (url.pathname === '/v1/emojis' && method === 'POST') {
+      emojiUploadRequests += 1
+      const body = req.postData() ?? ''
+      const shortcode = multipartField(body, 'shortcode')
+      if (uploadMode === 'conflict') {
+        await route.fulfill({
+          status: 409,
+          json: {
+            code: 'shortcode_conflict',
+            message: `:${shortcode}: は既に登録されています。別のショートコードにしてください`,
+          },
+        })
+        return
+      }
+      if (uploadMode === 'error') {
+        await route.fulfill({
+          status: 500,
+          json: { code: 'internal', message: '想定外のエラーが発生しました' },
+        })
+        return
+      }
+      if (emojiUploadGate) await emojiUploadGate
+      const created: Emoji = {
+        id: `44444444-4444-4444-4444-${String(nextEmojiId++).padStart(12, '0')}`,
+        shortcode,
+        imagePath: `/v1/emojis/${encodeURIComponent(shortcode)}/image`,
+        checksum: `sum-${shortcode}`,
+      }
+      emojis.push(created)
+      uploadedKinds.set(shortcode, multipartFileName(body).toLowerCase().endsWith('.gif') ? 'gif' : 'png')
+      await route.fulfill({ status: 201, json: created })
+      return
+    }
     const emojiImage = url.pathname.match(/^\/v1\/emojis\/([^/]+)\/image$/)
     if (emojiImage && method === 'GET') {
       const emoji = emojis.find((item) => item.shortcode === decodeURIComponent(emojiImage[1]!))
@@ -207,12 +284,10 @@ export async function installApiMock(page: Page) {
         await route.fulfill({ status: 404, json: { code: 'not_found', message: 'missing' } })
         return
       }
+      const kind = uploadedKinds.get(emoji.shortcode) ?? 'png'
       await route.fulfill({
-        contentType: 'image/png',
-        body: Buffer.from(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-          'base64',
-        ),
+        contentType: kind === 'gif' ? 'image/gif' : 'image/png',
+        body: kind === 'gif' ? ONE_PIXEL_GIF : ONE_PIXEL_PNG,
       })
       return
     }
@@ -494,6 +569,14 @@ export async function installApiMock(page: Page) {
   }
 
   return {
+    /** スタンプ登録要求が実際に何件飛んだか。 */
+    emojiUploadRequestCount() {
+      return emojiUploadRequests
+    },
+    /** mock:emoji-upload-slow の応答を解放する。 */
+    releaseEmojiUpload() {
+      releaseEmojiUpload?.()
+    },
     seedChannel,
     seedSearchScenario() {
       const { channel } = seedChannel('検索メモ')

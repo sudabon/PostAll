@@ -97,6 +97,59 @@ func TestSyncRegistersUpdatesAndSkipsInvalidFiles(t *testing.T) {
 	}
 }
 
+// 要求経路から登録されたスタンプは、`emoji/` に同じショートコードのファイルが
+// 無い限り、一括登録で触られない。
+func TestSyncLeavesRequestPathEmojisAlone(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	objects := blob.NewMemory()
+	service := emojisync.NewService(store.New(pool))
+
+	uploaded, err := service.Register(ctx, objects, "uploaded", tinyPNG(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// `emoji/` 側には別のショートコードの png だけを置く。
+	dir := t.TempDir()
+	writeFixture(t, dir, "from-repo.png", "repo")
+
+	result, err := service.Sync(ctx, dir, objects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Created != 1 || result.Updated != 0 || result.Unchanged != 0 {
+		t.Fatalf("sync = %+v, want created=1 のみ", result)
+	}
+
+	after, err := service.GetByShortcode(ctx, "uploaded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ID != uploaded.ID || after.StorageKey != uploaded.StorageKey || after.Checksum != uploaded.Checksum {
+		t.Fatalf("要求経路の行が変わった: before=%+v after=%+v", uploaded, after)
+	}
+	if !objects.Has(uploaded.StorageKey) {
+		t.Fatalf("要求経路の実体 %q が消えている", uploaded.StorageKey)
+	}
+	if !objects.Has("from-repo.png") {
+		t.Fatal("一括登録の png が置かれていない")
+	}
+
+	// リアクションとの結び付きも維持される。
+	items, err := service.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortcodes := map[string]bool{}
+	for _, item := range items {
+		shortcodes[item.Shortcode] = true
+	}
+	if !shortcodes["uploaded"] || !shortcodes["from-repo"] {
+		t.Fatalf("catalog = %+v, want uploaded と from-repo の両方", items)
+	}
+}
+
 func writeFixture(t *testing.T, dir, name, contents string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o600); err != nil {

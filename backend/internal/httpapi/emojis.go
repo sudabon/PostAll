@@ -33,6 +33,59 @@ func (s *Server) ListEmojis(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.EmojiList{Emojis: out})
 }
 
+// createEmojiEnvelopeSlack は multipart の包み（境界文字列とパートのヘッダ）の分。
+// 画像そのものの上限は emoji.MaxImageBytes で、実体のサイズは Register が判定する。
+const createEmojiEnvelopeSlack = 64 * 1024
+
+func (s *Server) CreateEmoji(w http.ResponseWriter, r *http.Request) {
+	if !s.requireEmojis(w) {
+		return
+	}
+	if _, ok := authorFrom(w, r); !ok {
+		return
+	}
+
+	limit := int64(emoji.MaxImageBytes + createEmojiEnvelopeSlack)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	if err := r.ParseMultipartForm(limit); err != nil {
+		writeUploadReadError(w, r, err)
+		return
+	}
+	defer func() { _ = r.MultipartForm.RemoveAll() }()
+
+	var image []byte
+	file, _, err := r.FormFile("file")
+	switch {
+	case errors.Is(err, http.ErrMissingFile):
+		// image は nil のまま。Register が「画像ファイルを選んでください」を返す。
+	case err != nil:
+		writeUploadReadError(w, r, err)
+		return
+	default:
+		defer func() { _ = file.Close() }()
+		if image, err = io.ReadAll(file); err != nil {
+			writeUploadReadError(w, r, err)
+			return
+		}
+	}
+
+	item, err := s.emojis.Register(r.Context(), s.emojiBlobs, r.FormValue("shortcode"), image)
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toAPIEmoji(item))
+}
+
+func writeUploadReadError(w http.ResponseWriter, r *http.Request, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeAppError(w, r, emoji.ErrImageTooLarge())
+		return
+	}
+	writeAPIError(w, http.StatusBadRequest, "invalid_request", "アップロードの内容を読み取れませんでした", nil)
+}
+
 func (s *Server) GetEmojiImage(w http.ResponseWriter, r *http.Request, shortcode api.EmojiShortcode) {
 	if !s.requireEmojis(w) {
 		return

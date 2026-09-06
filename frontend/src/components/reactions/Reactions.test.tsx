@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Emoji, Reaction } from '@/api/client'
+import { ApiError, type Emoji, type Reaction } from '@/api/client'
 import { EmojiPicker } from './EmojiPicker'
 import { ReactionBar } from './ReactionBar'
 import { useUi } from '@/state/ui'
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   getEmojiImage: vi.fn(),
   addReaction: vi.fn(),
   removeReaction: vi.fn(),
+  createEmoji: vi.fn(),
 }))
 
 vi.mock('@/auth/AuthProvider', () => ({
@@ -32,6 +33,17 @@ const emojis: Emoji[] = [
     checksum: 'sum-2',
   },
 ]
+
+const uploadedEmoji: Emoji = {
+  id: '33333333-3333-3333-3333-333333333333',
+  shortcode: 'uploaded',
+  imagePath: '/v1/emojis/uploaded/image',
+  checksum: 'sum-3',
+}
+
+function pngFile(name = 'uploaded.png') {
+  return new File([new Uint8Array([1, 2, 3])], name, { type: 'image/png' })
+}
 
 function renderWithQuery(ui: React.ReactNode) {
   const client = new QueryClient({
@@ -54,6 +66,7 @@ describe('emoji reactions', () => {
       reactorIds: [],
     })
     mocks.removeReaction.mockResolvedValue(undefined)
+    mocks.createEmoji.mockResolvedValue(uploadedEmoji)
   })
 
   afterEach(() => {
@@ -169,5 +182,158 @@ describe('emoji reactions', () => {
     expect(screen.getByRole('button', { name: 'リアクションを追加' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: /:shipit: 1件/ }))
     expect(mocks.addReaction).not.toHaveBeenCalled()
+  })
+
+  it('opens the upload panel from the picker and returns to the list', async () => {
+    renderWithQuery(<EmojiPicker onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'スタンプを追加' }))
+    expect(await screen.findByRole('heading', { name: 'スタンプを追加' })).toBeVisible()
+    // 別のダイアログを重ねていない。
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    expect(screen.queryByRole('searchbox', { name: 'ショートコードで絞り込み' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'スタンプの一覧に戻る' }))
+    expect(await screen.findByRole('searchbox', { name: 'ショートコードで絞り込み' })).toBeVisible()
+  })
+
+  it('offers the upload path even when the catalog is empty', async () => {
+    mocks.listEmojis.mockResolvedValue([])
+    renderWithQuery(<EmojiPicker onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }))
+
+    await waitFor(() => expect(screen.getByText('絵文字はまだ登録されていません')).toBeVisible())
+    expect(screen.getByRole('button', { name: 'スタンプを追加' })).toBeEnabled()
+  })
+
+  it('prefills the shortcode from the file name and registers the stamp', async () => {
+    renderWithQuery(<EmojiPicker onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'スタンプを追加' }))
+
+    const chooser = screen.getByLabelText('スタンプの画像ファイル')
+    const submit = screen.getByRole('button', { name: '登録する' })
+    expect(submit).toBeDisabled()
+
+    fireEvent.change(chooser, { target: { files: [pngFile('SmartHR logo.png')] } })
+    const shortcode = screen.getByLabelText('ショートコード')
+    await waitFor(() => expect(shortcode).toHaveValue('smarthr-logo'))
+    expect(submit).toBeEnabled()
+
+    fireEvent.click(submit)
+    await waitFor(() => expect(mocks.createEmoji).toHaveBeenCalledTimes(1))
+    expect(mocks.createEmoji.mock.calls[0]?.[1]).toBe('smarthr-logo')
+    // 成功したら一覧へ戻り、カタログを取り直す。
+    expect(await screen.findByRole('searchbox', { name: 'ショートコードで絞り込み' })).toBeVisible()
+    await waitFor(() => expect(mocks.listEmojis).toHaveBeenCalledTimes(2))
+  })
+
+  it('registers the shortcode the user typed over the derived one', async () => {
+    renderWithQuery(<EmojiPicker onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'スタンプを追加' }))
+
+    fireEvent.change(screen.getByLabelText('スタンプの画像ファイル'), {
+      target: { files: [pngFile()] },
+    })
+    const shortcode = screen.getByLabelText('ショートコード')
+    await waitFor(() => expect(shortcode).toHaveValue('uploaded'))
+    fireEvent.change(shortcode, { target: { value: 'renamed' } })
+    fireEvent.click(screen.getByRole('button', { name: '登録する' }))
+
+    await waitFor(() => expect(mocks.createEmoji).toHaveBeenCalledWith(expect.anything(), 'renamed'))
+  })
+
+  it('leaves the shortcode empty and blocks submission when the file name gives nothing', async () => {
+    renderWithQuery(<EmojiPicker onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'スタンプを追加' }))
+
+    fireEvent.change(screen.getByLabelText('スタンプの画像ファイル'), {
+      target: { files: [pngFile('日本語.png')] },
+    })
+
+    // ショートコード欄は選択前から空なので、値そのものは待機の目印にならない。
+    // ファイルが入ったときだけ出るヒントの出現を待つ。
+    expect(
+      await screen.findByText('ファイル名から決められませんでした。ショートコードを入力してください'),
+    ).toBeVisible()
+    expect(screen.getByLabelText('ショートコード')).toHaveValue('')
+    expect(screen.getByRole('button', { name: '登録する' })).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('ショートコード'), { target: { value: 'nihongo' } })
+    expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled()
+  })
+
+  it('never uploads a file the client-side constraints reject', async () => {
+    renderWithQuery(<EmojiPicker onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'スタンプを追加' }))
+
+    const jpeg = new File([new Uint8Array([1])], 'photo.jpg', { type: 'image/jpeg' })
+    fireEvent.change(screen.getByLabelText('スタンプの画像ファイル'), { target: { files: [jpeg] } })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('image/png')
+    expect(screen.getByRole('button', { name: '登録する' })).toBeDisabled()
+    expect(mocks.createEmoji).not.toHaveBeenCalled()
+
+    const huge = pngFile('huge.png')
+    Object.defineProperty(huge, 'size', { value: 512 * 1024 + 1 })
+    fireEvent.change(screen.getByLabelText('スタンプの画像ファイル'), { target: { files: [huge] } })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('512 KiB')
+    expect(mocks.createEmoji).not.toHaveBeenCalled()
+  })
+
+  it('shows progress and sends a single request when the confirm button is hammered', async () => {
+    let release: ((emoji: Emoji) => void) | undefined
+    mocks.createEmoji.mockImplementation(
+      () => new Promise<Emoji>((resolve) => { release = resolve }),
+    )
+    renderWithQuery(<EmojiPicker onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'スタンプを追加' }))
+    fireEvent.change(screen.getByLabelText('スタンプの画像ファイル'), {
+      target: { files: [pngFile()] },
+    })
+
+    const submit = screen.getByRole('button', { name: '登録する' })
+    await waitFor(() => expect(submit).toBeEnabled())
+    fireEvent.click(submit)
+    fireEvent.click(submit)
+    fireEvent.click(submit)
+
+    expect(await screen.findByRole('status')).toHaveTextContent('登録中…')
+    expect(submit).toBeDisabled()
+    expect(mocks.createEmoji).toHaveBeenCalledTimes(1)
+
+    release?.(uploadedEmoji)
+    expect(await screen.findByRole('searchbox', { name: 'ショートコードで絞り込み' })).toBeVisible()
+  })
+
+  it('keeps the file and shortcode when the server rejects the registration', async () => {
+    mocks.createEmoji.mockRejectedValue(
+      new ApiError(409, { code: 'shortcode_conflict', message: ':shipit: は既に登録されています' }),
+    )
+    renderWithQuery(<EmojiPicker onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'スタンプを追加' }))
+    fireEvent.change(screen.getByLabelText('スタンプの画像ファイル'), {
+      target: { files: [pngFile('shipit.png')] },
+    })
+    await waitFor(() => expect(screen.getByLabelText('ショートコード')).toHaveValue('shipit'))
+    fireEvent.click(screen.getByRole('button', { name: '登録する' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('既に登録されています')
+    // 登録パネルに留まり、選んだファイルとショートコードは保持される。
+    expect(screen.getByRole('heading', { name: 'スタンプを追加' })).toBeVisible()
+    expect(screen.getByLabelText('ショートコード')).toHaveValue('shipit')
+    expect(screen.getByText('shipit.png')).toBeVisible()
+
+    // 同じ内容でそのまま再試行できる。
+    mocks.createEmoji.mockResolvedValue(uploadedEmoji)
+    fireEvent.click(screen.getByRole('button', { name: '登録する' }))
+    await waitFor(() => expect(mocks.createEmoji).toHaveBeenCalledTimes(2))
   })
 })

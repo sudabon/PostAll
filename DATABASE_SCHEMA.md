@@ -221,7 +221,12 @@ FK を CASCADE ではなく SET NULL にしているのは、行ごと消すと 
 | `checksum` | text | NOT NULL | ETag に流用 |
 | `created_at` | timestamptz | NOT NULL | default `now()` |
 
-カタログの正はリポジトリの `emoji/` ディレクトリ。`postall-server emoji-sync` が png を Storage へ上げ、この表を作成・更新する（本番では `migrate` workflow の後段ジョブ）。
+この表に行を作る経路は 2 つある。
+
+1. リポジトリの `emoji/` ディレクトリ。`postall-server emoji-sync` が png を Storage へ上げ、この表を作成・更新する（本番では `migrate` workflow の後段ジョブ）。`storage_key` は `emoji/` 内のファイル名そのもの。
+2. `POST /v1/emojis`。サインイン済みユーザーがピッカーからアップロードした PNG / GIF を 1 件ずつ登録する。`storage_key` は `emojis/<uuid>.<ext>` で、登録ごとに一意。
+
+したがって `storage_key` には 2 つの形が混在する。どちらで登録された行も列の意味は同じで、`reactions` からの参照や配信の扱いに差は無い。由来を区別する列は持っていない（`emoji/` に既存ショートコードと同名の png が後から入った場合は、`emoji-sync` の既存のふるまいどおりリポジトリ側の内容が勝つ）。
 
 ### reactions — リアクション
 

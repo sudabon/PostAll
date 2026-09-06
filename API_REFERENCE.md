@@ -52,7 +52,8 @@ PostAll の HTTP API 一覧。仕様の正は [`api/openapi.yaml`](api/openapi.y
 | メソッド | パス | 説明 | ハンドラ |
 |---|---|---|---|
 | GET | `/v1/emojis` | 登録済みのカスタム絵文字を一覧する | `Server.ListEmojis` |
-| GET | `/v1/emojis/{shortcode}/image` | 絵文字 PNG（Storage へ 302 リダイレクト） | `Server.GetEmojiImage` |
+| POST | `/v1/emojis` | カスタム絵文字を 1 件登録する | `Server.CreateEmoji` |
+| GET | `/v1/emojis/{shortcode}/image` | 絵文字画像（PNG / GIF を API が配信） | `Server.GetEmojiImage` |
 | PUT | `/v1/posts/{postId}/reactions/{emojiId}` | リアクションを付与する | `Server.AddReaction` |
 | DELETE | `/v1/posts/{postId}/reactions/{emojiId}` | 自身のリアクションを解除する | `Server.RemoveReaction` |
 
@@ -82,6 +83,10 @@ PostAll の HTTP API 一覧。仕様の正は [`api/openapi.yaml`](api/openapi.y
 | `payload_too_large` | 400 | 添付が 25 MiB を超える |
 | `unsupported_media_type` | 400 | 許可されていない MIME |
 | `upload_incomplete` | 400 | `complete` 時に Storage 上の実体が無い、またはサイズが申告と一致しない |
+| `invalid_request` | 400 | multipart のアップロード本文を読み取れない |
+| `invalid_shortcode` | 400 | 絵文字のショートコードが `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` に合わない |
+| `image_required` | 400 | 絵文字の登録要求に画像のパートが無い |
+| `unsupported_image` | 400 | 絵文字の実体が PNG でも GIF でもない |
 | `unauthorized` | 401 | JWT が無い・検証に失敗・`CRON_SECRET` 不一致 |
 | `forbidden` | 403 | 他人がアップロードした添付を確定・取得しようとした |
 | `not_found` | 404 | 対象のチャネル・ポスト・添付・絵文字が無い |
@@ -89,8 +94,10 @@ PostAll の HTTP API 一覧。仕様の正は [`api/openapi.yaml`](api/openapi.y
 | `cycle` | 409 | 自身または子孫を親に指定した |
 | `channel_has_posts` | 409 | ポストが残っているチャネルの削除（`details.count`） |
 | `post_deleted` | 409 | 削除済みポストの編集・リアクション |
+| `shortcode_conflict` | 409 | 既に登録済みのショートコードで絵文字を登録しようとした |
+| `image_too_large` | 413 | 絵文字の画像が 512 KiB を超える |
 | `internal` | 500 | 想定外の失敗。詳細はサーバログ（`X-Request-ID` で追跡） |
-| `unavailable` | 503 | DB・添付ストレージ・JWKS へ到達できない |
+| `unavailable` | 503 | DB・添付ストレージ・絵文字ストレージ・JWKS へ到達できない |
 
 JWKS が一時的に取得できない場合は 401 ではなく 503 を返す。クライアントはサインアウトさせずリトライする。
 
@@ -303,7 +310,21 @@ DB へ ping できないときだけ 503 + `unhealthy` / `unreachable`。
 }
 ```
 
-カタログは `emoji/` ディレクトリを正とし、`postall-server emoji-sync` が Storage と DB へ同期する。
+カタログの登録経路は 2 つある。`emoji/` ディレクトリの一括登録（`postall-server emoji-sync` がデプロイ工程で Storage と DB へ同期。png のみ）と、`POST /v1/emojis` による 1 件登録。どちらで登録された絵文字も一覧とリアクションでの扱いは同じ。
+
+### POST /v1/emojis
+
+`multipart/form-data`。サインイン済みであれば誰でも登録できる。
+
+| パート | 内容 |
+|---|---|
+| `shortcode` | `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`。既存と重複すると 409 |
+| `file` | PNG または GIF。**512 KiB** 以下 |
+
+- 形式はファイル名の拡張子やパートの `Content-Type` ではなく、**実体の先頭のシグネチャ**で判定する。申告と中身が食い違うファイルは `unsupported_image`。
+- 成功は **201** で `Emoji` オブジェクト。`storage_key` は `emojis/<uuid>.<ext>` で、登録ごとに一意（重複した要求が既存の実体を上書きしないため）。
+- 重複したショートコードは `shortcode_conflict` で拒否し、既存の絵文字・その画像・リアクションとの結び付きを一切変更しない。
+- 実体を Storage へ置いた後に DB への記録が失敗した場合、そのオブジェクトは孤児として残るが、`storage_key` を指す行が無いため一覧にも配信にも現れない。回収は行っていない。
 
 ### GET /v1/emojis/{shortcode}/image
 
@@ -311,7 +332,7 @@ DB へ ping できないときだけ 503 + `unhealthy` / `unreachable`。
 
 | 挙動 | 内容 |
 |---|---|
-| 成功 | Storage の署名付き URL へ **302** リダイレクト |
+| 成功 | API が実体を配信する（署名付き URL へのリダイレクトはしない）。形式は `Content-Type`（`image/png` / `image/gif`） |
 | キャッシュ | `Cache-Control: private, max-age=60`、`ETag` はチェックサム |
 | 再検証 | `If-None-Match` が一致すれば 304 |
 | 実体無し | 404 `not_found` |

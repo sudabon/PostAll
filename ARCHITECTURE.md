@@ -190,19 +190,32 @@ Supabase の接続経路を用途で使い分ける。ここを取り違える�
 
 Transaction pooling に合わせて `internal/httpapi` は pgxpool を `MaxConns = 2`、`DefaultQueryExecMode = QueryExecModeExec` で構成する。名前付きプリペアドは `42P05`、`DescribeExec` の 2 往復は無名プリペアドの `26000` を起こすため使わず、`uuid[]` は接続時に Go 型を登録してエンコードする。
 
-### 7. 全文検索
+### 7. カスタム絵文字の登録経路は 2 つ
+
+カタログへの登録は次の 2 経路で、どちらも `emojis` テーブルと絵文字バケットに同じ形の行とオブジェクトを作る。登録経路による扱いの差は無い。
+
+| 経路 | 実行者 | 対応形式 | `storage_key` |
+|---|---|---|---|
+| `postall-server emoji-sync`（`emoji/` の一括登録） | デプロイ工程（`migrate` workflow の後段） | png のみ | `emoji/` 内のファイル名 |
+| `POST /v1/emojis`（ピッカーからのアップロード） | サインイン済みユーザー | PNG / GIF、512 KiB 以下 | `emojis/<uuid>.<ext>` |
+
+一括登録を起動時に走らせない方針（起動時間と副作用の分離）は変えていない。要求経路が加わったのは「利用者がその場でスタンプを増やせること」を成り立たせるためで、実体は API サーバが受け取って検証し（形式は先頭のシグネチャで判定）Storage へ置く。添付が署名付き URL を使うのに対しこちらが API を通すのは、実体が小さく、かつ「実体を置く」と「カタログ行を作る」を 1 要求で確定させたいため。
+
+保存キーを経路ごとに分けているのは、重複したショートコードの登録要求が既存スタンプの実体を上書きしないようにするため。`emoji/` に既存ショートコードと同名の png が後から入った場合は、従来どおりリポジトリ側の内容が勝つ。
+
+### 8. 全文検索
 
 PGroonga（`pgroonga_text_regexp_ops_v2`）で `posts.body` を検索する。日本語の分かち書きを前提にせず部分一致が効くこと、Supabase の拡張として使えることが選定理由。索引はクラッシュで壊れることがあり、その場合は `REINDEX INDEX posts_body_pgroonga;` で作り直す。
 
 検索結果はスレッド返信にも当たるため、`timelinePostId`（タイムラインに表示すべきルートポスト）を併せて返し、クライアントは `GET /v1/channels/{id}/posts?around=` で該当箇所の前後を復元する。
 
-### 8. 多層防御としての RLS
+### 9. 多層防御としての RLS
 
 Supabase の Data API（PostgREST）は `public` スキーマを公開し、クライアントは publishable key と `authenticated` ロールの JWT を持つ。放置すると Go API の認可を迂回して直接読み書きできてしまうため、マイグレーション `00013_public_schema_lockdown.sql` で全テーブルの RLS を有効化し、`anon` / `authenticated` から `public` スキーマの権限を剥がしている。アプリケーションは常に Go API 経由でのみ DB に触れる。
 
 `realtime.messages` に対しては、`postall:events` トピックの broadcast だけを `authenticated` に許す SELECT ポリシーを置く（`00011_realtime_rls.sql`）。`using (true)` は他トピックの購読を許すため使わない。
 
-### 9. 可用性とスケール
+### 10. 可用性とスケール
 
 個人利用規模（Vercel Hobby + Supabase Free）を前提とし、水平スケールではなく**無料枠内で落ちないこと**を優先している。
 
@@ -244,7 +257,7 @@ PostAll/
 │       ├── components/     # 機能単位（channels / timeline / thread / ...）
 │       └── pwa/            # Service Worker 登録と更新導線
 ├── electron/          # メインプロセス、preload、electron-builder 設定
-├── emoji/             # カスタム絵文字 png（emoji-sync が Storage と DB へ同期）
+├── emoji/             # カスタム絵文字 png の初期セット（emoji-sync が Storage と DB へ同期）
 ├── supabase/          # ローカルスタック設定。スキーマ本体は置かない
 └── openspec/          # 仕様と change 管理
 ```
