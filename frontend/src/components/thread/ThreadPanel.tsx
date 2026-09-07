@@ -6,6 +6,7 @@ import { usePostMutations, useThread } from '@/hooks/usePosts'
 import { formatDateTime } from '@/lib/dates'
 import { THREAD_MAX_WIDTH, THREAD_MIN_WIDTH, useUi } from '@/state/ui'
 import { useAuth } from '@/auth/AuthProvider'
+import { usePlatform } from '@/platform'
 import { Composer } from '@/components/composer/Composer'
 import { PostBody } from '@/components/post/PostBody'
 import { PostActions } from '@/components/post/PostActions'
@@ -31,6 +32,7 @@ export function ThreadPanel({
   const { data, isLoading } = useThread(postId)
   const mutations = usePostMutations(channelId)
   const { api } = useAuth()
+  const platform = usePlatform()
   const shouldReduceMotion = useReducedMotion()
   // 右寄せパネルの左端をつかむので、ポインタを左へ動かすと幅が増える（invert）。
   const resize = useDragValue({
@@ -151,7 +153,7 @@ export function ThreadPanel({
           storageKey={`draft:thread:${postId}`}
           placeholder="返信を入力"
           mutationDisabled={!canMutate}
-          uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress)}
+          uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress, platform.putBytes)}
           onSubmit={async (body, attachmentIds) => {
             await mutations.reply.mutateAsync({ postId, body, attachmentIds })
           }}

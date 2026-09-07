@@ -2,10 +2,18 @@ import type { ApiClient } from '@/api/client'
 import type { PickedFile } from '@/platform/types'
 import { sha256Hex } from '@/lib/attachments'
 
+export type PutBytes = (
+  url: string,
+  data: ArrayBuffer,
+  headers: Record<string, string>,
+  onProgress: (ratio: number) => void,
+) => Promise<void>
+
 export async function uploadPickedFile(
   api: ApiClient,
   file: PickedFile,
   onProgress: (ratio: number) => void,
+  putBytes: PutBytes,
 ): Promise<string> {
   const checksum = await sha256Hex(file.data)
   const start = await api.startUpload({
@@ -14,25 +22,21 @@ export async function uploadPickedFile(
     sizeBytes: file.data.byteLength,
     checksum,
   })
-  await putWithProgress(start.uploadUrl, file.data, start.headers ?? {}, file.type, onProgress)
+  await putBytes(start.uploadUrl, file.data, start.headers ?? {}, onProgress)
   await api.completeUpload(start.id)
   return start.id
 }
 
-function putWithProgress(
+export function putBytesWithXhr(
   url: string,
   data: ArrayBuffer,
   headers: Record<string, string>,
-  contentType: string,
   onProgress: (ratio: number) => void,
 ) {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('PUT', url)
     Object.entries(headers).forEach(([k, v]) => xhr.setRequestHeader(k, v))
-    if (contentType && !headers['Content-Type'] && !headers['content-type']) {
-      xhr.setRequestHeader('Content-Type', contentType)
-    }
     xhr.upload.onprogress = (ev) => {
       if (ev.lengthComputable && ev.total > 0) onProgress(ev.loaded / ev.total)
     }

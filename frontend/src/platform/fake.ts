@@ -94,6 +94,12 @@ export function createFakeAdapter(options: FakeAdapterOptions = {}): PlatformAda
       }
       return picked
     },
+    async putBytes(_url, _data, _headers, onProgress) {
+      onProgress(1)
+    },
+    async getBytes() {
+      return new ArrayBuffer(0)
+    },
     async saveFile() {
       return true
     },

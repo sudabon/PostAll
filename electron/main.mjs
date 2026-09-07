@@ -48,10 +48,13 @@ async function proxyToApi(request, url) {
   for (const name of ['origin', 'referer', 'host', 'connection']) headers.delete(name)
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
   try {
+    // arrayBuffer で読む。text() だと非 UTF-8（PNG など）が置換文字に壊れ、
+    // スタンプ登録の multipart が上流で画像として受理されなくなる。
+    const body = hasBody ? Buffer.from(await request.arrayBuffer()) : undefined
     return await net.fetch(`${apiOrigin}${url.pathname}${url.search}`, {
       method: request.method,
       headers,
-      body: hasBody ? await request.text() : undefined,
+      body,
     })
   } catch (err) {
     // 上流へ届かないときは API と同じエラー形で返し、レンダラ側の判定に載せる。
@@ -104,6 +107,22 @@ async function saveSecrets() {
     ? safeStorage.encryptString(json)
     : Buffer.from(json, 'utf8')
   await fs.writeFile(secretsPath(), buf)
+}
+
+function isAllowedExternalUrl(url) {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+function toNodeBuffer(data) {
+  if (Buffer.isBuffer(data)) return data
+  if (data instanceof ArrayBuffer) return Buffer.from(data)
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+  throw new Error('invalid upload body')
 }
 
 function send(channel, payload) {
@@ -196,6 +215,23 @@ function registerIpc() {
       })
     }
     return files
+  })
+  // 署名付き URL は app:// の外。レンダラの XHR / fetch は CORS でブロックされるので
+  // メインプロセスから送る。net.fetch は CORS の制約を受けない。
+  ipcMain.handle('files:put', async (_e, url, data, headers) => {
+    if (!isAllowedExternalUrl(url)) throw new Error('invalid upload url')
+    const res = await net.fetch(url, {
+      method: 'PUT',
+      headers: headers ?? {},
+      body: toNodeBuffer(data),
+    })
+    if (!res.ok) throw new Error(`upload ${res.status}`)
+  })
+  ipcMain.handle('files:get', async (_e, url) => {
+    if (!isAllowedExternalUrl(url)) throw new Error('invalid download url')
+    const res = await net.fetch(url)
+    if (!res.ok) throw new Error(`download ${res.status}`)
+    return await res.arrayBuffer()
   })
   ipcMain.handle('files:save', async (_e, defaultName, data, mime) => {
     const result = await dialog.showSaveDialog(mainWindow, { defaultPath: defaultName })
