@@ -177,7 +177,7 @@ describe('narrow screen', () => {
     stop()
   })
 
-  it('starts on the channel list with no channel selected', async () => {
+  it('restores the selected channel on the timeline', async () => {
     useUi.getState().hydrate({ selectedChannelId: null, narrowScreen: 'channels' })
     const adapter = createFakeAdapter()
     await adapter.setItem(
@@ -193,19 +193,84 @@ describe('narrow screen', () => {
 
     await loadUi(adapter)
 
-    // 選択チャネルは保存も復元もしないので、広幅でも一覧から始まる
-    expect(useUi.getState().selectedChannelId).toBeNull()
-    expect(useUi.getState().narrowScreen).toBe('channels')
+    expect(useUi.getState().selectedChannelId).toBe(channelA)
+    expect(useUi.getState().narrowScreen).toBe('timeline')
   })
 
-  it('does not persist selectedChannelId', async () => {
+  it('persists selectedChannelId', async () => {
     const adapter = createFakeAdapter()
     const stop = watchUi(adapter)
     useUi.getState().selectChannel(channelA)
     await Promise.resolve()
     const stored = JSON.parse((await adapter.getItem('ui')) ?? '{}') as Record<string, unknown>
-    expect(stored).not.toHaveProperty('selectedChannelId')
+    expect(stored.selectedChannelId).toBe(channelA)
     stop()
+  })
+
+  it.each([{}, { selectedChannelId: null }])('keeps the channel list for old or empty saved selection: %j', async (saved) => {
+    const adapter = createFakeAdapter()
+    await adapter.setItem('ui', JSON.stringify(saved))
+    await loadUi(adapter)
+    expect(useUi.getState()).toMatchObject({ selectedChannelId: null, narrowScreen: 'channels' })
+  })
+
+  it('returns from a restored timeline to the channel list through browser history', async () => {
+    const adapter = createFakeAdapter()
+    await adapter.setItem('ui', JSON.stringify({ selectedChannelId: channelA }))
+    await loadUi(adapter)
+    const stop = watchNarrowHistory()
+    try {
+      seedNarrowHistory()
+      expect(window.history.state).toMatchObject({ postallNarrow: 'timeline' })
+      const popped = new Promise<void>((resolve) => {
+        window.addEventListener('popstate', () => resolve(), { once: true })
+      })
+      window.history.back()
+      await popped
+      expect(window.history.state).toMatchObject({ postallNarrow: 'channels' })
+      expect(useUi.getState()).toMatchObject({ selectedChannelId: channelA, narrowScreen: 'channels' })
+      expect(window.location.pathname).toBe('/')
+    } finally {
+      stop()
+    }
+  })
+
+  it('does not add history when seeding again or crossing the viewport breakpoint', () => {
+    useUi.setState({ selectedChannelId: channelA, narrowScreen: 'timeline' })
+    seedNarrowHistory()
+    const push = vi.spyOn(window.history, 'pushState')
+    seedNarrowHistory()
+    mockViewport(true)
+    seedNarrowHistory()
+    mockViewport(false)
+    seedNarrowHistory()
+    expect(push).not.toHaveBeenCalled()
+    expect(window.history.state).toMatchObject({ postallNarrow: 'timeline' })
+  })
+
+  it.each([
+    { wide: false, screen: 'timeline' as const, history: 'timeline', backs: 1 },
+    { wide: true, screen: 'timeline' as const, history: 'timeline', backs: 0 },
+    { wide: false, screen: 'thread' as const, history: 'timeline', backs: 0 },
+    { wide: false, screen: 'channels' as const, history: 'timeline', backs: 0 },
+    { wide: false, screen: 'timeline' as const, history: 'channels', backs: 0 },
+    { wide: false, screen: 'timeline' as const, history: undefined, backs: 0 },
+  ])('clears a missing selection with guarded history cleanup: %j', async ({ wide, screen, history, backs }) => {
+    mockViewport(wide)
+    useUi.setState({ selectedChannelId: channelA, narrowScreen: screen })
+    window.history.replaceState({ postallNarrow: history }, '')
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => {})
+    const adapter = createFakeAdapter()
+    const stop = watchUi(adapter)
+    try {
+      useUi.getState().clearRestoredChannel()
+      expect(useUi.getState()).toMatchObject({ selectedChannelId: null, narrowScreen: 'channels' })
+      expect(back).toHaveBeenCalledTimes(backs)
+      const stored = JSON.parse((await adapter.getItem('ui')) ?? '{}') as Record<string, unknown>
+      expect(stored.selectedChannelId).toBeNull()
+    } finally {
+      stop()
+    }
   })
 
   it('keeps the selected channel when going back to the channel list', () => {
