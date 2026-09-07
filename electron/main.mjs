@@ -125,6 +125,51 @@ function toNodeBuffer(data) {
   throw new Error('invalid upload body')
 }
 
+const forbiddenPutHeaders = new Set(['content-length', 'host', 'connection', 'transfer-encoding'])
+
+function putExternal(url, data, headers) {
+  const body = toNodeBuffer(data)
+  return new Promise((resolve, reject) => {
+    const req = net.request({ method: 'PUT', url })
+    for (const [key, value] of Object.entries(headers)) {
+      if (forbiddenPutHeaders.has(key.toLowerCase())) continue
+      req.setHeader(key, value)
+    }
+    req.on('response', (res) => {
+      const chunks = []
+      res.on('data', (c) => chunks.push(c))
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve()
+          return
+        }
+        const detail = Buffer.concat(chunks).toString('utf8').slice(0, 400)
+        reject(new Error(`upload ${res.statusCode}${detail ? `: ${detail}` : ''}`))
+      })
+    })
+    req.on('error', reject)
+    req.write(body)
+    req.end()
+  })
+}
+
+function safeUrlHost(url) {
+  try {
+    return new URL(url).host
+  } catch {
+    return 'invalid'
+  }
+}
+
+async function appendUploadDebug(entry) {
+  try {
+    const line = JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n'
+    await fs.appendFile(path.join(app.getPath('userData'), 'upload-debug.log'), line)
+  } catch {
+    // 診断用。書けなくてもアップロード自体は進める。
+  }
+}
+
 function send(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload)
@@ -201,12 +246,18 @@ function registerIpc() {
     await saveSecrets()
   })
   ipcMain.handle('files:open', async (_e, options) => {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      properties: options?.multiple ? ['openFile', 'multiSelections'] : ['openFile'],
-    })
-    if (result.canceled) return []
+    let filePaths
+    if (process.env.POSTALL_TEST_OPEN_FILES) {
+      filePaths = process.env.POSTALL_TEST_OPEN_FILES.split('\n').filter(Boolean)
+    } else {
+      const result = await dialog.showOpenDialog(mainWindow, {
+        properties: options?.multiple ? ['openFile', 'multiSelections'] : ['openFile'],
+      })
+      if (result.canceled) return []
+      filePaths = result.filePaths
+    }
     const files = []
-    for (const filePath of result.filePaths) {
+    for (const filePath of filePaths) {
       const data = await fs.readFile(filePath)
       files.push({
         name: path.basename(filePath),
@@ -216,16 +267,17 @@ function registerIpc() {
     }
     return files
   })
-  // 署名付き URL は app:// の外。レンダラの XHR / fetch は CORS でブロックされるので
-  // メインプロセスから送る。net.fetch は CORS の制約を受けない。
+  // 署名付き URL は app:// の外。レンダラの XHR / fetch は CORS でブロックされる。
+  // Chromium は Content-Length を禁止ヘッダとして弾く（ERR_INVALID_ARGUMENT）ので
+  // 渡さず、本文サイズから自動で付く値を使う。署名時のサイズと一致する。
   ipcMain.handle('files:put', async (_e, url, data, headers) => {
     if (!isAllowedExternalUrl(url)) throw new Error('invalid upload url')
-    const res = await net.fetch(url, {
-      method: 'PUT',
-      headers: headers ?? {},
-      body: toNodeBuffer(data),
-    })
-    if (!res.ok) throw new Error(`upload ${res.status}`)
+    try {
+      await putExternal(url, data, headers ?? {})
+    } catch (err) {
+      await appendUploadDebug({ stage: 'put', urlHost: safeUrlHost(url), error: String(err) })
+      throw err
+    }
   })
   ipcMain.handle('files:get', async (_e, url) => {
     if (!isAllowedExternalUrl(url)) throw new Error('invalid download url')

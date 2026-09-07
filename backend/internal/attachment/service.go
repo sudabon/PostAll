@@ -70,7 +70,7 @@ func (s *Service) Start(ctx context.Context, uploaderID uuid.UUID, fileName, con
 		return StartResult{}, errValidation("チェックサムが必要です")
 	}
 	id := uuid.New()
-	key := "attachments/" + uploaderID.String() + "/" + id.String() + "/" + fileName
+	key := storageKey(uploaderID, id, fileName)
 	row, err := s.q.InsertAttachment(ctx, store.InsertAttachmentParams{
 		ID:          id,
 		UploaderID:  uploaderID,
@@ -261,4 +261,21 @@ func sanitizeName(name string) string {
 		out = out[:200]
 	}
 	return out
+}
+
+func storageKey(uploaderID, id uuid.UUID, fileName string) string {
+	return "attachments/" + uploaderID.String() + "/" + id.String() + asciiExt(fileName)
+}
+
+func asciiExt(fileName string) string {
+	ext := strings.ToLower(path.Ext(fileName))
+	if len(ext) < 2 || len(ext) > 9 {
+		return ""
+	}
+	for _, r := range ext[1:] {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return ""
+		}
+	}
+	return ext
 }

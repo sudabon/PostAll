@@ -189,9 +189,10 @@ export function Composer({
       .then((id) => {
         updateDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, status: 'ready', id, progress: 1 } : d)))
       })
-      .catch(() => {
+      .catch((err) => {
+        const detail = err instanceof Error && err.message ? err.message : 'アップロードに失敗しました'
         updateDrafts((ds) =>
-          ds.map((d) => (d.key === key ? { ...d, status: 'error', error: 'アップロードに失敗しました' } : d)),
+          ds.map((d) => (d.key === key ? { ...d, status: 'error', error: detail } : d)),
         )
       })
   }

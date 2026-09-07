@@ -68,6 +68,21 @@ func TestAttachmentsUploadDownloadAndReap(t *testing.T) {
 	if start.Code != http.StatusCreated {
 		t.Fatalf("start=%d %s", start.Code, start.Body)
 	}
+	pngKey := mem.LastKey
+	jp := doJSON(t, h, http.MethodPost, "/v1/attachments/uploads", authz, map[string]any{
+		"fileName": "請求書.xlsx", "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "sizeBytes": len(payload), "checksum": hex.EncodeToString(sum[:]),
+	})
+	if jp.Code != http.StatusCreated {
+		t.Fatalf("japanese name start=%d %s", jp.Code, jp.Body)
+	}
+	if mem.LastKey == "" {
+		t.Fatal("missing storage key")
+	}
+	for _, r := range mem.LastKey {
+		if r > 127 {
+			t.Fatalf("storage key contains non-ASCII: %q", mem.LastKey)
+		}
+	}
 	var started api.StartUploadResponse
 	if err := json.Unmarshal(start.Body, &started); err != nil {
 		t.Fatal(err)
@@ -75,7 +90,7 @@ func TestAttachmentsUploadDownloadAndReap(t *testing.T) {
 	if started.UploadUrl == "" {
 		t.Fatal("missing upload url")
 	}
-	mem.PutObject(mem.LastKey, payload)
+	mem.PutObject(pngKey, payload)
 
 	complete := doJSON(t, h, http.MethodPost, "/v1/attachments/"+started.Id.String()+"/complete", authz, nil)
 	if complete.Code != http.StatusOK {
