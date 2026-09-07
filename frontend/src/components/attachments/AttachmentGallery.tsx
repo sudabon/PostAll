@@ -79,9 +79,7 @@ function FileCard({ item }: { item: Attachment }) {
     setBusy(true)
     try {
       const { url } = await api.getDownloadUrl(item.id)
-      const res = await fetch(url)
-      if (!res.ok) throw new Error('download')
-      const buf = new Uint8Array(await res.arrayBuffer())
+      const buf = new Uint8Array(await platform.getBytes(url))
       const saved = await platform.saveFile(item.fileName, buf, item.contentType)
       if (!saved) await platform.openExternal(url)
     } catch {

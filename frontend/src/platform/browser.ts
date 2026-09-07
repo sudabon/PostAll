@@ -1,4 +1,5 @@
 import type { Capability, MenuTemplate, PickedFile, PlatformAdapter, WindowState } from './types'
+import { putBytesWithXhr } from '@/lib/upload'
 
 const caps: Record<Capability, boolean> = {
   appMenu: false,
@@ -85,6 +86,12 @@ export function createBrowserAdapter(): PlatformAdapter {
         picked.push({ name: file.name, type: file.type, data: await file.arrayBuffer() })
       }
       return picked
+    },
+    putBytes: putBytesWithXhr,
+    async getBytes(url) {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`download ${res.status}`)
+      return await res.arrayBuffer()
     },
     async saveFile(defaultName, data, mime) {
       const copy = new Uint8Array(data.byteLength)

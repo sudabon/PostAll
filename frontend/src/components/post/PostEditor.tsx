@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { Attachment, Post } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
+import { usePlatform } from '@/platform'
 import { Composer } from '@/components/composer/Composer'
 import { postChangedElsewhereMessage, staleEditDiscardedMessage } from '@/lib/submit-failure'
 import { uploadPickedFile } from '@/lib/upload'
@@ -21,6 +22,7 @@ export function PostEditor({
   onSave: (body: string, attachmentIds: string[], attachments: Attachment[]) => void | Promise<void>
 }) {
   const { api } = useAuth()
+  const platform = usePlatform()
   const host = useRef<HTMLDivElement>(null)
   const failedEdit = useUi((state) => state.failedEdits[post.id])
   const autoOpened = useUi((state) => state.autoOpenedEditPostId === post.id)
@@ -73,7 +75,7 @@ export function PostEditor({
         submitLabel="保存"
         placeholder="本文を入力"
         mutationDisabled={mutationDisabled}
-        uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress)}
+        uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress, platform.putBytes)}
         resolveAttachmentUrl={(id) => api.getDownloadUrl(id).then((r) => r.url)}
         onCancel={() => {
           const ui = useUi.getState()

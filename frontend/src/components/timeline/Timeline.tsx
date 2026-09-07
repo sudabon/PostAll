@@ -4,6 +4,7 @@ import { flattenPages, usePostMutations, useTimeline } from '@/hooks/usePosts'
 import { formatDateLabel, formatTime, localDateKey } from '@/lib/dates'
 import { useUi } from '@/state/ui'
 import { useAuth } from '@/auth/AuthProvider'
+import { usePlatform } from '@/platform'
 import { Composer } from '@/components/composer/Composer'
 import { PostActions } from '@/components/post/PostActions'
 import { PostBody } from '@/components/post/PostBody'
@@ -50,6 +51,7 @@ export function Timeline({
   const loading = useRef(false)
   const mutations = usePostMutations(channelId)
   const { api } = useAuth()
+  const platform = usePlatform()
   const initial = useRef(true)
   const pinnedToBottom = useRef(true)
   const measuredHeight = useRef(0)
@@ -193,7 +195,7 @@ export function Timeline({
         storageKey={`draft:${channelId}`}
         disabled={!channelId}
         mutationDisabled={!canMutate}
-        uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress)}
+        uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress, platform.putBytes)}
         onSubmit={async (body, attachmentIds) => {
           await mutations.create.mutateAsync({ body, attachmentIds })
           const el = scroller.current
