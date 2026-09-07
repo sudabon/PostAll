@@ -82,6 +82,7 @@ type UiStore = UiState & {
   setSidebarCollapsed: (collapsed: boolean) => void
   setThreadWidth: (width: number) => void
   selectChannel: (id: string | null) => void
+  clearRestoredChannel: () => void
   toggleExpanded: (id: string) => void
   setExpanded: (ids: string[]) => void
   openThread: (id: string | null) => void
@@ -151,6 +152,13 @@ export const useUi = create<UiStore>((set, get) => ({
   toggleExpanded: (id) => {
     const cur = get().expandedIds
     set({ expandedIds: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] })
+  },
+  clearRestoredChannel: () => {
+    const shouldGoBack = !isWideViewport()
+      && historyScreen() === 'timeline'
+      && get().narrowScreen === 'timeline'
+    get().selectChannel(null)
+    if (shouldGoBack) window.history.back()
   },
   setExpanded: (expandedIds) => set({ expandedIds }),
   openThread: (threadPostId) => {
@@ -237,15 +245,20 @@ export function watchNarrowHistory() {
   return () => window.removeEventListener('popstate', onPop)
 }
 
+let narrowHistorySeeded = false
+
 export function seedNarrowHistory() {
   if (isWideViewport()) return
-  // 履歴 state はリロードをまたいで残る。起動時は必ず現在の画面で上書きしないと、
-  // 一覧を表示しているのに state が 'timeline' のままになり、
-  // pushNarrow が重複とみなして push を省略し、戻るでアプリの外へ出てしまう。
+  const screen = useUi.getState().narrowScreen
+  // 同じ起動中の再実行（幅の切り替え、StrictMode）では履歴を積み増さない。
+  if (narrowHistorySeeded && historyScreen() === screen) return
+  narrowHistorySeeded = true
+  // リロード後も、復元したタイムラインから戻る先をアプリ内に用意する。
   window.history.replaceState(
-    { postallNarrow: useUi.getState().narrowScreen } satisfies NarrowHistoryState,
+    { postallNarrow: screen === 'timeline' ? 'channels' : screen } satisfies NarrowHistoryState,
     '',
   )
+  if (screen === 'timeline') pushNarrow('timeline')
 }
 
 export class ConnectionUnavailableError extends Error {
@@ -258,8 +271,9 @@ export function requireMutationConnection() {
   if (!useUi.getState().canMutate) throw new ConnectionUnavailableError()
 }
 
-// selectedChannelId は永続化しない。起動時は全デバイスでチャネル一覧から始める。
+// 選択チャネルを含む UI 状態は端末ごとに保存する。
 const persistedKeys = [
+  'selectedChannelId',
   'sidebarWidth',
   'sidebarCollapsed',
   'expandedIds',
@@ -286,7 +300,11 @@ export async function loadUi(adapter: PlatformAdapter) {
   const raw = await adapter.getItem('ui')
   if (!raw) return
   const parsed = JSON.parse(raw) as Partial<UiState>
-  useUi.getState().hydrate(pickPersisted(parsed))
+  const persisted = pickPersisted(parsed)
+  useUi.getState().hydrate({
+    ...persisted,
+    narrowScreen: persisted.selectedChannelId != null ? 'timeline' : 'channels',
+  })
 }
 
 export function watchUi(adapter: PlatformAdapter) {
