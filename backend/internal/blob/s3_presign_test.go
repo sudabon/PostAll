@@ -42,3 +42,32 @@ func TestPresignPutIncludesContentLengthInSignature(t *testing.T) {
 		t.Fatalf("X-Amz-SignedHeaders=%q does not include content-length", signed)
 	}
 }
+
+// 署名付き GET は <img> や fetch がそのまま辿る。クライアントが送らないヘッダを
+// 署名対象に含めると、ストレージ側の計算と食い違って SignatureDoesNotMatch になる。
+// SDK は既定で応答チェックサム検証のために x-amz-checksum-mode を署名に載せるので、
+// ここで載っていないことを固定する。
+func TestPresignGetSignsOnlyHost(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewS3(ctx, S3Config{
+		Endpoint:  "https://example.storage.supabase.co/storage/v1/s3",
+		Region:    "ap-northeast-1",
+		Bucket:    "attachments",
+		AccessKey: "test-access-key",
+		SecretKey: "test-secret-key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawURL, err := store.PresignGet(ctx, "attachments/uid/aid/a.png", "a.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signed := parsed.Query().Get("X-Amz-SignedHeaders"); signed != "host" {
+		t.Fatalf("X-Amz-SignedHeaders=%q, want %q", signed, "host")
+	}
+}
