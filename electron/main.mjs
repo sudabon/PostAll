@@ -3,6 +3,7 @@ import { existsSync, statSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { sanitizeOutboundHeaders } from './net-headers.mjs'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -222,7 +223,7 @@ function registerIpc() {
     if (!isAllowedExternalUrl(url)) throw new Error('invalid upload url')
     const res = await net.fetch(url, {
       method: 'PUT',
-      headers: headers ?? {},
+      headers: sanitizeOutboundHeaders(headers),
       body: toNodeBuffer(data),
     })
     if (!res.ok) throw new Error(`upload ${res.status}`)

@@ -33,9 +33,10 @@ const page = `<!doctype html>
       }).then((r) => r.json())
       const body = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a])
       const data = body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength)
-      await window.postallPlatform.invoke('files:put', start.uploadUrl, data, {
-        'Content-Type': 'image/png',
-      })
+      // 本番と同じく API が返したヘッダをそのまま渡す。ここを直書きすると
+      // Content-Length のような「呼び出し側が指定できないヘッダ」が抜け落ちて、
+      // 実際には失敗する組み合わせをテストが素通りさせてしまう。
+      await window.postallPlatform.invoke('files:put', start.uploadUrl, data, start.headers)
       await report({ ok: true })
     } catch (err) {
       await report({ ok: false, error: String(err) })
@@ -63,7 +64,8 @@ async function main() {
         JSON.stringify({
           id: 'att-1',
           uploadUrl: `http://127.0.0.1:${upstream.address().port}/storage/put`,
-          headers: { 'Content-Type': 'image/png' },
+          // 署名付き PUT の実装（backend/internal/blob/s3.go）が返すヘッダと同じ形。
+          headers: { 'Content-Type': 'image/png', 'Content-Length': String(payload.length) },
         }),
       )
       return
@@ -75,6 +77,7 @@ async function main() {
         receivedPuts.push({
           body: Buffer.concat(chunks),
           contentType: req.headers['content-type'],
+          contentLength: req.headers['content-length'],
         })
         res.writeHead(200)
         res.end()
@@ -134,6 +137,12 @@ async function main() {
   }
   if (receivedPuts[0].contentType !== 'image/png') {
     console.error(`FAIL: Content-Type=${receivedPuts[0].contentType}`)
+    process.exit(1)
+  }
+  // 署名付き URL は content-length も署名対象にする。呼び出し側では指定できないが、
+  // ネットワークスタックが本文から付け直すので、届いた値が一致することを確かめる。
+  if (receivedPuts[0].contentLength !== String(payload.length)) {
+    console.error(`FAIL: Content-Length=${receivedPuts[0].contentLength}`)
     process.exit(1)
   }
   console.log('PASS: レンダラから files:put でストレージへ到達できた')
