@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { m, useReducedMotion } from 'motion/react'
-import { Pencil, Trash2 } from 'lucide-react'
+import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import type { Post } from '@/api/client'
 import { springPresets } from '@/lib/motion/springs'
+import { isStandaloneDisplay } from '@/lib/standalone'
 import { useUi } from '@/state/ui'
 import { cn } from '@/lib/utils'
 
@@ -18,8 +19,11 @@ export function PostActions({
   onDelete: () => void
 }) {
   const editing = useUi((s) => s.editingPostId === post.id)
+  // PWA にはカーソルが無くホバーで操作を出せないため、常時表示のメニューから開く。
+  const [menuMode] = useState(() => isStandaloneDisplay())
   const [revealed, setRevealed] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLButtonElement>(null)
   const wasEditing = useRef(false)
   const attachments = post.attachments ?? []
   const summary = post.body.trim().slice(0, 30) || attachments[0]?.fileName || post.id
@@ -38,6 +42,7 @@ export function PostActions({
   }, [editing])
 
   useEffect(() => {
+    if (menuMode) return
     const row = triggerRef.current?.closest<HTMLElement>('.group')
     if (!row) return
     const reveal = () => setRevealed(true)
@@ -57,45 +62,80 @@ export function PostActions({
       row.removeEventListener('focusin', reveal)
       row.removeEventListener('focusout', onFocusOut)
     }
-  }, [])
+  }, [menuMode])
+
+  // メニューから開いた操作は、行の外のタップか Esc で畳む。
+  useEffect(() => {
+    if (!menuMode || !revealed) return
+    const row = triggerRef.current?.closest<HTMLElement>('.group')
+    const onPointerDown = (event: PointerEvent) => {
+      if (!row?.contains(event.target as Node | null)) setRevealed(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setRevealed(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [menuMode, revealed])
 
   return (
-    <m.div
-      initial={false}
-      animate={shouldReduceMotion
-        ? { opacity: revealed ? 1 : 0 }
-        : { opacity: revealed ? 1 : 0, y: revealed ? 0 : -4, scale: revealed ? 1 : 0.96 }}
-      transition={shouldReduceMotion ? { duration: 0.14, ease: 'easeOut' } : springPresets.snap}
-      className={cn(
-        'material-thin absolute right-2 top-2 flex gap-1 rounded-lg p-1 shadow-sm',
-        !revealed && 'pointer-events-none',
-      )}
-      data-testid="post-actions"
-      data-visible={revealed}
-    >
-      <button
-        ref={triggerRef}
-        type="button"
-        className="rounded-lg p-1.5 hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        aria-label={`${kind}を編集: ${summary}`}
-        title="編集"
-        disabled={mutationDisabled}
-        onClick={() => useUi.getState().setEditingPost(post.id)}
+    <>
+      {menuMode && !revealed ? (
+        <button
+          ref={menuRef}
+          type="button"
+          className="material-thin absolute right-2 top-2 rounded-lg p-1.5 shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          aria-label={`${kind}の操作: ${summary}`}
+          aria-haspopup="true"
+          onClick={() => {
+            setRevealed(true)
+            requestAnimationFrame(() => triggerRef.current?.focus())
+          }}
+        >
+          <MoreHorizontal className="size-4" />
+        </button>
+      ) : null}
+      <m.div
+        initial={false}
+        animate={shouldReduceMotion
+          ? { opacity: revealed ? 1 : 0 }
+          : { opacity: revealed ? 1 : 0, y: revealed ? 0 : -4, scale: revealed ? 1 : 0.96 }}
+        transition={shouldReduceMotion ? { duration: 0.14, ease: 'easeOut' } : springPresets.snap}
+        className={cn(
+          'material-thin absolute right-2 top-2 flex gap-1 rounded-lg p-1 shadow-sm',
+          !revealed && 'pointer-events-none',
+        )}
+        data-testid="post-actions"
+        data-visible={revealed}
       >
-        <Pencil className="size-4" />
-      </button>
-      <button
-        type="button"
-        className="rounded-lg p-1.5 text-destructive hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        aria-label={`${kind}を削除: ${summary}`}
-        title="削除"
-        disabled={mutationDisabled}
-        onClick={() => {
-          if (window.confirm(`この${kind}を削除しますか？`)) onDelete()
-        }}
-      >
-        <Trash2 className="size-4" />
-      </button>
-    </m.div>
+        <button
+          ref={triggerRef}
+          type="button"
+          className="rounded-lg p-1.5 hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          aria-label={`${kind}を編集: ${summary}`}
+          title="編集"
+          disabled={mutationDisabled}
+          onClick={() => useUi.getState().setEditingPost(post.id)}
+        >
+          <Pencil className="size-4" />
+        </button>
+        <button
+          type="button"
+          className="rounded-lg p-1.5 text-destructive hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          aria-label={`${kind}を削除: ${summary}`}
+          title="削除"
+          disabled={mutationDisabled}
+          onClick={() => {
+            if (window.confirm(`この${kind}を削除しますか？`)) onDelete()
+          }}
+        >
+          <Trash2 className="size-4" />
+        </button>
+      </m.div>
+    </>
   )
 }
