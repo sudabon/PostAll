@@ -232,7 +232,13 @@ export interface paths {
         /** 登録済みのカスタム絵文字を一覧する */
         get: operations["listEmojis"];
         put?: never;
-        post?: never;
+        /**
+         * カスタム絵文字を 1 件登録する
+         * @description 画像の実体を受け取り、形式・サイズ・ショートコードを検証してカタログへ登録する。
+         *     受け付ける形式は PNG と GIF、上限サイズは 512 KiB。形式は申告値ではなく実体の内容で判定する。
+         *     既に存在するショートコードでの登録は 409 で拒否し、既存の登録は変更しない。
+         */
+        post: operations["createEmoji"];
         delete?: never;
         options?: never;
         head?: never;
@@ -248,7 +254,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** カスタム絵文字の PNG を取得する */
+        /** カスタム絵文字の画像を取得する */
         get: operations["getEmojiImage"];
         put?: never;
         post?: never;
@@ -455,6 +461,15 @@ export interface components {
         };
         EmojiList: {
             emojis: components["schemas"]["Emoji"][];
+        };
+        CreateEmojiRequest: {
+            /** @description 使える文字は英数字・`_`・`-`。先頭は英数字で、長さは 1〜64。 */
+            shortcode: string;
+            /**
+             * Format: binary
+             * @description PNG または GIF の画像。512 KiB 以下。
+             */
+            file: string;
         };
         Reaction: {
             emoji: components["schemas"]["Emoji"];
@@ -930,6 +945,31 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    createEmoji: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["CreateEmojiRequest"];
+            };
+        };
+        responses: {
+            /** @description 登録された絵文字 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Emoji"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getEmojiImage: {
         parameters: {
             query?: never;
@@ -941,13 +981,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 絵文字画像 */
+            /** @description 絵文字画像。形式は Content-Type で示す */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "image/png": string;
+                    "image/gif": string;
                 };
             };
             default: components["responses"]["Error"];

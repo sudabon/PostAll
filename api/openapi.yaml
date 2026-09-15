@@ -307,18 +307,45 @@ paths:
                 $ref: "#/components/schemas/EmojiList"
         default:
           $ref: "#/components/responses/Error"
+    post:
+      operationId: createEmoji
+      tags: [emojis]
+      summary: カスタム絵文字を 1 件登録する
+      description: |
+        画像の実体を受け取り、形式・サイズ・ショートコードを検証してカタログへ登録する。
+        受け付ける形式は PNG と GIF、上限サイズは 512 KiB。形式は申告値ではなく実体の内容で判定する。
+        既に存在するショートコードでの登録は 409 で拒否し、既存の登録は変更しない。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/CreateEmojiRequest"
+      responses:
+        "201":
+          description: 登録された絵文字
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Emoji"
+        default:
+          $ref: "#/components/responses/Error"
   /v1/emojis/{shortcode}/image:
     parameters:
       - $ref: "#/components/parameters/EmojiShortcode"
     get:
       operationId: getEmojiImage
       tags: [emojis]
-      summary: カスタム絵文字の PNG を取得する
+      summary: カスタム絵文字の画像を取得する
       responses:
         "200":
-          description: 絵文字画像
+          description: 絵文字画像。形式は Content-Type で示す
           content:
             image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
               schema:
                 type: string
                 format: binary
@@ -730,6 +757,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Emoji"
+    CreateEmojiRequest:
+      type: object
+      required: [shortcode, file]
+      properties:
+        shortcode:
+          type: string
+          description: 使える文字は英数字・`_`・`-`。先頭は英数字で、長さは 1〜64。
+          pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        file:
+          type: string
+          format: binary
+          description: PNG または GIF の画像。512 KiB 以下。
     Reaction:
       type: object
       required: [emoji, count, reactedByMe, reactorIds]

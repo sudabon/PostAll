@@ -13,6 +13,7 @@ import { useDragValue } from '@/lib/motion/useDragValue'
 import { springPresets } from '@/lib/motion/springs'
 import { useWideViewport } from '@/hooks/useWideViewport'
 import { useVisualViewportInset } from '@/hooks/useVisualViewportInset'
+import { useRestoreSelectedChannel } from '@/hooks/useRestoreSelectedChannel'
 
 export function AppShell() {
   const wide = useWideViewport()
@@ -22,6 +23,7 @@ export function AppShell() {
   useEffect(() => {
     seedNarrowHistory()
   }, [wide])
+  useRestoreSelectedChannel()
 
   return wide ? <WideShell /> : <NarrowShell />
 }

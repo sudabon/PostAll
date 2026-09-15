@@ -4,6 +4,7 @@ import { flattenPages, usePostMutations, useTimeline } from '@/hooks/usePosts'
 import { formatDateLabel, formatTime, localDateKey } from '@/lib/dates'
 import { requireMutationConnection, useUi } from '@/state/ui'
 import { useAuth } from '@/auth/AuthProvider'
+import { usePlatform } from '@/platform'
 import { Composer } from '@/components/composer/Composer'
 import { DeleteFailureNotice } from '@/components/post/DeleteFailureNotice'
 import { PendingPostRow } from '@/components/post/PendingPostRow'
@@ -57,6 +58,7 @@ export function Timeline({
   const loading = useRef(false)
   const mutations = usePostMutations(channelId)
   const { api } = useAuth()
+  const platform = usePlatform()
   const initial = useRef(true)
   const pinnedToBottom = useRef(true)
   const measuredHeight = useRef(0)

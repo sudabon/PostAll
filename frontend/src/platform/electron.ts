@@ -33,6 +33,12 @@ export function createElectronAdapter(): PlatformAdapter {
       }
       return picked
     },
+    putBytes: async (url, data, headers, onProgress) => {
+      onProgress(0)
+      await b.invoke('files:put', url, data, headers)
+      onProgress(1)
+    },
+    getBytes: (url) => b.invoke('files:get', url) as Promise<ArrayBuffer>,
     saveFile: (defaultName, data, mime) =>
       b.invoke('files:save', defaultName, data, mime) as Promise<boolean>,
     notify: (title, body) => b.invoke('notify', title, body) as Promise<void>,

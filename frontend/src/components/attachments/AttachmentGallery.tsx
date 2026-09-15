@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { m, useReducedMotion } from 'motion/react'
+import { Download, X } from 'lucide-react'
 import type { Attachment } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
 import { usePlatform } from '@/platform'
@@ -30,6 +31,7 @@ function ImageThumb({ item }: { item: Attachment }) {
   const [open, setOpen] = useState(false)
   const [failed, setFailed] = useState(false)
   const shouldReduceMotion = useReducedMotion()
+  const { busy, download } = useDownload(item)
 
   if (failed || url === 'error') {
     return (
@@ -61,9 +63,27 @@ function ImageThumb({ item }: { item: Attachment }) {
           onClick={() => setOpen(false)}
         >
           <img src={url} alt={item.fileName} className="max-h-full max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
-          <button type="button" className="absolute right-4 top-4 rounded-lg px-2 py-1 text-body text-background focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-background" onClick={() => setOpen(false)}>
-            閉じる
-          </button>
+          <div className="absolute right-4 top-4 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="rounded-lg p-2 text-background hover:bg-background/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-background disabled:opacity-50"
+              aria-label="ダウンロード"
+              title="ダウンロード"
+              disabled={busy}
+              onClick={() => void download()}
+            >
+              <Download className="size-5" />
+            </button>
+            <button
+              type="button"
+              className="rounded-lg p-2 text-background hover:bg-background/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-background"
+              aria-label="閉じる"
+              title="閉じる"
+              onClick={() => setOpen(false)}
+            >
+              <X className="size-5" />
+            </button>
+          </div>
         </div>
       ) : null}
     </>
@@ -71,30 +91,7 @@ function ImageThumb({ item }: { item: Attachment }) {
 }
 
 function FileCard({ item }: { item: Attachment }) {
-  const { api } = useAuth()
-  const platform = usePlatform()
-  const [busy, setBusy] = useState(false)
-
-  const download = async () => {
-    setBusy(true)
-    try {
-      const { url } = await api.getDownloadUrl(item.id)
-      const res = await fetch(url)
-      if (!res.ok) throw new Error('download')
-      const buf = new Uint8Array(await res.arrayBuffer())
-      const saved = await platform.saveFile(item.fileName, buf, item.contentType)
-      if (!saved) await platform.openExternal(url)
-    } catch {
-      try {
-        const { url } = await api.getDownloadUrl(item.id)
-        await platform.openExternal(url)
-      } catch {
-        // keep UI intact
-      }
-    } finally {
-      setBusy(false)
-    }
-  }
+  const { busy, download } = useDownload(item)
 
   return (
     <div className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2 text-body shadow-sm">
@@ -109,6 +106,33 @@ function FileCard({ item }: { item: Attachment }) {
       </button>
     </div>
   )
+}
+
+function useDownload(item: Attachment) {
+  const { api } = useAuth()
+  const platform = usePlatform()
+  const [busy, setBusy] = useState(false)
+
+  const download = async () => {
+    setBusy(true)
+    try {
+      const { url } = await api.getDownloadUrl(item.id)
+      const buf = new Uint8Array(await platform.getBytes(url))
+      const saved = await platform.saveFile(item.fileName, buf, item.contentType)
+      if (!saved) await platform.openExternal(url)
+    } catch {
+      try {
+        const { url } = await api.getDownloadUrl(item.id)
+        await platform.openExternal(url)
+      } catch {
+        // keep UI intact
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return { busy, download }
 }
 
 function useSignedUrl(id: string) {

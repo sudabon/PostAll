@@ -6,6 +6,7 @@ import { usePostMutations, useThread } from '@/hooks/usePosts'
 import { formatDateTime } from '@/lib/dates'
 import { requireMutationConnection, THREAD_MAX_WIDTH, THREAD_MIN_WIDTH, useUi } from '@/state/ui'
 import { useAuth } from '@/auth/AuthProvider'
+import { usePlatform } from '@/platform'
 import { Composer } from '@/components/composer/Composer'
 import { PostBody } from '@/components/post/PostBody'
 import { DeleteFailureNotice } from '@/components/post/DeleteFailureNotice'
@@ -38,6 +39,7 @@ export function ThreadPanel({
   const pending = pendingPosts.filter((entry) => entry.threadRootId === postId)
   const mutations = usePostMutations(channelId)
   const { api } = useAuth()
+  const platform = usePlatform()
   const shouldReduceMotion = useReducedMotion()
   // 右寄せパネルの左端をつかむので、ポインタを左へ動かすと幅が増える（invert）。
   const resize = useDragValue({

@@ -9,15 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/sudabon/PostAll/backend/internal/blob"
 	"github.com/sudabon/PostAll/backend/internal/store"
 )
-
-var shortcodePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
 type Service struct {
 	q *store.Queries
@@ -58,7 +55,7 @@ func (s *Service) Sync(ctx context.Context, dir string, objects blob.Store) (Syn
 			continue
 		}
 		shortcode := strings.TrimSuffix(name, ".png")
-		if !shortcodePattern.MatchString(shortcode) {
+		if !ValidShortcode(shortcode) {
 			result.skip(name, "ショートコードとして不正なファイル名です")
 			continue
 		}

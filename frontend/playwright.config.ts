@@ -6,7 +6,7 @@ const pwaPort = Number(process.env.POSTALL_E2E_PWA_PORT ?? 4174)
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
-  retries: 0,
+  retries: 1,
   use: {
     locale: 'ja-JP',
     reducedMotion: 'reduce',
@@ -26,7 +26,8 @@ export default defineConfig({
     },
   ],
   projects: [
-    { name: 'app', testMatch: /app\.spec\.ts/, use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${appPort}` } },
+    { name: 'app', testMatch: /(app|stamp-upload)\.spec\.ts/, use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${appPort}` } },
     { name: 'pwa', testMatch: /pwa\.spec\.ts/, use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${pwaPort}` } },
   ],
+  reporter: [['list'], ['json', { outputFile: 'test-results/e2e-results.json' }]],
 })

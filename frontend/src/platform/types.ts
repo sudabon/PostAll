@@ -40,6 +40,13 @@ export interface PlatformAdapter {
   deleteSecret(key: string): Promise<void>
   pickFiles(options?: { multiple?: boolean; accept?: string }): Promise<PickedFile[]>
   ingestFiles(files: File[]): Promise<PickedFile[]>
+  putBytes(
+    url: string,
+    data: ArrayBuffer,
+    headers: Record<string, string>,
+    onProgress: (ratio: number) => void,
+  ): Promise<void>
+  getBytes(url: string): Promise<ArrayBuffer>
   saveFile(defaultName: string, data: Uint8Array, mime?: string): Promise<boolean>
   notify(title: string, body: string): Promise<void>
   openExternal(url: string): Promise<void>

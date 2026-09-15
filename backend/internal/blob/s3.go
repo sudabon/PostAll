@@ -42,6 +42,11 @@ func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
 	}
 	loadOpts := []func(*config.LoadOptions) error{
 		config.WithRegion(region),
+		// SDK は既定で GetObject に x-amz-checksum-mode を付け、署名付き URL では
+		// それが X-Amz-SignedHeaders に載る。URL を辿るのは <img> や fetch で
+		// このヘッダを送らないため、ストレージ側の署名計算と食い違って
+		// SignatureDoesNotMatch になる。要求されたときだけ検証する設定にして外す。
+		config.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired),
 	}
 	if cfg.AccessKey != "" {
 		loadOpts = append(loadOpts, config.WithCredentialsProvider(

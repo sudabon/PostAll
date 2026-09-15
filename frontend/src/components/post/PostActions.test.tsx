@@ -90,6 +90,12 @@ describe('PostActions', () => {
     expect(onDelete).toHaveBeenCalledTimes(1)
   })
 
+  it('does not render a menu trigger when the pointer can hover', () => {
+    renderActions()
+
+    expect(screen.queryByRole('button', { name: /返信の操作/ })).toBeNull()
+  })
+
   it('reveals and reverses the action surface from its row hover state', async () => {
     renderActions()
     const row = screen.getByTestId('post-row')
@@ -98,6 +104,80 @@ describe('PostActions', () => {
     fireEvent.pointerEnter(row)
     await waitFor(() => expect(screen.getByTestId('post-actions')).toHaveAttribute('data-visible', 'true'))
     fireEvent.pointerLeave(row)
+    await waitFor(() => expect(screen.getByTestId('post-actions')).toHaveAttribute('data-visible', 'false'))
+  })
+})
+
+describe('PostActions on an installed PWA', () => {
+  beforeEach(() => {
+    useUi.getState().setEditingPost(null)
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({
+          matches: query === '(display-mode: standalone)',
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => false,
+        }) as unknown as MediaQueryList,
+    )
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  it('shows a persistent menu trigger while the actions stay hidden', () => {
+    renderActions()
+
+    expect(screen.getByRole('button', { name: /返信の操作/ })).toBeInTheDocument()
+    expect(screen.getByTestId('post-actions')).toHaveAttribute('data-visible', 'false')
+  })
+
+  it('ignores row hover so an incidental pointer event cannot reveal the actions', () => {
+    renderActions()
+
+    fireEvent.pointerEnter(screen.getByTestId('post-row'))
+
+    expect(screen.getByTestId('post-actions')).toHaveAttribute('data-visible', 'false')
+  })
+
+  it('swaps the menu trigger for the actions when the trigger is tapped', async () => {
+    renderActions()
+
+    fireEvent.click(screen.getByRole('button', { name: /返信の操作/ }))
+
+    await waitFor(() => expect(screen.getByTestId('post-actions')).toHaveAttribute('data-visible', 'true'))
+    expect(screen.queryByRole('button', { name: /返信の操作/ })).toBeNull()
+  })
+
+  it('moves focus onto the edit action once the menu opens', async () => {
+    renderActions()
+
+    fireEvent.click(screen.getByRole('button', { name: /返信の操作/ }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /返信を編集/ })).toHaveFocus())
+  })
+
+  it('closes the actions when a pointer lands outside the row', async () => {
+    renderActions()
+    fireEvent.click(screen.getByRole('button', { name: /返信の操作/ }))
+    await waitFor(() => expect(screen.getByTestId('post-actions')).toHaveAttribute('data-visible', 'true'))
+
+    fireEvent.pointerDown(document.body)
+
+    await waitFor(() => expect(screen.getByTestId('post-actions')).toHaveAttribute('data-visible', 'false'))
+  })
+
+  it('closes the actions when Escape is pressed', async () => {
+    renderActions()
+    fireEvent.click(screen.getByRole('button', { name: /返信の操作/ }))
+    await waitFor(() => expect(screen.getByTestId('post-actions')).toHaveAttribute('data-visible', 'true'))
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
     await waitFor(() => expect(screen.getByTestId('post-actions')).toHaveAttribute('data-visible', 'false'))
   })
 })

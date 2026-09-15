@@ -48,8 +48,8 @@ test('sign-in workspace post thread dnd and restore', async ({ page }) => {
   await expect(page.getByTestId('channel-tree')).toBeVisible()
   await expect(page.getByTestId('channel-other')).toBeVisible()
   await expect(page.getByTestId('channel-inbox')).toBeVisible()
-  // 起動時はチャネル未選択（一覧から始める）
-  await expect(page.getByTestId('channel-title')).toHaveCount(0)
+  // 最後に選択したチャネルをリロード後も復元する。
+  await expect(page.getByTestId('channel-title')).toHaveText('# other')
   await page.getByTestId('channel-inbox').click()
   await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
   await expect(page.getByText('hello memo')).toBeVisible()
@@ -450,7 +450,7 @@ test('touch devices keep the soft keyboard out of the way of the composer', asyn
   }
 })
 
-test('every device starts on the channel list even when a channel was open', async ({ page }) => {
+test('restores the last channel on narrow and wide viewports with an in-app back destination', async ({ page }) => {
   const mock = await installApiMock(page)
   mock.seedChannel('inbox', ['ポスト'])
   await page.setViewportSize({ width: 390, height: 844 })
@@ -458,25 +458,43 @@ test('every device starts on the channel list even when a channel was open', asy
   await page.getByTestId('channel-inbox').click()
   await expect(page.getByTestId('timeline')).toBeVisible()
 
-  // リロードしてもチャネル一覧から始まる（選択自体は保持される）
+  // 狭幅では前回のチャネルのタイムラインから始まる。
   await page.reload()
-  await expect(page.getByTestId('channel-tree')).toBeVisible()
-  await expect(page.getByTestId('timeline')).toHaveCount(0)
-
-  // 履歴 state も一覧に揃うので、開き直したあとの「戻る」が一覧に帰ってくる
-  await page.getByTestId('channel-inbox').click()
+  await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
   await expect(page.getByTestId('timeline')).toBeVisible()
+  await expect(page.getByTestId('channel-tree')).toHaveCount(0)
+  await expect(page.getByText('ポスト', { exact: true })).toBeVisible()
+
+  // 幅の往復でも履歴を積み増さない。
+  const historyLength = await page.evaluate(() => window.history.length)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect(page.getByTestId('sidebar')).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByTestId('narrow-shell')).toBeVisible()
+  expect(await page.evaluate(() => window.history.length)).toBe(historyLength)
+
+  // 復元直後の「戻る」がアプリ内の一覧に帰ってくる。
   await page.getByTestId('narrow-back').click()
   await expect(page.getByTestId('channel-tree')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.history.state?.postallNarrow)).toBe('channels')
+  await expect(page).toHaveURL('/')
 
-  // 広幅でもリロード後はチャネル未選択で、サイドバーの一覧だけが見えている
+  // ブラウザの戻るでも同じ一覧に帰ってくる。
+  await page.getByTestId('channel-inbox').click()
+  await page.reload()
+  await expect(page.getByTestId('timeline')).toBeVisible()
+  await page.goBack()
+  await expect(page.getByTestId('channel-tree')).toBeVisible()
+  await expect(page).toHaveURL('/')
+
+  // 広幅でも選択チャネルとタイムラインを復元する。
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.getByTestId('channel-inbox').click()
   await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
   await page.reload()
   await expect(page.getByTestId('channel-tree')).toBeVisible()
-  await expect(page.getByTestId('channel-title')).toHaveCount(0)
-  await expect(page.getByText('チャネルが選択されていません')).toBeVisible()
+  await expect(page.getByTestId('channel-title')).toHaveText('# inbox')
+  await expect(page.getByText('ポスト', { exact: true })).toBeVisible()
 })
 
 test('mermaid and code blocks survive a timeline refetch without re-rendering', async ({ page }) => {
@@ -702,6 +720,8 @@ test('keeps the editor in place when another post arrives', async ({ page }) => 
   await target.hover()
   await target.getByRole('button', { name: /ポストを編集/ }).click()
   await expect(target.getByTestId('post-editor')).toBeVisible()
+  // 開いた直後の scrollIntoView は次フレームに走る。表示位置が整ってから比較する。
+  await expect(target.getByTestId('post-editor')).toBeInViewport({ ratio: 1 })
 
   const before = await timeline.evaluate((el) => Math.round(el.scrollTop))
   const editorBefore = (await target.getByTestId('post-editor').boundingBox())!
