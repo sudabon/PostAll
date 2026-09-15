@@ -112,6 +112,10 @@ export async function installApiMock(page: Page) {
   }
   let connected = true
   let nextEventId = 1
+  // 楽観的更新の失敗経路を試すための一発限りの拒否。再送・再試行はそのまま成功させたいので
+  // 件数で持ち、使うたびに減らす。
+  let rejectedCreates = 0
+  let rejectedDeletes = 0
 
   const emitEvent = async (event: ChangeEvent) => {
     if (!connected || page.isClosed()) return
@@ -262,6 +266,11 @@ export async function installApiMock(page: Page) {
       return
     }
     if (postsPath && method === 'POST') {
+      if (rejectedCreates > 0) {
+        rejectedCreates -= 1
+        await route.fulfill({ status: 500, json: { code: 'rejected', message: 'create failed' } })
+        return
+      }
       const body = await json()
       const post: Post = {
         id: crypto.randomUUID(),
@@ -284,6 +293,11 @@ export async function installApiMock(page: Page) {
     }
     const replies = url.pathname.match(/^\/v1\/posts\/([^/]+)\/replies$/)
     if (replies && method === 'POST') {
+      if (rejectedCreates > 0) {
+        rejectedCreates -= 1
+        await route.fulfill({ status: 500, json: { code: 'rejected', message: 'create failed' } })
+        return
+      }
       const body = await json()
       const parent = db.posts.find((p) => p.id === replies[1])
       if (!parent) {
@@ -428,6 +442,11 @@ export async function installApiMock(page: Page) {
       return
     }
     if (postIdPath && method === 'DELETE') {
+      if (rejectedDeletes > 0) {
+        rejectedDeletes -= 1
+        await route.fulfill({ status: 500, json: { code: 'rejected', message: 'delete failed' } })
+        return
+      }
       const post = db.posts.find((p) => p.id === postIdPath[1])
       if (!post) {
         await route.fulfill({ status: 404, json: { code: 'not_found', message: 'missing' } })
@@ -495,6 +514,14 @@ export async function installApiMock(page: Page) {
 
   return {
     seedChannel,
+    /** 次の count 件の投稿・返信の作成をサーバーが拒否する */
+    rejectNextCreates(count = 1) {
+      rejectedCreates = count
+    },
+    /** 次の count 件の削除をサーバーが拒否する */
+    rejectNextDeletes(count = 1) {
+      rejectedDeletes = count
+    },
     seedSearchScenario() {
       const { channel } = seedChannel('検索メモ')
       const root = createSeedPost(channel.id, '日本語の検索対象メモ', '2026-08-23T00:00:00.000Z')

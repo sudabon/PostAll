@@ -2,9 +2,11 @@ import { useEffect, useRef } from 'react'
 import type { Attachment, Post } from '@/api/client'
 import { flattenPages, usePostMutations, useTimeline } from '@/hooks/usePosts'
 import { formatDateLabel, formatTime, localDateKey } from '@/lib/dates'
-import { useUi } from '@/state/ui'
+import { requireMutationConnection, useUi } from '@/state/ui'
 import { useAuth } from '@/auth/AuthProvider'
 import { Composer } from '@/components/composer/Composer'
+import { DeleteFailureNotice } from '@/components/post/DeleteFailureNotice'
+import { PendingPostRow } from '@/components/post/PendingPostRow'
 import { PostActions } from '@/components/post/PostActions'
 import { PostBody } from '@/components/post/PostBody'
 import { PostEditor } from '@/components/post/PostEditor'
@@ -41,8 +43,13 @@ export function Timeline({
   const timelineAnchorId = useUi((s) => s.timelineAnchorId)
   const targetPostId = useUi((s) => s.targetPostId)
   const canMutate = useUi((s) => s.canMutate)
+  const deletingPostIds = useUi((s) => s.deletingPostIds)
+  const pendingPosts = useUi((s) => s.pendingPosts)
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading } = useTimeline(channelId, timelineAnchorId)
-  const posts = flattenPages(data?.pages)
+  // 削除中のポストは取得結果に残っていても描かない。確定前のポストは取得結果に
+  // 現れないので、当該チャネル分を末尾へ重ねる。
+  const posts = flattenPages(data?.pages).filter((post) => !deletingPostIds.includes(post.id))
+  const pending = pendingPosts.filter((entry) => entry.channelId === channelId && entry.threadRootId === null)
   const scroller = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -158,7 +165,7 @@ export function Timeline({
             <p className="mb-2 text-center text-caption text-muted-foreground">履歴の先頭です</p>
           ) : null}
           {isLoading ? <p className="text-body text-muted-foreground">読み込み中…</p> : null}
-          {!isLoading && posts.length === 0 ? (
+          {!isLoading && posts.length === 0 && pending.length === 0 ? (
             <p className="text-body text-muted-foreground">まだポストがありません</p>
           ) : null}
           {posts.map((post, i) => {
@@ -182,10 +189,27 @@ export function Timeline({
                     mutations.edit.mutate({ id: post.id, body, attachments, postUpdatedAt: post.updatedAt })
                   }}
                   onDelete={() => mutations.remove.mutate(post.id)}
+                  onRetryDelete={() => mutations.remove.mutate(post.id)}
                 />
               </div>
             )
           })}
+          {pending.map((entry) => (
+            <PendingPostRow
+              key={entry.key}
+              pending={entry}
+              mutationDisabled={!canMutate}
+              onRetry={() =>
+                mutations.create.mutate({
+                  body: entry.body,
+                  attachmentIds: entry.attachments.map((attachment) => attachment.id),
+                  attachments: entry.attachments,
+                  pendingKey: entry.key,
+                })
+              }
+              onDiscard={() => useUi.getState().removePendingPost(entry.key)}
+            />
+          ))}
         </div>
       </div>
       <Composer
@@ -194,8 +218,10 @@ export function Timeline({
         disabled={!channelId}
         mutationDisabled={!canMutate}
         uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress)}
-        onSubmit={async (body, attachmentIds) => {
-          await mutations.create.mutateAsync({ body, attachmentIds })
+        // 応答は待たない。接続断だけは mutate の前に弾き、throw して Composer に入力を戻させる。
+        onSubmit={(body, attachmentIds, attachments) => {
+          requireMutationConnection()
+          mutations.create.mutate({ body, attachmentIds, attachments })
           const el = scroller.current
           if (!el) return
           pinnedToBottom.current = true
@@ -212,15 +238,18 @@ function PostRow({
   mutationDisabled,
   onSave,
   onDelete,
+  onRetryDelete,
 }: {
   post: Post
   highlighted: boolean
   mutationDisabled: boolean
   onSave: (body: string, attachmentIds: string[], attachments: Attachment[]) => void | Promise<void>
   onDelete: () => void
+  onRetryDelete: () => void
 }) {
   // 行ごとに真偽値で購読するので、編集の開始・終了で再描画されるのは当該行だけになる
   const editing = useUi((s) => s.editingPostId === post.id)
+  const deleteError = useUi((s) => s.failedDeletes[post.id])
   return (
     <article
       id={`post-${post.id}`}
@@ -241,6 +270,7 @@ function PostRow({
       ) : (
         <PostBody post={post} />
       )}
+      <DeleteFailureNotice message={deleteError} mutationDisabled={mutationDisabled} onRetry={onRetryDelete} />
       <ReactionBar postId={post.id} reactions={post.reactions ?? []} />
       {post.replyCount > 0 ? (
         <Button

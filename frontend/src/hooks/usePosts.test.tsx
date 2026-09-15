@@ -4,16 +4,25 @@ import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment, Post } from '@/api/client'
 import { useUi } from '@/state/ui'
-import { usePostMutations, useTimeline } from './usePosts'
+import { deleteFailureMessage, usePostMutations, useTimeline } from './usePosts'
 
 const mocks = vi.hoisted(() => ({
   listPosts: vi.fn(),
   editPost: vi.fn(),
+  createPost: vi.fn(),
+  createReply: vi.fn(),
+  deletePost: vi.fn(),
 }))
 
 vi.mock('@/auth/AuthProvider', () => ({
   useAuth: () => ({
-    api: { listPosts: mocks.listPosts, editPost: mocks.editPost },
+    api: {
+      listPosts: mocks.listPosts,
+      editPost: mocks.editPost,
+      createPost: mocks.createPost,
+      createReply: mocks.createReply,
+      deletePost: mocks.deletePost,
+    },
     signedIn: true,
   }),
 }))
@@ -21,11 +30,17 @@ vi.mock('@/auth/AuthProvider', () => ({
 beforeEach(() => {
   mocks.listPosts.mockReset()
   mocks.editPost.mockReset()
+  mocks.createPost.mockReset()
+  mocks.createReply.mockReset()
+  mocks.deletePost.mockReset()
   useUi.setState({
     canMutate: true,
     editingPostId: null,
     autoOpenedEditPostId: null,
     failedEdits: {},
+    pendingPosts: [],
+    deletingPostIds: [],
+    failedDeletes: {},
   })
 })
 
@@ -316,5 +331,219 @@ describe('usePostMutations edit', () => {
 
     await waitFor(() => expect(result.current.edit.isSuccess).toBe(true))
     expect(useUi.getState().failedEdits[postId]).toBeUndefined()
+  })
+})
+
+const newPostId = '66666666-6666-6666-6666-666666666666'
+
+function timelineOf(client: QueryClient) {
+  return client.getQueryData<{ pages: { posts: Post[] }[] }>(['posts', channelId])
+}
+
+function threadOf(client: QueryClient) {
+  return client.getQueryData<{ root: Post; replies: Post[] }>(['thread', 'root-post'])
+}
+
+describe('usePostMutations create', () => {
+  it('shows the post as pending before the server responds', async () => {
+    const request = deferred<Post>()
+    mocks.createPost.mockReturnValue(request.promise)
+    const client = mutationClient()
+    seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    act(() => {
+      result.current.create.mutate({ body: '新しいポスト', attachmentIds: [], attachments: [] })
+    })
+
+    expect(useUi.getState().pendingPosts).toMatchObject([
+      { channelId, threadRootId: null, body: '新しいポスト', status: 'sending' },
+    ])
+    await waitFor(() => expect(mocks.createPost).toHaveBeenCalledWith(channelId, '新しいポスト', []))
+
+    await act(async () => request.resolve(post({ id: newPostId, body: '新しいポスト' })))
+  })
+
+  it('keeps the pending post through an invalidation of the timeline', async () => {
+    const request = deferred<Post>()
+    mocks.createPost.mockReturnValue(request.promise)
+    const client = mutationClient()
+    seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    act(() => {
+      result.current.create.mutate({ body: '新しいポスト' })
+    })
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['posts'] })
+    })
+
+    expect(useUi.getState().pendingPosts).toHaveLength(1)
+
+    await act(async () => request.resolve(post({ id: newPostId, body: '新しいポスト' })))
+  })
+
+  it('inserts the confirmed post into the timeline cache and clears the pending row', async () => {
+    const serverPost = post({ id: newPostId, body: '新しいポスト', createdAt: '2026-08-23T01:00:00Z' })
+    mocks.createPost.mockResolvedValue(serverPost)
+    const client = mutationClient()
+    seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    await act(async () => {
+      await result.current.create.mutateAsync({ body: '新しいポスト' })
+    })
+
+    expect(timelineOf(client)?.pages[0]?.posts.at(-1)).toEqual(serverPost)
+    expect(useUi.getState().pendingPosts).toEqual([])
+  })
+
+  it('marks the pending post failed and reuses its key on retry', async () => {
+    mocks.createPost.mockRejectedValueOnce(new Error('create failed'))
+    const client = mutationClient()
+    seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    await act(async () => {
+      await result.current.create.mutateAsync({ body: '新しいポスト' }).catch(() => undefined)
+    })
+
+    const failed = useUi.getState().pendingPosts[0]
+    expect(failed).toMatchObject({ body: '新しいポスト', status: 'failed' })
+
+    const serverPost = post({ id: newPostId, body: '新しいポスト' })
+    mocks.createPost.mockResolvedValueOnce(serverPost)
+    await act(async () => {
+      await result.current.create.mutateAsync({ body: '新しいポスト', pendingKey: failed!.key })
+    })
+
+    expect(useUi.getState().pendingPosts).toEqual([])
+    expect(timelineOf(client)?.pages[0]?.posts.at(-1)).toEqual(serverPost)
+  })
+
+  it('creates no pending post while the connection is unavailable', async () => {
+    mocks.createPost.mockResolvedValue(post({ id: newPostId }))
+    const client = mutationClient()
+    seedPostQueries(client)
+    useUi.setState({ canMutate: false })
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    await act(async () => {
+      await result.current.create.mutateAsync({ body: '新しいポスト' }).catch(() => undefined)
+    })
+
+    expect(useUi.getState().pendingPosts).toEqual([])
+    expect(mocks.createPost).not.toHaveBeenCalled()
+  })
+})
+
+describe('usePostMutations reply', () => {
+  it('shows the reply as pending against its thread before the server responds', async () => {
+    const request = deferred<Post>()
+    mocks.createReply.mockReturnValue(request.promise)
+    const client = mutationClient()
+    seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    act(() => {
+      result.current.reply.mutate({ postId: 'root-post', body: '新しい返信' })
+    })
+
+    expect(useUi.getState().pendingPosts).toMatchObject([
+      { channelId, threadRootId: 'root-post', body: '新しい返信', status: 'sending' },
+    ])
+
+    await act(async () => request.resolve(post({ id: newPostId, body: '新しい返信' })))
+  })
+
+  it('inserts the confirmed reply into the thread cache only', async () => {
+    const serverReply = post({ id: newPostId, body: '新しい返信', threadRootId: 'root-post' })
+    mocks.createReply.mockResolvedValue(serverReply)
+    const client = mutationClient()
+    seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    await act(async () => {
+      await result.current.reply.mutateAsync({ postId: 'root-post', body: '新しい返信' })
+    })
+
+    expect(threadOf(client)?.replies.at(-1)).toEqual(serverReply)
+    expect(timelineOf(client)?.pages[0]?.posts.map((entry) => entry.id)).toEqual([postId])
+    expect(useUi.getState().pendingPosts).toEqual([])
+  })
+
+  it('marks the pending reply failed when the server rejects it', async () => {
+    mocks.createReply.mockRejectedValue(new Error('reply failed'))
+    const client = mutationClient()
+    seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    await act(async () => {
+      await result.current.reply.mutateAsync({ postId: 'root-post', body: '新しい返信' }).catch(() => undefined)
+    })
+
+    expect(useUi.getState().pendingPosts).toMatchObject([
+      { threadRootId: 'root-post', body: '新しい返信', status: 'failed' },
+    ])
+  })
+})
+
+describe('usePostMutations remove', () => {
+  it('hides the post before the server responds and keeps it hidden across an invalidation', async () => {
+    const request = deferred<void>()
+    mocks.deletePost.mockReturnValue(request.promise)
+    const client = mutationClient()
+    seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    act(() => {
+      result.current.remove.mutate(postId)
+    })
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['posts'] })
+    })
+
+    expect(useUi.getState().deletingPostIds).toEqual([postId])
+
+    await act(async () => request.resolve())
+  })
+
+  it('drops the post from both caches once the delete is confirmed', async () => {
+    mocks.deletePost.mockResolvedValue(undefined)
+    const client = mutationClient()
+    seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    await act(async () => {
+      await result.current.remove.mutateAsync(postId)
+    })
+
+    expect(timelineOf(client)?.pages[0]?.posts).toEqual([])
+    expect(threadOf(client)?.replies).toEqual([])
+    expect(useUi.getState().deletingPostIds).toEqual([])
+    expect(useUi.getState().failedDeletes).toEqual({})
+  })
+
+  it('restores the post and records the failure when the delete is rejected', async () => {
+    mocks.deletePost.mockRejectedValueOnce(new Error('delete failed'))
+    const client = mutationClient()
+    const snapshots = seedPostQueries(client)
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    await act(async () => {
+      await result.current.remove.mutateAsync(postId).catch(() => undefined)
+    })
+
+    expect(useUi.getState().deletingPostIds).toEqual([])
+    expect(useUi.getState().failedDeletes[postId]).toBe(deleteFailureMessage)
+    expect(client.getQueryData(['posts', channelId])).toEqual(snapshots.timeline)
+
+    mocks.deletePost.mockResolvedValueOnce(undefined)
+    await act(async () => {
+      await result.current.remove.mutateAsync(postId)
+    })
+
+    expect(useUi.getState().failedDeletes).toEqual({})
+    expect(timelineOf(client)?.pages[0]?.posts).toEqual([])
   })
 })

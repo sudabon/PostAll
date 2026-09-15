@@ -4,10 +4,12 @@ import { X } from 'lucide-react'
 import type { Attachment, Post } from '@/api/client'
 import { usePostMutations, useThread } from '@/hooks/usePosts'
 import { formatDateTime } from '@/lib/dates'
-import { THREAD_MAX_WIDTH, THREAD_MIN_WIDTH, useUi } from '@/state/ui'
+import { requireMutationConnection, THREAD_MAX_WIDTH, THREAD_MIN_WIDTH, useUi } from '@/state/ui'
 import { useAuth } from '@/auth/AuthProvider'
 import { Composer } from '@/components/composer/Composer'
 import { PostBody } from '@/components/post/PostBody'
+import { DeleteFailureNotice } from '@/components/post/DeleteFailureNotice'
+import { PendingPostRow } from '@/components/post/PendingPostRow'
 import { PostActions } from '@/components/post/PostActions'
 import { PostEditor } from '@/components/post/PostEditor'
 import { ReactionBar } from '@/components/reactions/ReactionBar'
@@ -27,8 +29,13 @@ export function ThreadPanel({
   const postId = useUi((s) => s.threadPostId)
   const targetReplyId = useUi((s) => s.targetThreadReplyId)
   const canMutate = useUi((s) => s.canMutate)
+  const deletingPostIds = useUi((s) => s.deletingPostIds)
+  const pendingPosts = useUi((s) => s.pendingPosts)
   const width = useUi((s) => s.threadWidth)
   const { data, isLoading } = useThread(postId)
+  // タイムラインと同じ規則。削除中の返信は描かず、確定前の返信を末尾へ重ねる。
+  const replies = (data?.replies ?? []).filter((reply) => !deletingPostIds.includes(reply.id))
+  const pending = pendingPosts.filter((entry) => entry.threadRootId === postId)
   const mutations = usePostMutations(channelId)
   const { api } = useAuth()
   const shouldReduceMotion = useReducedMotion()
@@ -41,7 +48,7 @@ export function ThreadPanel({
     dimension: THREAD_MAX_WIDTH - THREAD_MIN_WIDTH,
     onCommit: (next) => useUi.getState().setThreadWidth(next),
   })
-  const targetVisible = targetReplyId !== null && Boolean(data?.replies.some((reply) => reply.id === targetReplyId))
+  const targetVisible = targetReplyId !== null && replies.some((reply) => reply.id === targetReplyId)
   useEffect(() => {
     if (!targetReplyId || !targetVisible) return
     const frame = requestAnimationFrame(() => {
@@ -132,7 +139,7 @@ export function ThreadPanel({
               ) : null}
             </div>
           )}
-          {data?.replies.map((reply) => (
+          {replies.map((reply) => (
             <ThreadReply
               key={reply.id}
               reply={reply}
@@ -143,6 +150,24 @@ export function ThreadPanel({
                 mutations.edit.mutate({ id: reply.id, body, attachments, postUpdatedAt: reply.updatedAt })
               }}
               onDelete={() => mutations.remove.mutate(reply.id)}
+              onRetryDelete={() => mutations.remove.mutate(reply.id)}
+            />
+          ))}
+          {pending.map((entry) => (
+            <PendingPostRow
+              key={entry.key}
+              pending={entry}
+              mutationDisabled={!canMutate}
+              onRetry={() =>
+                mutations.reply.mutate({
+                  postId,
+                  body: entry.body,
+                  attachmentIds: entry.attachments.map((attachment) => attachment.id),
+                  attachments: entry.attachments,
+                  pendingKey: entry.key,
+                })
+              }
+              onDiscard={() => useUi.getState().removePendingPost(entry.key)}
             />
           ))}
         </div>
@@ -152,8 +177,10 @@ export function ThreadPanel({
           placeholder="返信を入力"
           mutationDisabled={!canMutate}
           uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress)}
-          onSubmit={async (body, attachmentIds) => {
-            await mutations.reply.mutateAsync({ postId, body, attachmentIds })
+          // タイムラインと同じく応答は待たない。接続断だけ mutate の前に弾く。
+          onSubmit={(body, attachmentIds, attachments) => {
+            requireMutationConnection()
+            mutations.reply.mutate({ postId, body, attachmentIds, attachments })
           }}
         />
       </aside>
@@ -167,15 +194,18 @@ function ThreadReply({
   mutationDisabled,
   onSave,
   onDelete,
+  onRetryDelete,
 }: {
   reply: Post
   highlighted: boolean
   mutationDisabled: boolean
   onSave: (body: string, attachmentIds: string[], attachments: Attachment[]) => void | Promise<void>
   onDelete: () => void
+  onRetryDelete: () => void
 }) {
   // 返信ごとに真偽値で購読するので、編集の開始・終了で再描画されるのは当該返信だけになる
   const editing = useUi((s) => s.editingPostId === reply.id)
+  const deleteError = useUi((s) => s.failedDeletes[reply.id])
   return (
     <article
       id={`thread-reply-${reply.id}`}
@@ -190,6 +220,7 @@ function ThreadReply({
       ) : (
         <PostBody post={reply} />
       )}
+      <DeleteFailureNotice message={deleteError} mutationDisabled={mutationDisabled} onRetry={onRetryDelete} />
       <ReactionBar postId={reply.id} reactions={reply.reactions ?? []} />
       <PostActions
         post={reply}

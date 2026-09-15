@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SearchResult } from '@/api/client'
 import { createFakeAdapter } from '@/platform'
-import { loadUi, seedNarrowHistory, useUi, watchNarrowHistory, watchUi } from './ui'
+import {
+  loadUi,
+  seedNarrowHistory,
+  useUi,
+  watchNarrowHistory,
+  watchUi,
+  type PendingPost,
+} from './ui'
 import { WIDE_VIEWPORT_QUERY } from '@/lib/viewport'
 
 const channelA = '44444444-4444-4444-4444-444444444444'
@@ -273,5 +280,85 @@ describe('narrow screen', () => {
     useUi.getState().selectChannel(channelB)
     expect(useUi.getState().selectedChannelId).toBe(channelB)
     expect(useUi.getState().narrowScreen).toBe('timeline')
+  })
+})
+
+describe('pending post layer', () => {
+  const key = 'pending-key'
+
+  function pending(overrides: Partial<PendingPost> = {}): PendingPost {
+    return {
+      key,
+      channelId: channelA,
+      threadRootId: null,
+      body: '送信する本文',
+      attachments: [],
+      createdAt: '2026-09-04T12:00:00Z',
+      status: 'sending',
+      ...overrides,
+    }
+  }
+
+  beforeEach(() => {
+    useUi.setState({ pendingPosts: [], deletingPostIds: [], failedDeletes: {} })
+  })
+
+  it('goes from sending to failed, back to sending on retry, then clears on success', () => {
+    useUi.getState().addPendingPost(pending())
+    expect(useUi.getState().pendingPosts).toEqual([pending()])
+
+    useUi.getState().failPendingPost(key)
+    expect(useUi.getState().pendingPosts[0]?.status).toBe('failed')
+
+    useUi.getState().retryPendingPost(key)
+    expect(useUi.getState().pendingPosts[0]?.status).toBe('sending')
+
+    useUi.getState().removePendingPost(key)
+    expect(useUi.getState().pendingPosts).toEqual([])
+  })
+
+  it('discards a failed pending post without touching the others', () => {
+    useUi.getState().addPendingPost(pending())
+    useUi.getState().addPendingPost(pending({ key: 'other', body: '別の本文' }))
+    useUi.getState().failPendingPost(key)
+
+    useUi.getState().removePendingPost(key)
+
+    expect(useUi.getState().pendingPosts).toEqual([pending({ key: 'other', body: '別の本文' })])
+  })
+
+  it('keeps the same state reference when the key is unknown', () => {
+    useUi.getState().addPendingPost(pending())
+    const before = useUi.getState().pendingPosts
+
+    useUi.getState().failPendingPost('missing')
+    useUi.getState().retryPendingPost('missing')
+    useUi.getState().removePendingPost('missing')
+
+    expect(useUi.getState().pendingPosts).toBe(before)
+  })
+
+  it('goes from deleting to failed, back to deleting on retry, then clears on success', () => {
+    useUi.getState().startDeletingPost(postId)
+    expect(useUi.getState().deletingPostIds).toEqual([postId])
+    expect(useUi.getState().failedDeletes).toEqual({})
+
+    useUi.getState().failDeletingPost(postId, '削除に失敗しました')
+    expect(useUi.getState().deletingPostIds).toEqual([])
+    expect(useUi.getState().failedDeletes).toEqual({ [postId]: '削除に失敗しました' })
+
+    useUi.getState().startDeletingPost(postId)
+    expect(useUi.getState().deletingPostIds).toEqual([postId])
+    expect(useUi.getState().failedDeletes).toEqual({})
+
+    useUi.getState().clearDeletingPost(postId)
+    expect(useUi.getState().deletingPostIds).toEqual([])
+  })
+
+  it('does not queue the same post id twice while a delete is in flight', () => {
+    useUi.getState().startDeletingPost(postId)
+    useUi.getState().startDeletingPost(postId)
+
+    expect(useUi.getState().deletingPostIds).toEqual([postId])
   })
 })

@@ -23,6 +23,22 @@ export type FailedEdit = {
   discarded?: boolean
 }
 
+/**
+ * サーバーがまだ確定していない投稿・返信。id はサーバーが採番するため確定まで存在せず、
+ * 保留の同定には key（crypto.randomUUID）を使う。
+ * 取得結果に混ぜず別レイヤーに置くのは、確定前に走る再取得で消えないようにするため。
+ */
+export type PendingPost = {
+  key: string
+  channelId: string
+  /** 返信なら親スレッドの id。チャネル直下のポストなら null */
+  threadRootId: string | null
+  body: string
+  attachments: Attachment[]
+  createdAt: string
+  status: 'sending' | 'failed'
+}
+
 export type UiState = {
   sidebarWidth: number
   sidebarCollapsed: boolean
@@ -40,6 +56,11 @@ export type UiState = {
   editingPostId: string | null
   autoOpenedEditPostId: string | null
   failedEdits: Record<string, FailedEdit>
+  pendingPosts: PendingPost[]
+  /** 楽観的に表示から取り除いているポストの id */
+  deletingPostIds: string[]
+  /** 削除に失敗したポストの id → その行に出す文言 */
+  failedDeletes: Record<string, string>
   composerEpoch: number
   connectionState: ConnectionState
   canMutate: boolean
@@ -68,6 +89,9 @@ const initial: UiState = {
   editingPostId: null,
   autoOpenedEditPostId: null,
   failedEdits: {},
+  pendingPosts: [],
+  deletingPostIds: [],
+  failedDeletes: {},
   composerEpoch: 0,
   connectionState: 'connecting',
   canMutate: true,
@@ -96,6 +120,13 @@ type UiStore = UiState & {
   openEditorForFailure: (postId: string) => void
   setFailedEdit: (postId: string, failedEdit: FailedEdit) => void
   clearFailedEdit: (postId: string) => void
+  addPendingPost: (pending: PendingPost) => void
+  failPendingPost: (key: string) => void
+  retryPendingPost: (key: string) => void
+  removePendingPost: (key: string) => void
+  startDeletingPost: (postId: string) => void
+  failDeletingPost: (postId: string, message: string) => void
+  clearDeletingPost: (postId: string) => void
   focusComposer: () => void
   setConnectionState: (state: ConnectionState) => void
   setConnectionError: (message: string | null) => void
@@ -124,6 +155,27 @@ function applyNarrowBack(from: NarrowScreen) {
   if (from === 'timeline') {
     useUi.setState({ narrowScreen: 'channels' })
   }
+}
+
+function setPendingStatus(
+  pendingPosts: PendingPost[],
+  key: string,
+  status: PendingPost['status'],
+): { pendingPosts: PendingPost[] } | Record<string, never> {
+  let changed = false
+  const next = pendingPosts.map((pending) => {
+    if (pending.key !== key || pending.status === status) return pending
+    changed = true
+    return { ...pending, status }
+  })
+  return changed ? { pendingPosts: next } : {}
+}
+
+function withoutKey<T>(source: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in source)) return source
+  const next = { ...source }
+  delete next[key]
+  return next
 }
 
 export const useUi = create<UiStore>((set, get) => ({
@@ -212,6 +264,30 @@ export const useUi = create<UiStore>((set, get) => ({
     const failedEdits = { ...state.failedEdits }
     delete failedEdits[postId]
     return { failedEdits }
+  }),
+  addPendingPost: (pending) => set((state) => ({ pendingPosts: [...state.pendingPosts, pending] })),
+  failPendingPost: (key) => set((state) => setPendingStatus(state.pendingPosts, key, 'failed')),
+  // 再送は行を動かさずに送信中へ戻す。破棄されていれば（key が無ければ）何もしない。
+  retryPendingPost: (key) => set((state) => setPendingStatus(state.pendingPosts, key, 'sending')),
+  // 確定による解除とユーザーの破棄はどちらも「保留レイヤーから消す」だけで、後始末は変わらない。
+  removePendingPost: (key) => set((state) => {
+    const pendingPosts = state.pendingPosts.filter((pending) => pending.key !== key)
+    return pendingPosts.length === state.pendingPosts.length ? state : { pendingPosts }
+  }),
+  // 削除の開始と再試行は同じ遷移。再試行では前回の失敗の文言も落とす。
+  startDeletingPost: (postId) => set((state) => {
+    const deletingPostIds = state.deletingPostIds.includes(postId)
+      ? state.deletingPostIds
+      : [...state.deletingPostIds, postId]
+    return { deletingPostIds, failedDeletes: withoutKey(state.failedDeletes, postId) }
+  }),
+  failDeletingPost: (postId, message) => set((state) => ({
+    deletingPostIds: state.deletingPostIds.filter((id) => id !== postId),
+    failedDeletes: { ...state.failedDeletes, [postId]: message },
+  })),
+  clearDeletingPost: (postId) => set((state) => {
+    const deletingPostIds = state.deletingPostIds.filter((id) => id !== postId)
+    return deletingPostIds.length === state.deletingPostIds.length ? state : { deletingPostIds }
   }),
   focusComposer: () => set({ composerEpoch: get().composerEpoch + 1 }),
   setConnectionState: (connectionState) => set({

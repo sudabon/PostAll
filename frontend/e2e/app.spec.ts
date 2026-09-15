@@ -798,3 +798,169 @@ test('renames a channel by double click and commits on outside click', async ({ 
   await expect(page.getByTestId('channel-archive')).toBeVisible()
   await expect(page.getByTestId('channel-name-input')).toHaveCount(0)
 })
+
+const optimisticTag = { tag: ['@optimistic-post-create-and-delete'] }
+
+test('送信操作の直後にポストが表示され、入力欄は空のまま次を打てる', optimisticTag, async ({ page }) => {
+  const mock = await installApiMock(page)
+  mock.seedChannel('optimistic-create')
+  let releaseResponse!: () => void
+  const responseGate = new Promise<void>((resolve) => {
+    releaseResponse = resolve
+  })
+  await page.route('**/v1/channels/*/posts', async (route) => {
+    if (route.request().method() === 'POST') await responseGate
+    await route.fallback()
+  })
+  await page.goto('/')
+  await page.getByTestId('channel-optimistic-create').click()
+
+  const composer = page.getByTestId('composer-input')
+  await composer.fill('応答を待たないポスト')
+  const response = page.waitForResponse(
+    (candidate) => candidate.request().method() === 'POST' && candidate.url().includes('/posts'),
+  )
+
+  try {
+    await composer.press('Shift+Enter')
+
+    await expect(page.getByTestId('timeline').getByText('応答を待たないポスト')).toBeVisible()
+    await expect(composer).toHaveValue('')
+    await expect(composer).toBeEnabled()
+    await composer.fill('続けて打つ次のポスト')
+    await expect(composer).toHaveValue('続けて打つ次のポスト')
+  } finally {
+    releaseResponse()
+  }
+  await response
+  await expect(page.getByTestId('timeline').getByText('応答を待たないポスト')).toBeVisible()
+  await expect(composer).toHaveValue('続けて打つ次のポスト')
+})
+
+test('削除の承認直後に行が消える', optimisticTag, async ({ page }) => {
+  const mock = await installApiMock(page)
+  const { posts } = mock.seedChannel('optimistic-delete', ['消えるポスト', '残るポスト'])
+  let releaseResponse!: () => void
+  const responseGate = new Promise<void>((resolve) => {
+    releaseResponse = resolve
+  })
+  await page.route('**/v1/posts/*', async (route) => {
+    if (route.request().method() === 'DELETE') await responseGate
+    await route.fallback()
+  })
+  await page.goto('/')
+  await page.getByTestId('channel-optimistic-delete').click()
+
+  const row = page.getByTestId(`post-${posts[0]!.id}`)
+  await row.hover()
+  const response = page.waitForResponse(
+    (candidate) => candidate.request().method() === 'DELETE' && candidate.url().includes(`/v1/posts/${posts[0]!.id}`),
+  )
+
+  try {
+    page.once('dialog', (dialog) => dialog.accept())
+    await row.getByRole('button', { name: /ポストを削除/ }).click()
+
+    await expect(row).toHaveCount(0)
+    await expect(page.getByTestId(`post-${posts[1]!.id}`)).toBeVisible()
+  } finally {
+    releaseResponse()
+  }
+  await response
+  await expect(row).toHaveCount(0)
+})
+
+test('送信がサーバーで拒否された行は再送で確定する', optimisticTag, async ({ page }) => {
+  const mock = await installApiMock(page)
+  mock.seedChannel('rejected-create')
+  mock.rejectNextCreates()
+  await page.goto('/')
+  await page.getByTestId('channel-rejected-create').click()
+
+  const composer = page.getByTestId('composer-input')
+  await composer.fill('拒否されるポスト')
+  await composer.press('Shift+Enter')
+
+  const failed = page.getByTestId('timeline').locator('article').filter({ hasText: '拒否されるポスト' })
+  await expect(failed.getByRole('alert')).toContainText('送信できませんでした')
+  await expect(composer).toHaveValue('')
+
+  await failed.getByRole('button', { name: '再送' }).click()
+
+  await expect(page.getByTestId('timeline').getByRole('alert')).toHaveCount(0)
+  await expect(page.getByTestId('timeline').getByText('拒否されるポスト')).toBeVisible()
+  await page.reload()
+  await page.getByTestId('channel-rejected-create').click()
+  await expect(page.getByTestId('timeline').getByText('拒否されるポスト')).toBeVisible()
+})
+
+test('送信がサーバーで拒否された行は破棄で消える', optimisticTag, async ({ page }) => {
+  const mock = await installApiMock(page)
+  mock.seedChannel('discarded-create')
+  mock.rejectNextCreates()
+  await page.goto('/')
+  await page.getByTestId('channel-discarded-create').click()
+
+  const composer = page.getByTestId('composer-input')
+  await composer.fill('破棄されるポスト')
+  await composer.press('Shift+Enter')
+
+  const failed = page.getByTestId('timeline').locator('article').filter({ hasText: '破棄されるポスト' })
+  await expect(failed.getByRole('alert')).toContainText('送信できませんでした')
+
+  await failed.getByRole('button', { name: '破棄' }).click()
+
+  await expect(page.getByTestId('timeline').getByText('破棄されるポスト')).toHaveCount(0)
+  await expect(page.getByText('まだポストがありません')).toBeVisible()
+})
+
+test('削除がサーバーで拒否されると行が戻り、再試行で消える', optimisticTag, async ({ page }) => {
+  const mock = await installApiMock(page)
+  const { posts } = mock.seedChannel('rejected-delete', ['戻るポスト', '後ろのポスト'])
+  mock.rejectNextDeletes()
+  await page.goto('/')
+  await page.getByTestId('channel-rejected-delete').click()
+
+  const row = page.getByTestId(`post-${posts[0]!.id}`)
+  await row.hover()
+  page.once('dialog', (dialog) => dialog.accept())
+  await row.getByRole('button', { name: /ポストを削除/ }).click()
+
+  await expect(row.getByRole('alert')).toHaveText('削除できませんでした。')
+  await expect(row.getByText('戻るポスト')).toBeVisible()
+  // 元の位置へ戻る。後ろのポストより前のままであること。
+  const bodies = await page.getByTestId('timeline').locator('article').allInnerTexts()
+  expect(bodies[0]).toContain('戻るポスト')
+  expect(bodies[1]).toContain('後ろのポスト')
+
+  await row.getByRole('button', { name: '再試行' }).click()
+
+  await expect(row).toHaveCount(0)
+  await expect(page.getByTestId(`post-${posts[1]!.id}`)).toBeVisible()
+})
+
+test('スレッドの返信も応答を待たずに表示され、拒否されれば再送できる', optimisticTag, async ({ page }) => {
+  const mock = await installApiMock(page)
+  const { posts } = mock.seedChannel('optimistic-reply', ['返信先のポスト'])
+  await page.goto('/')
+  await page.getByTestId('channel-optimistic-reply').click()
+  await page.getByTestId(`post-${posts[0]!.id}`).getByRole('button', { name: 'スレッドで返信' }).click()
+
+  const panel = page.getByTestId('thread-panel')
+  const replyInput = panel.getByTestId('composer-input')
+  mock.rejectNextCreates()
+  await replyInput.fill('拒否される返信')
+  await replyInput.press('Shift+Enter')
+
+  const failed = panel.locator('article').filter({ hasText: '拒否される返信' })
+  await expect(failed.getByRole('alert')).toContainText('送信できませんでした')
+  await expect(replyInput).toHaveValue('')
+  // 確定前の返信は件数に数えない
+  await expect(page.getByTestId(`post-${posts[0]!.id}`).getByRole('button', { name: /件の返信/ })).toHaveCount(0)
+
+  await failed.getByRole('button', { name: '再送' }).click()
+
+  await expect(panel.getByRole('alert')).toHaveCount(0)
+  await expect(panel.getByText('拒否される返信')).toBeVisible()
+  await expect(page.getByTestId(`post-${posts[0]!.id}`).getByRole('button', { name: /1 件の返信/ })).toBeVisible()
+})
