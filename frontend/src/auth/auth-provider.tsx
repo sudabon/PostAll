@@ -1,13 +1,10 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react'
-import { ApiClient } from '@/api/client'
 import { authorizeUrl, exchangeCode, generatePkce, oauthCallbackParams } from '@/auth/pkce'
 import {
   createApiClient,
@@ -18,18 +15,7 @@ import {
 } from '@/auth/session'
 import { usePlatform } from '@/platform'
 import { useSettings } from '@/state/settings'
-
-type AuthState = {
-  ready: boolean
-  signedIn: boolean
-  error: string | null
-  api: ApiClient
-  signIn: () => Promise<void>
-  signOut: () => Promise<void>
-  handleRedirect: (url: string) => Promise<void>
-}
-
-const AuthContext = createContext<AuthState | null>(null)
+import { AuthContext, type AuthState } from './auth-context'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const platform = usePlatform()
@@ -135,10 +121,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
-
-export function useAuth(): AuthState {
-  const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider')
-  return ctx
 }

@@ -219,7 +219,7 @@ export function Timeline({
         storageKey={`draft:${channelId}`}
         disabled={!channelId}
         mutationDisabled={!canMutate}
-        uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress)}
+        uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress, platform.putBytes)}
         // 応答は待たない。接続断だけは mutate の前に弾き、throw して Composer に入力を戻させる。
         onSubmit={(body, attachmentIds, attachments) => {
           requireMutationConnection()

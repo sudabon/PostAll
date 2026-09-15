@@ -34,5 +34,5 @@
 
 - [x] 6.1 `frontend/e2e/app.spec.ts` に「送信操作の直後にポストが表示され、入力欄が空でそのまま次を打てる」「削除の承認直後に行が消える」の E2E を追加する。`e2e-conventions` スキルの規約に従い、`npm run test:e2e` が通ることを確認する
 - [x] 6.2 `frontend/e2e/mock.ts` で作成・削除を失敗させられるようにし、送信失敗で行が失敗状態になり再送・破棄が効くこと、削除失敗で行が戻り再試行が効くことの E2E を追加して `npm run test:e2e` が通ることを確認する
-- [ ] 6.3 `make lint`・`make typecheck`・`make test` をすべて実行し、通ることを確認する
+- [x] 6.3 `make lint`・`make typecheck`・`make test` をすべて実行し、通ることを確認する
 - [x] 6.4 `openspec validate optimistic-post-create-and-delete --strict` が通ることを確認し、実装が delta spec のシナリオをすべて満たしているか突き合わせる

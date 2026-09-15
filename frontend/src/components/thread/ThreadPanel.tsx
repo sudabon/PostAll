@@ -178,7 +178,7 @@ export function ThreadPanel({
           storageKey={`draft:thread:${postId}`}
           placeholder="返信を入力"
           mutationDisabled={!canMutate}
-          uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress)}
+          uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress, platform.putBytes)}
           // タイムラインと同じく応答は待たない。接続断だけ mutate の前に弾く。
           onSubmit={(body, attachmentIds, attachments) => {
             requireMutationConnection()
