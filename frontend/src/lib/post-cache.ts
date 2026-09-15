@@ -74,3 +74,50 @@ export function queryDataHasPost(data: unknown, postId: string): boolean {
   })
   return found
 }
+
+/**
+ * 確定したポストをキャッシュへ差し込む。infinite query 形では最新側の先頭ページ、
+ * thread 形では replies の末尾に置く。既に載っていれば同一参照を返す。
+ * 対象のチャネル・スレッドの絞り込みは呼び出し側のクエリキーで行う。
+ */
+export function insertPostInQueryData<T>(data: T, post: Post): T {
+  if (!isRecord(data)) return data
+  if (queryDataHasPost(data, post.id)) return data
+
+  if (Array.isArray(data.pages)) {
+    const [first, ...rest] = data.pages
+    if (!isRecord(first) || !Array.isArray(first.posts)) return data
+    return { ...data, pages: [{ ...first, posts: [...(first.posts as Post[]), post] }, ...rest] } as T
+  }
+
+  if (isRecord(data.root) && Array.isArray(data.replies)) {
+    return { ...data, replies: [...(data.replies as Post[]), post] } as T
+  }
+
+  return data
+}
+
+/** 削除されたポストをキャッシュから取り除く。該当が無ければ同一参照を返す。 */
+export function removePostFromQueryData<T>(data: T, postId: string): T {
+  if (!isRecord(data)) return data
+
+  if (Array.isArray(data.pages)) {
+    let changed = false
+    const pages = data.pages.map((page) => {
+      if (!isRecord(page) || !Array.isArray(page.posts)) return page
+      const posts = (page.posts as Post[]).filter((current) => current.id !== postId)
+      if (posts.length === page.posts.length) return page
+      changed = true
+      return { ...page, posts }
+    })
+    return (changed ? { ...data, pages } : data) as T
+  }
+
+  if (isRecord(data.root) && Array.isArray(data.replies)) {
+    const replies = (data.replies as Post[]).filter((current) => current.id !== postId)
+    if (replies.length === data.replies.length) return data
+    return { ...data, replies } as T
+  }
+
+  return data
+}

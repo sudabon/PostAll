@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Attachment, Post } from '@/api/client'
-import { applyPostEdit, replacePostInQueryData, updatePostInQueryData } from './post-cache'
+import {
+  applyPostEdit,
+  insertPostInQueryData,
+  removePostFromQueryData,
+  replacePostInQueryData,
+  updatePostInQueryData,
+} from './post-cache'
 
 const postId = '22222222-2222-2222-2222-222222222222'
 
@@ -109,5 +115,78 @@ describe('post query cache updates', () => {
 
     expect(next.pages[0]?.posts[0]).toBe(serverPost)
     expect(data.pages[0]?.posts[0]).toBe(cached)
+  })
+})
+
+describe('post query cache inserts', () => {
+  const inserted = post({ id: 'new-post', createdAt: '2026-08-23T01:00:00Z' })
+
+  it('appends a confirmed post to the newest page of an infinite query', () => {
+    const existing = post()
+    const data = {
+      pages: [{ posts: [existing], nextBefore: null }, { posts: [] as Post[], nextBefore: null }],
+      pageParams: [undefined, 'older'],
+    }
+
+    const next = insertPostInQueryData(data, inserted)
+
+    expect(next.pages[0]?.posts).toEqual([existing, inserted])
+    expect(next.pages[1]).toBe(data.pages[1])
+    expect(data.pages[0]?.posts).toEqual([existing])
+  })
+
+  it('appends a confirmed reply to thread query data', () => {
+    const data = { root: post({ id: 'root-post' }), replies: [post()] }
+
+    const next = insertPostInQueryData(data, inserted)
+
+    expect(next.replies.at(-1)).toBe(inserted)
+    expect(next.root).toBe(data.root)
+    expect(data.replies).toHaveLength(1)
+  })
+
+  it('preserves the query data reference when the post is already cached', () => {
+    const timeline = { pages: [{ posts: [inserted] }], pageParams: [undefined] }
+    const thread = { root: post({ id: 'root-post' }), replies: [inserted] }
+    const asRoot = { root: inserted, replies: [] as Post[] }
+
+    expect(insertPostInQueryData(timeline, inserted)).toBe(timeline)
+    expect(insertPostInQueryData(thread, inserted)).toBe(thread)
+    expect(insertPostInQueryData(asRoot, inserted)).toBe(asRoot)
+  })
+})
+
+describe('post query cache removals', () => {
+  it('removes a post from every page of an infinite query', () => {
+    const kept = post({ id: 'kept-post' })
+    const data = {
+      pages: [{ posts: [kept], nextBefore: null }, { posts: [post()], nextBefore: null }],
+      pageParams: [undefined, 'older'],
+    }
+
+    const next = removePostFromQueryData(data, postId)
+
+    expect(next.pages[0]).toBe(data.pages[0])
+    expect(next.pages[1]?.posts).toEqual([])
+    expect(data.pages[1]?.posts).toHaveLength(1)
+  })
+
+  it('removes a reply from thread query data', () => {
+    const kept = post({ id: 'kept-reply' })
+    const data = { root: post({ id: 'root-post' }), replies: [kept, post()] }
+
+    const next = removePostFromQueryData(data, postId)
+
+    expect(next.replies).toEqual([kept])
+    expect(next.root).toBe(data.root)
+    expect(data.replies).toHaveLength(2)
+  })
+
+  it('preserves the query data reference when the post is absent', () => {
+    const timeline = { pages: [{ posts: [post()] }], pageParams: [undefined] }
+    const thread = { root: post({ id: 'root-post' }), replies: [post()] }
+
+    expect(removePostFromQueryData(timeline, 'missing-post')).toBe(timeline)
+    expect(removePostFromQueryData(thread, 'missing-post')).toBe(thread)
   })
 })

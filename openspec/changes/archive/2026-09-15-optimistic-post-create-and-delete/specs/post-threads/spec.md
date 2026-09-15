@@ -1,8 +1,5 @@
-# post-threads Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change slack-style-memo-app. Update Purpose after archive.
-## Requirements
 ### Requirement: ポストへの返信
 システムは、チャネル直下のポストに対して返信を投稿できるようにしなければならない (SHALL)。返信は親ポストのスレッドに属し、チャネルのタイムラインに直接表示されてはならない (MUST NOT)。
 
@@ -29,32 +26,6 @@ TBD - created by archiving change slack-style-memo-app. Update Purpose after arc
 #### Scenario: 返信に添付を付ける
 - **WHEN** ユーザーがスレッドへの返信に添付を伴って送信する
 - **THEN** システムは通常のポストと同じ形式で添付を保存し、スレッドビューに表示する
-
-### Requirement: 多段スレッドの禁止
-システムは、返信に対するさらなる返信で新しいスレッドを作ってはならない (MUST NOT)。スレッド内の返信に対する返信は、同一のスレッドに属さなければならない (SHALL)。
-
-#### Scenario: 返信に対して返信する
-- **WHEN** ユーザーがスレッド内の返信に対して返信操作を実行する
-- **THEN** システムは同じスレッドの末尾に返信を追加し、入れ子のスレッドを作らない
-
-### Requirement: スレッドビュー
-システムは、親ポストとその返信を時系列（古い順）で一覧するスレッドビューを提供しなければならない (SHALL)。スレッドビューには返信専用の入力フォームが含まれなければならない (SHALL)。
-
-#### Scenario: スレッドを開く
-- **WHEN** ユーザーが返信件数の表示または「スレッドで返信」操作を実行する
-- **THEN** システムはスレッドビューを開き、親ポストを先頭に、返信を古い順で表示する
-
-#### Scenario: デスクトップでのスレッド表示
-- **WHEN** デスクトップまたはブラウザでスレッドを開く
-- **THEN** システムはタイムラインを保持したまま、スレッドを併置するパネルとして表示する
-
-#### Scenario: モバイルでのスレッド表示
-- **WHEN** iOS アプリでスレッドを開く
-- **THEN** システムはスレッドを独立した画面として表示し、戻る操作でタイムラインへ復帰する
-
-#### Scenario: スレッドを閉じる
-- **WHEN** ユーザーがスレッドを閉じる操作を実行する
-- **THEN** システムはスレッドビューを閉じ、タイムラインの表示位置を維持する
 
 ### Requirement: 返信件数の表示
 システムは、返信を持つポストに対して、タイムライン上で返信件数と最終返信日時を表示しなければならない (SHALL)。
@@ -111,11 +82,3 @@ TBD - created by archiving change slack-style-memo-app. Update Purpose after arc
 #### Scenario: 返信を持つ親ポストを削除する
 - **WHEN** ユーザーが返信を持つポストを削除する
 - **THEN** システムは親ポストを論理削除し、スレッドが参照できない状態にならないよう一貫した表示を行う
-
-### Requirement: スレッドのリッチコンテンツと添付
-システムは、スレッド内の返信に対しても、チャネル直下のポストと同じ Markdown 描画・コードブロック・Mermaid・添付・リアクションの規則を適用しなければならない (SHALL)。
-
-#### Scenario: 返信に Mermaid を含める
-- **WHEN** スレッドの返信に `mermaid` コードブロックが含まれる
-- **THEN** システムはチャネル直下のポストと同様に図として描画する
-
