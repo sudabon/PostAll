@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkAttachment, inferMime, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS } from './attachments'
+import { ACCEPT_ATTR, checkAttachment, inferMime, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS } from './attachments'
 
 describe('attachments', () => {
   it('rejects files over the size limit', () => {
@@ -22,5 +22,14 @@ describe('attachments', () => {
   it('infers mime from the file extension', () => {
     expect(inferMime('photo.JPG', '')).toBe('image/jpeg')
     expect(inferMime('notes.md', '')).toBe('text/markdown')
+    expect(inferMime('notes.markdown', '')).toBe('text/markdown')
+    expect(inferMime('notes.md', 'text/x-markdown')).toBe('text/markdown')
+  })
+
+  it('lists file extensions in the picker accept attribute', () => {
+    const accept = ACCEPT_ATTR.split(',')
+    expect(accept).toContain('.md')
+    expect(accept).toContain('.markdown')
+    expect(accept).toContain('text/markdown')
   })
 })

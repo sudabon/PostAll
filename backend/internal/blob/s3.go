@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -91,7 +93,7 @@ func (s *S3) PresignPut(ctx context.Context, key, contentType string, size int64
 }
 
 func (s *S3) PresignGet(ctx context.Context, key, filename string) (string, error) {
-	disp := `attachment; filename="` + sanitizeDisposition(filename) + `"`
+	disp := contentDisposition(filename)
 	out, err := s.presign.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket:                     aws.String(s.bucket),
 		Key:                        aws.String(key),
@@ -180,6 +182,23 @@ func isNotFound(err error) bool {
 	}
 	var apiErr interface{ HTTPStatusCode() int }
 	return errors.As(err, &apiErr) && apiErr.HTTPStatusCode() == http.StatusNotFound
+}
+
+// url.PathEscape が残す文字のうち RFC 5987 の attr-char に含まれないもの。
+var rfc5987Escaper = strings.NewReplacer("'", "%27", "(", "%28", ")", "%29", "*", "%2A")
+
+// contentDisposition は非 ASCII のファイル名を RFC 6266 / 5987 の filename* で渡し、
+// filename には ASCII だけのフォールバックを置く。
+func contentDisposition(name string) string {
+	name = sanitizeDisposition(name)
+	fallback := make([]rune, 0, len(name))
+	for _, r := range name {
+		if r < 0x20 || r > 0x7e {
+			r = '_'
+		}
+		fallback = append(fallback, r)
+	}
+	return `attachment; filename="` + string(fallback) + `"; filename*=UTF-8''` + rfc5987Escaper.Replace(url.PathEscape(name))
 }
 
 func sanitizeDisposition(name string) string {

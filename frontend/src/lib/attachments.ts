@@ -43,13 +43,15 @@ const EXT_MIME: Record<string, string> = {
   pdf: 'application/pdf',
   txt: 'text/plain',
   md: 'text/markdown',
+  markdown: 'text/markdown',
   zip: 'application/zip',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 }
 
-export const ACCEPT_ATTR = [...ALLOWED_MIME].join(',')
+// OS によっては .md などが MIME に対応付けられずピッカーで選べないため、拡張子も併記する
+export const ACCEPT_ATTR = [...ALLOWED_MIME, ...Object.keys(EXT_MIME).map((ext) => `.${ext}`)].join(',')
 
 export function inferMime(name: string, type: string) {
   if (type && ALLOWED_MIME.has(type)) return type

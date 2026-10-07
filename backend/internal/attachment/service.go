@@ -70,7 +70,7 @@ func (s *Service) Start(ctx context.Context, uploaderID uuid.UUID, fileName, con
 		return StartResult{}, errValidation("チェックサムが必要です")
 	}
 	id := uuid.New()
-	key := "attachments/" + uploaderID.String() + "/" + id.String() + "/" + fileName
+	key := storageKey(uploaderID, id, fileName)
 	row, err := s.q.InsertAttachment(ctx, store.InsertAttachmentParams{
 		ID:          id,
 		UploaderID:  uploaderID,
@@ -241,6 +241,29 @@ func mapNotFound(err error) error {
 		return errNotFound("添付が見つかりません")
 	}
 	return err
+}
+
+// storageKey は元のファイル名をキーに含めない。Supabase Storage は非 ASCII を含むキーを
+// InvalidKey で拒否するため、ASCII の拡張子だけを残す。表示名は file_name 列が持つ。
+func storageKey(uploaderID, id uuid.UUID, fileName string) string {
+	key := "attachments/" + uploaderID.String() + "/" + id.String() + "/file"
+	if ext := asciiExt(fileName); ext != "" {
+		key += "." + ext
+	}
+	return key
+}
+
+func asciiExt(fileName string) string {
+	ext := strings.TrimPrefix(path.Ext(fileName), ".")
+	if ext == "" || len(ext) > 16 {
+		return ""
+	}
+	for _, r := range ext {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return ""
+		}
+	}
+	return strings.ToLower(ext)
 }
 
 func sanitizeName(name string) string {

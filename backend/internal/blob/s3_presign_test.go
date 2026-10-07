@@ -71,3 +71,11 @@ func TestPresignGetSignsOnlyHost(t *testing.T) {
 		t.Fatalf("X-Amz-SignedHeaders=%q, want %q", signed, "host")
 	}
 }
+
+func TestContentDispositionEncodesNonASCIIName(t *testing.T) {
+	got := contentDisposition(`設計書 (v2).md`)
+	want := `attachment; filename="___ (v2).md"; filename*=UTF-8''%E8%A8%AD%E8%A8%88%E6%9B%B8%20%28v2%29.md`
+	if got != want {
+		t.Fatalf("contentDisposition = %q, want %q", got, want)
+	}
+}
