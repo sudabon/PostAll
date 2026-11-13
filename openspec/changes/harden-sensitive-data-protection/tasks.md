@@ -36,7 +36,7 @@
 
 ## 7. バックアップの公開鍵暗号化
 
-- [ ] 7.1 【運用者】バックアップ用の GPG 鍵を作り（design.md D4 のコマンド）、秘密鍵を CI の外の 2 か所に保管する。公開鍵を `gpg --armor --export` で `ops/backup/postall-backup.pub.asc` に書き出してコミットする。`gpg --show-keys ops/backup/postall-backup.pub.asc` で、暗号化用サブ鍵（`[E]`）があることを確認する
+- [x] 7.1 【運用者】バックアップ用の GPG 鍵を作り（design.md D4 のコマンド）、秘密鍵を CI の外の 2 か所に保管する。公開鍵を `gpg --armor --export` で `ops/backup/postall-backup.pub.asc` に書き出してコミットする。`gpg --show-keys ops/backup/postall-backup.pub.asc` で、暗号化用サブ鍵（`[E]`）があることを確認する
 - [x] 7.2 `ops/backup/verify-dump-recipients.sh <encrypted> <public-key>` を実装する。`gpg --list-packets` の出力に `:symkey enc packet:` が無いこと、`:pubkey enc packet:` の keyid がすべて公開鍵ファイルの暗号化サブ鍵と一致することを確かめ、満たさなければ非ゼロで終了する。`shellcheck` が通ることを確認する
 - [x] 7.3 `ops/backup/verify-dump-recipients.test.sh` を実装する。一時的な `GNUPGHOME` に使い捨ての鍵を 2 本作り、「正しい鍵宛て（0 で終了）」「`--symmetric`（非 0）」「別の鍵宛て（非 0）」「正しい鍵 + 共通鍵の併用（非 0）」の 4 ケースを確認する。`.github/workflows/ci.yml` にこの試験を走らせる job を追加し、ローカルでも `bash ops/backup/verify-dump-recipients.test.sh` が通ることを確認する
 - [x] 7.4 `.github/workflows/ops.yml` の `db-dump` を書き換える。`actions/checkout` を追加し、`mktemp -d` の `GNUPGHOME` を作って `trap` の削除対象に加える。暗号化を `gpg --batch --trust-model always --recipient-file ops/backup/postall-backup.pub.asc --encrypt` に置き換え、アップロードの前に 7.2 の検査を実行する。`DUMP_PASSPHRASE` の参照を削除する。`actionlint` が通り、ファイル中に `DUMP_PASSPHRASE` と `--symmetric` が残っていないことを `grep` で確認する
@@ -69,11 +69,11 @@
 
 - [x] 11.1 `cd backend && go vet ./... && go test ./...`、`cd frontend && npm run typecheck && npm run lint && npm test && npm run build && npm run test:e2e`、`cd electron && npm test`、`bash ops/backup/verify-dump-recipients.test.sh` がすべて通ることを確認し、ログを残す
 - [x] 11.2 `bash scripts/check-test-plan.sh` と `openspec validate harden-sensitive-data-protection --strict` が通ることを確認する
-- [ ] 11.3 ローカルの Supabase スタック（`supabase start`）で API と web を起動する。自分の ID を `ALLOWED_AUTH_SUBJECTS` に入れた状態でサインインして操作できること、ID を外すとサインイン画面に案内が出ることを手動で確認する。ポストを削除した後、`psql` で当該行の `body` が空であることも確認する
+- [x] 11.3 ローカルの Supabase スタック（`supabase start`）で API と web を起動する。自分の ID を `ALLOWED_AUTH_SUBJECTS` に入れた状態でサインインして操作できること、ID を外すとサインイン画面に案内が出ることを手動で確認する。ポストを削除した後、`psql` で当該行の `body` が空であることも確認する
 
 ## 12. 本番への適用（運用者作業、design.md の Migration Plan）
 
-- [ ] 12.1 【運用者】Vercel の Production 環境に `ALLOWED_AUTH_SUBJECTS` を設定する（現在の利用者の ID は Supabase Studio の Authentication > Users で確認する）。`vercel env ls production` に表示されることを確認する
+- [x] 12.1 【運用者】Vercel の Production 環境に `ALLOWED_AUTH_SUBJECTS` を設定する（現在の利用者の ID は Supabase Studio の Authentication > Users で確認する）。`vercel env ls production` に表示されることを確認する
 - [ ] 12.2 【運用者】マージ後に `migrate` workflow で `00016` を適用し、続けて `deploy` workflow でデプロイする。許可されたアカウントで一覧が表示されること、ブラウザの DevTools に CSP 違反が出ないこと、本番の応答ヘッダーに `frame-ancestors 'none'` があること（`curl -sI`）を確認する
 - [ ] 12.3 【運用者】`ops` workflow を `workflow_dispatch` で実行し、生成されたアーティファクトをローカルで `gpg --decrypt | gunzip | head` して、中身が読めることを確認する
 - [ ] 12.4 【運用者】12.3 の成功を確認してから、切り替え前の `postall-db-dump-*` アーティファクトを削除し、GitHub secrets から `DUMP_PASSPHRASE` を削除する。`gh api repos/sudabon/PostAll/actions/artifacts` に旧アーティファクトが残っていないことを確認する
