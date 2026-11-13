@@ -53,6 +53,8 @@ jobs:
 
   electron:
     runs-on: ubuntu-latest
+    # Electron が起動できないと E2E が待ち続けることがあったので、上限を設ける。
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: electron
@@ -72,6 +74,13 @@ jobs:
           npm ci
           npm run build
       - run: npm ci
+      # ubuntu-latest（24.04）は AppArmor で非特権の user namespace を制限しているので、
+      # Chromium は setuid の chrome-sandbox を使う。npm が展開したままでは root 所有でなく、
+      # Electron が起動直後に FATAL で abort する。sandbox を外さずに、所有者と権限を整える。
+      - name: Configure Chromium setuid sandbox
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       # E2E は実際に BrowserWindow を開くので仮想ディスプレイが要る。
       - run: xvfb-run -a npm test
 

@@ -121,14 +121,24 @@ async function main() {
     },
     stdio: 'inherit',
   })
+
+  // 起動直後に落ちる（Linux の sandbox の設定不備など）と、後から登録した exit は二度と来ない。
+  // 応答を待つ前に登録し、落ちたら直ちに失敗させる。
+  let childExit = null
+  const exited = new Promise((resolve) => {
+    child.once('exit', (code, signal) => {
+      childExit = { code, signal }
+      resolveProbe({ ok: false, error: `Electron がレンダラの応答前に終了した (code=${code}, signal=${signal})` })
+      resolve()
+    })
+  })
   const timer = setTimeout(() => {
     resolveProbe({ ok: false, error: `${timeoutMs}ms 以内にレンダラから応答がなかった` })
   }, timeoutMs)
 
   const result = await probe
   clearTimeout(timer)
-  const exited = new Promise((resolve) => child.once('exit', resolve))
-  child.kill()
+  if (!childExit) child.kill()
   await exited
   upstream.close()
   await fs.rm(tmp, { recursive: true, force: true })
