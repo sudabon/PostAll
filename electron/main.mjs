@@ -4,6 +4,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { sanitizeOutboundHeaders } from './net-headers.mjs'
+import { createSecretStore } from './secret-store.mjs'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -14,6 +15,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 let mainWindow = null
 const persist = new Map()
 const secrets = new Map()
+let secretStore = null
 
 function frontendDir() {
   // テストから配信元を差し替えるための口。
@@ -81,15 +83,12 @@ async function loadStores() {
   } catch {
     // first launch
   }
+  // safeStorage は ready 後でないと判定できない（Linux）ので、ここで作る。
+  secretStore = createSecretStore({ safeStorage, fs, filePath: secretsPath() })
   try {
-    const buf = await fs.readFile(secretsPath())
-    const json = safeStorage.isEncryptionAvailable()
-      ? safeStorage.decryptString(buf)
-      : buf.toString('utf8')
-    const parsed = JSON.parse(json)
-    for (const [k, v] of Object.entries(parsed)) secrets.set(k, String(v))
-  } catch {
-    // first launch
+    for (const [k, v] of await secretStore.load()) secrets.set(k, v)
+  } catch (err) {
+    console.warn('[postall] failed to load secrets', err)
   }
 }
 
@@ -103,11 +102,7 @@ async function savePersist() {
 }
 
 async function saveSecrets() {
-  const json = JSON.stringify(Object.fromEntries(secrets))
-  const buf = safeStorage.isEncryptionAvailable()
-    ? safeStorage.encryptString(json)
-    : Buffer.from(json, 'utf8')
-  await fs.writeFile(secretsPath(), buf)
+  await secretStore.save(secrets)
 }
 
 function isAllowedExternalUrl(url) {

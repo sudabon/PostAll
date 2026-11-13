@@ -15,6 +15,10 @@ export function subscribeSignedIn(listener: (signedIn: boolean) => void): () => 
   return () => listeners.delete(listener)
 }
 
+export function hasTokens(): boolean {
+  return tokens !== null
+}
+
 export function rememberTokens(next: TokenSet | null) {
   tokens = next
   const signedIn = Boolean(next?.accessToken)

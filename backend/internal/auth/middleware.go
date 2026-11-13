@@ -27,7 +27,9 @@ type UserStore interface {
 	ResolveByAuthSubject(ctx context.Context, sub string) (userID string, err error)
 }
 
-func Middleware(v *Verifier, users UserStore) func(http.Handler) http.Handler {
+// Middleware は JWT を検証し、許可集合に含まれる sub だけを users 行へ解決して通す。
+// 許可判定を ResolveByAuthSubject より前に置くことで、拒否したアカウントの行は作られない。
+func Middleware(v *Verifier, users UserStore, allowed AllowedSubjects) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if skipAuth(r.URL.Path) {
@@ -46,6 +48,10 @@ func Middleware(v *Verifier, users UserStore) func(http.Handler) http.Handler {
 					return
 				}
 				writeUnauthorized(w)
+				return
+			}
+			if !allowed.Allows(claims.Subject) {
+				writeJSON(w, http.StatusForbidden, `{"code":"account_not_allowed","message":"このアカウントでは利用が許可されていません"}`)
 				return
 			}
 			if users == nil {

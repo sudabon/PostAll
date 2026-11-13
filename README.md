@@ -78,6 +78,7 @@ API（Vercel）:
 | `S3_ENDPOINT` / `S3_REGION` / `S3_BUCKET` / `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | 添付 Storage |
 | `EMOJI_S3_BUCKET` | 絵文字 Storage |
 | `CRON_SECRET` | `POST /internal/attachments/reap` と `POST /internal/events/prune` の Bearer |
+| `ALLOWED_AUTH_SUBJECTS` | API の利用を許可する Supabase のユーザー ID（JWT の `sub`）のカンマ区切り。未設定・空なら認可が必要な経路はすべて `403 account_not_allowed` |
 
 フロント（Vite）: `VITE_SUPABASE_URL`、`VITE_SUPABASE_PUBLISHABLE_KEY`。API ベース URL の既定は空（同一オリジン）。
 
@@ -91,7 +92,6 @@ GitHub Actions の secrets。`migrate` / `deploy` 用は repository secrets ま�
 | `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` | deploy | Vercel の設定取得・ビルド・デプロイが失敗する |
 | `APP_URL` | ops の reap / prune-events | curl が失敗する |
 | `CRON_SECRET` | ops の reap / prune-events | サーバが 401 を返し保守処理が失敗する |
-| `DUMP_PASSPHRASE` | ops の db-dump | ジョブが失敗する |
 
 Actions のマイグレーション / 事前検査 / ダンプは **Session プール**（`*.pooler.supabase.com:5432`）の `DATABASE_URL` を secret に置く。Direct（`db.<ref>.supabase.co:5432`）は IPv6 専用で、IPv4 だけのネットワーク（このマシンや GitHub-hosted runner）からは届かない。IPv4 アドオンは不要。
 
@@ -108,11 +108,11 @@ Vercel の Git 自動デプロイは `vercel.json` の `git.deploymentEnabled: f
 
 ### 暗号化バックアップ
 
-`ops` workflow は日次で `public` schema のデータを dump し、gzip 圧縮後に GPG AES-256 で暗号化する。GitHub Actions の repository secrets には `DATABASE_URL` に加えて、十分に長いランダム値の `DUMP_PASSPHRASE` を登録する。Artifact へ渡すのは `postall.dump.sql.gz.gpg` だけで、平文と gzip は runner の一時領域から終了時に削除する。
+`ops` workflow は日次で `public` schema のデータを dump し、gzip 圧縮後に、リポジトリの公開鍵 `ops/backup/postall-backup.pub.asc` 宛てに GPG で暗号化する。CI は復号できる鍵を持たず、secret は `DATABASE_URL` だけでよい。秘密鍵は運用者が CI の外で保管する（鍵の生成・保管・旧方式からの切り替えは [DEPLOYMENT.md](DEPLOYMENT.md) の「5.1 バックアップ鍵」）。暗号化の後に `ops/backup/verify-dump-recipients.sh` が、宛先が公開鍵の鍵だけで共通鍵の復号経路が無いことを確かめ、満たさなければアップロードせずに失敗する。Artifact へ渡すのは `postall.dump.sql.gz.gpg` だけで、平文と gzip は runner の一時領域から終了時に削除する。
 
-暗号化済み dump は1件10 MiB以下、保持30日、upload 時の再圧縮なしとするため、日次実行分の保持量は最大でおよそ300 MiBになる。手動実行分も容量へ加算される。GitHub の Billing and licensing → Budgets and alerts では Actions storage の予算を `$0` にし、上限到達時に利用を停止する。secret 未設定、10 MiB超過、または無料枠上限ではバックアップ job が意図的に失敗し、追加課金へ移行しない。予算はアカウント／organization 側の設定であり、workflow からは設定できない。
+暗号化済み dump は1件10 MiB以下、保持30日、upload 時の再圧縮なしとするため、日次実行分の保持量は最大でおよそ300 MiBになる。手動実行分も容量へ加算される。GitHub の Billing and licensing → Budgets and alerts では Actions storage の予算を `$0` にし、上限到達時に利用を停止する。公開鍵の未コミット、宛先の検査の不合格、10 MiB超過、または無料枠上限ではバックアップ job が意図的に失敗し、追加課金へ移行しない。予算はアカウント／organization 側の設定であり、workflow からは設定できない。
 
-復元先は空の DB とし、先に goose migration を適用する。`goose_db_version` は dump から除外済みなので、暗号化ファイルを平文として保存せず次のように流し込める。
+復元先は空の DB とし、先に goose migration を適用する。`goose_db_version` は dump から除外済みなので、秘密鍵を持つ手元で、暗号化ファイルを平文として保存せず次のように流し込める。
 
 ```bash
 set -o pipefail
@@ -160,6 +160,7 @@ make generate   # OpenAPI からのコード生成。CI で git diff --exit-code
 - 変更通知は SSE ではなく、DB トリガーの `realtime.send()` → クライアントが `postall:events` を購読 → `GET /v1/events?after=` で差分回収。初回は `after=latest` で現在位置から開始し、履歴を 0 番から走査しない。Realtime が切れたら 15 秒間隔のポーリングへ退避し、指数バックオフで再接続する。ホストでは `realtime.messages` の RLS を goose から作れない場合がある（所有者が `supabase_admin`）。その場合は SQL Editor で `create policy postall_events_select on realtime.messages for select to authenticated using (realtime.topic() = 'postall:events' and extension = 'broadcast');` を実行する。42501 なら Database → Policies で schema `realtime` / table `messages` に、authenticated の SELECT を同じ topic / extension 条件で追加する。`using (true)` は他トピックを購読可能にするため使用しない。
 - 変更イベントは 30 日保持する。Vercel Cron（日次）と GitHub Actions（6 時間ごと）が `POST /internal/events/prune` を叩き、現在位置用の最新 1 行を残して古い行を削除する。削除済みの最大 ID は `change_event_retention` に記録するため、通常の ID 欠番を期限切れとは誤判定しない。30 日を超えてオフラインだったクライアントや、DB 復元後にカーソルが最新 ID より先になったクライアントには `resetRequired` を返し、表示中データを全再取得して復旧する。
 - 添付回収は Vercel Cron（日次）と GitHub Actions（6 時間ごと）が `POST /internal/attachments/reap` を叩く。GitHub Actions の添付回収と変更イベント整理は Supabase Free の pause 回避（keep-alive）も兼ねる。
-- 日次の `supabase db dump --data-only --schema public` は gzip + GPG AES-256 で暗号化し、Actions のアーティファクトに30日残す。平文 dump はアップロードしない。復元手順と無料枠の停止設定は「暗号化バックアップ」を参照する。Storage の実体はダンプ対象外。
+- 日次の `supabase db dump --data-only --schema public` は gzip したうえでリポジトリの公開鍵宛てに GPG で暗号化し、Actions のアーティファクトに30日残す。平文 dump はアップロードしない。復元手順と無料枠の停止設定は「暗号化バックアップ」を参照する。Storage の実体はダンプ対象外。
 - 容量の確認: Supabase ダッシュボードの Database → Reports、および Storage のバケット使用量。Free は DB 500 MB・Storage 1 GB。近づいたら Pro への引き上げか添付サイズ上限の引き下げを検討する。
-- トークンの保管先は Electron が `safeStorage`。ブラウザは永続ストレージへ平文で置かない。
+- トークンの保管先は Electron が `safeStorage`（使えない環境ではメモリのみでディスクへ書かない）。ブラウザ / PWA はリフレッシュトークンを origin の `localStorage` に置き、XSS への備えは Markdown の無害化と CSP で行う。
+- 削除したポストの本文は、論理削除と同じ UPDATE で DB から消える（削除済みであることとスレッド構造は残る）。

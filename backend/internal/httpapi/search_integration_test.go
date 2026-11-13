@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -148,6 +149,69 @@ func TestTimelineAroundIncludesAnOlderSourcePost(t *testing.T) {
 	}
 }
 
+func TestSearchDoesNotMatchErasedBodiesOfDeletedPosts(t *testing.T) {
+	h, authz, databaseURL := searchTestServer(t)
+	channel := createChannel(t, h, authz, map[string]any{"name": "消去"})
+	root := createPost(t, h, authz, channel.Id.String(), "消える固有語 ZEBRA42 のルート")
+	reply := createReply(t, h, authz, root.Id.String(), "消える固有語 ZEBRA42 の返信")
+	live := createPost(t, h, authz, channel.Id.String(), "残る ZEBRA42")
+	for _, id := range []string{reply.Id.String(), root.Id.String()} {
+		res := doJSON(t, h, http.MethodDelete, "/v1/posts/"+id, authz, nil)
+		if res.Code != http.StatusNoContent {
+			t.Fatalf("delete %s=%d %s", id, res.Code, res.Body)
+		}
+	}
+
+	page := searchPosts(t, h, authz, "/v1/search?q="+url.QueryEscape("ZEBRA42"))
+	if len(page.Results) != 1 || page.Results[0].PostID != live.Id.String() {
+		t.Fatalf("results=%+v, want only the live post", page.Results)
+	}
+	if page := searchPosts(t, h, authz, "/v1/search?q="+url.QueryEscape("消える固有語")); len(page.Results) != 0 {
+		t.Fatalf("deleted words still match: %+v", page.Results)
+	}
+
+	// deleted_at の除外に頼らず、PGroonga の索引からも消えていることを確かめる。
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `set enable_seqscan = off`); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := conn.Query(ctx, `explain (format text) select count(*) from posts where body ilike $1`, "%消える固有語%")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(line + "\n")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.String(), "posts_body_pgroonga") {
+		t.Fatalf("query does not use the PGroonga index:\n%s", plan.String())
+	}
+	var matches int
+	if err := conn.QueryRow(ctx, `select count(*) from posts where body ilike $1`, "%消える固有語%").Scan(&matches); err != nil {
+		t.Fatal(err)
+	}
+	if matches != 0 {
+		t.Fatalf("PGroonga index still matches %d deleted bodies", matches)
+	}
+}
+
 func searchTestServer(t *testing.T) (http.Handler, string, string) {
 	t.Helper()
 	databaseURL := testutil.PostgresURL(t)
@@ -158,7 +222,7 @@ func searchTestServer(t *testing.T) (http.Handler, string, string) {
 	}))
 	t.Cleanup(jwksServer.Close)
 	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "authenticated", jwksServer.Client())
-	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier})
+	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier, AllowedAuthSubjects: []string{"search-user"}})
 	if err != nil {
 		t.Fatal(err)
 	}

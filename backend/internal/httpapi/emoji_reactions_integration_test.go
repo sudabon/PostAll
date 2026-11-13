@@ -42,7 +42,7 @@ func TestEmojiCatalogAndReactionLifecycle(t *testing.T) {
 	t.Cleanup(jwksServer.Close)
 
 	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "authenticated", jwksServer.Client())
-	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier})
+	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier, AllowedAuthSubjects: []string{"reaction-user", "other-user"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestEmojiImageDelivery(t *testing.T) {
 	mem.PutObject("shipit.png", emojiPNG)
 
 	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "authenticated", jwksServer.Client())
-	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier, EmojiBlob: mem})
+	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier, EmojiBlob: mem, AllowedAuthSubjects: []string{"image-user"}})
 	if err != nil {
 		t.Fatal(err)
 	}

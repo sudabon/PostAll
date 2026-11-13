@@ -16,6 +16,8 @@
 
 macOS を想定している。`emoji-sync` を試すには Supabase のローカル Storage が要るため、Docker は必須と考えてよい。
 
+本番に触れる GitHub / Supabase / Vercel のアカウントは、2FA（パスキー推奨）を有効にしておく（[DEPLOYMENT.md](DEPLOYMENT.md) の「2. 前提」のチェックリスト）。
+
 インストールされていない場合:
 
 ```bash
@@ -173,9 +175,16 @@ npx vercel dev
 
 1. Studio（`http://127.0.0.1:54323`）→ Authentication → Users → Add user
 2. GitHub アカウントの**検証済みメールアドレスと完全に同一**のメールで作成し、確認済みにする
-3. アプリで「GitHub でサインイン」を実行する
+3. 作成したユーザーの **User UID**（Users 一覧の行を開くと出る UUID。JWT の `sub`）を、API が読む env ファイルの `ALLOWED_AUTH_SUBJECTS` に入れる。手順 8 の「API のみ」なら `.env`、`npx vercel dev` なら `.env` か `.env.local`（どちらも読まれる）。複数人ならカンマ区切り。
+   ```dotenv
+   ALLOWED_AUTH_SUBJECTS=<User UID>
+   ```
+4. API を起動し直す（環境変数は起動時に読む）
+5. アプリで「GitHub でサインイン」を実行する
 
-Supabase の自動 identity linking で既存ユーザーに紐付く。未登録メールでの OAuth サインインは signup 無効設定により拒否される。
+Supabase の自動 identity linking で既存ユーザーに紐付く。未登録メールでの OAuth サインインは signup 無効設定により拒否される。加えて API は、signup の設定とは独立に `ALLOWED_AUTH_SUBJECTS` で利用者を限定する。ここに無い `sub` の要求は `403 account_not_allowed` になり、アプリはサインイン画面に「このアカウントでは利用が許可されていません」と出して戻る。未設定・空のときは全員が拒否される（起動ログに `ALLOWED_AUTH_SUBJECTS is empty` の警告が出る）。
+
+本番では、Studio ではなく本番プロジェクトの Dashboard で同じ手順を行い、User UID を Vercel の `ALLOWED_AUTH_SUBJECTS` に追記して再デプロイする（[DEPLOYMENT.md](DEPLOYMENT.md) の「11.3 利用者を追加する」）。
 
 ## 10. 動作確認
 
@@ -259,6 +268,8 @@ OAuth App の Authorization callback URL が `http://127.0.0.1:54321/auth/v1/cal
 ### サインインは通るのにアプリに入れない
 
 signup 無効の招待制のため。手順 9 で Studio から同じメールアドレスのユーザーを先に作る。
+
+サインイン直後に「このアカウントでは利用が許可されていません」でサインイン画面へ戻る場合は、API の許可リストに入っていない。手順 9 の 3 のとおり User UID（メールアドレスではない）を `ALLOWED_AUTH_SUBJECTS` に入れ、API を起動し直す。
 
 ### `ERROR: extension "pgroonga" is not available`（マイグレーション）
 

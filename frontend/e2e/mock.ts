@@ -78,9 +78,46 @@ const ONE_PIXEL_GIF = Buffer.from(
   'base64',
 )
 
+/** mock:rich-content-post のポスト本文。コードブロックと Mermaid 図を含む。 */
+export const RICH_CONTENT_BODY = [
+  'リッチコンテンツの確認',
+  '',
+  '```ts',
+  'const answer: number = 42',
+  '```',
+  '',
+  '```mermaid',
+  'graph TD',
+  '  A[開始] --> B[終了]',
+  '```',
+].join('\n')
+
+/** mock:rich-content-post の画像添付。ダウンロード URL は同一オリジンのモック画像を指す。 */
+export const RICH_CONTENT_IMAGE = {
+  id: '55555555-5555-5555-5555-555555555555',
+  fileName: 'rich-content.png',
+  url: '/e2e-assets/rich-content.png',
+}
+
+export type V1Request = { method: string; path: string; authorization: string | null }
+
+/** mock:account-not-allowed が端末の永続ストレージに置く、拒否されるトークン。 */
+export const REJECTED_ACCESS_TOKEN = 'rejected-access-token'
+const DURABLE_TOKEN_KEY = 'postall:secret:auth.tokens'
+
 export type ApiMockOptions = {
   /** カタログを空の状態から始める。fixture 名: mock:signed-in-empty-catalog */
   emptyEmojiCatalog?: boolean
+  /**
+   * サインイン済みの状態から、全 /v1/* に 403 account_not_allowed を返す。
+   * fixture 名: mock:account-not-allowed
+   */
+  accountNotAllowed?: boolean
+  /**
+   * コードブロック・Mermaid 図・画像添付を 1 つのポストに含むチャネル `rich` を作る。
+   * fixture 名: mock:rich-content-post
+   */
+  richContentPost?: boolean
   /**
    * スタンプ登録要求への応答。
    * mock:emoji-upload-conflict / mock:emoji-upload-error / mock:emoji-upload-slow
@@ -115,6 +152,20 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
       window.dispatchEvent(new Event(next ? 'online' : 'offline'))
     }
   })
+
+  if (options.accountNotAllowed) {
+    // トークンの破棄を観測できるよう、拒否されるトークンを端末の永続ストレージにも置く。
+    await page.addInitScript(
+      ([key, accessToken]) => {
+        localStorage.setItem(key, JSON.stringify({
+          accessToken,
+          refreshToken: 'rejected-refresh-token',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        }))
+      },
+      [DURABLE_TOKEN_KEY, REJECTED_ACCESS_TOKEN] as const,
+    )
+  }
 
   const emojis: Emoji[] = options.emptyEmojiCatalog
     ? []
@@ -160,6 +211,7 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
   // 件数で持ち、使うたびに減らす。
   let rejectedCreates = 0
   let rejectedDeletes = 0
+  const v1Requests: V1Request[] = []
 
   const emitEvent = async (event: ChangeEvent) => {
     if (!connected || page.isClosed()) return
@@ -183,6 +235,10 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
     )
   })
 
+  await page.route('**/e2e-assets/**', async (route) => {
+    await route.fulfill({ contentType: 'image/png', body: ONE_PIXEL_PNG })
+  })
+
   await page.route('**/v1/**', async (route) => {
     const req = route.request()
     const url = new URL(req.url())
@@ -190,6 +246,15 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
     const json = async () => {
       const raw = req.postData()
       return raw ? JSON.parse(raw) : {}
+    }
+    v1Requests.push({ method, path: url.pathname, authorization: (await req.allHeaders()).authorization ?? null })
+
+    if (options.accountNotAllowed) {
+      await route.fulfill({
+        status: 403,
+        json: { code: 'account_not_allowed', message: 'このアカウントでは利用が許可されていません' },
+      })
+      return
     }
 
     if (url.pathname === '/v1/events' && method === 'GET') {
@@ -418,6 +483,19 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
       return
     }
 
+    const download = url.pathname.match(/^\/v1\/attachments\/([^/]+)\/download$/)
+    if (download && method === 'GET') {
+      const attachment = db.posts.flatMap((post) => post.attachments).find((item) => item.id === download[1])
+      if (!attachment) {
+        await route.fulfill({ status: 404, json: { code: 'not_found', message: 'missing' } })
+        return
+      }
+      await route.fulfill({
+        json: { url: RICH_CONTENT_IMAGE.url, expiresAt: new Date(Date.now() + 60_000).toISOString() },
+      })
+      return
+    }
+
     const reactionPath = url.pathname.match(/^\/v1\/posts\/([^/]+)\/reactions\/([^/]+)$/)
     if (reactionPath && (method === 'PUT' || method === 'DELETE')) {
       const post = db.posts.find((item) => item.id === reactionPath[1])
@@ -587,7 +665,24 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
     return { channel, posts }
   }
 
+  if (options.richContentPost) {
+    const { posts: [post] } = seedChannel('rich', [RICH_CONTENT_BODY])
+    post!.attachments.push({
+      id: RICH_CONTENT_IMAGE.id,
+      postId: post!.id,
+      fileName: RICH_CONTENT_IMAGE.fileName,
+      contentType: 'image/png',
+      sizeBytes: ONE_PIXEL_PNG.length,
+      checksum: 'sum-rich-content',
+      createdAt: post!.createdAt,
+    })
+  }
+
   return {
+    /** 受けた /v1/* 要求（受けた順）。mock:account-not-allowed で拒否後の要求を数えるのに使う。 */
+    v1Requests() {
+      return [...v1Requests]
+    },
     /** スタンプ登録要求が実際に何件飛んだか。 */
     emojiUploadRequestCount() {
       return emojiUploadRequests

@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '@/App'
-import { AuthProvider } from '@/auth/AuthProvider'
+import { AuthProvider, useAuth } from '@/auth/AuthProvider'
 import { TokenRequestError } from '@/auth/pkce'
-import { PKCE_VERIFIER_KEY, rememberTokens } from '@/auth/session'
+import { AUTH_SECRET_KEY, PKCE_VERIFIER_KEY, rememberTokens } from '@/auth/session'
 import { PlatformProvider, createFakeAdapter } from '@/platform'
 import { useSettings } from '@/state/settings'
 
@@ -106,5 +107,78 @@ describe('AuthProvider callback failures', () => {
     window.history.back()
     expect(window.location.pathname).toBe('/')
     expect(window.location.search).not.toContain('code=')
+  })
+})
+
+function ParallelRejectedRequests() {
+  const { api, signedIn } = useAuth()
+  useEffect(() => {
+    if (!signedIn) return
+    void Promise.allSettled([api.listChannels(), api.listEmojis()])
+  }, [api, signedIn])
+  return null
+}
+
+describe('AuthProvider account_not_allowed', () => {
+  beforeEach(() => {
+    rememberTokens(null)
+    useSettings.getState().hydrate({
+      apiBaseUrl: 'https://api.example.invalid',
+      supabaseUrl: 'https://auth.example.invalid',
+      supabasePublishableKey: 'publishable-key',
+    })
+  })
+
+  afterEach(() => {
+    rememberTokens(null)
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('signs out once and shows a single notice when parallel requests are rejected together', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/v1/')) {
+        return new Response(
+          JSON.stringify({ code: 'account_not_allowed', message: 'このアカウントでは利用が許可されていません' }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response('{}', { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const adapter = createFakeAdapter({
+      seedSecrets: {
+        [AUTH_SECRET_KEY]: JSON.stringify({
+          accessToken: 'rejected-access-token',
+          refreshToken: 'rejected-refresh-token',
+          expiresAt: Date.now() + 3_600_000,
+        }),
+      },
+    })
+    const deleteSecret = vi.spyOn(adapter, 'deleteSecret')
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+    render(
+      <PlatformProvider adapter={adapter}>
+        <QueryClientProvider client={client}>
+          <AuthProvider>
+            <ParallelRejectedRequests />
+            <App />
+          </AuthProvider>
+        </QueryClientProvider>
+      </PlatformProvider>,
+    )
+
+    expect(await screen.findByTestId('sign-in-button')).toBeTruthy()
+    await waitFor(() => {
+      expect(screen.getAllByTestId('auth-error')).toHaveLength(1)
+    })
+    expect(screen.getByTestId('auth-error')).toHaveTextContent('このアカウントでは利用が許可されていません')
+    const rejected = fetchMock.mock.calls.filter(([input]) => String(input).includes('/v1/'))
+    expect(rejected.length).toBeGreaterThanOrEqual(2)
+    expect(deleteSecret.mock.calls.filter(([key]) => key === AUTH_SECRET_KEY)).toHaveLength(1)
+    expect(await adapter.getSecret(AUTH_SECRET_KEY)).toBeNull()
+    expect(screen.queryByTestId('channel-tree')).toBeNull()
   })
 })
