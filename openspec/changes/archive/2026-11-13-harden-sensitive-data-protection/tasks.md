@@ -74,7 +74,7 @@
 ## 12. 本番への適用（運用者作業、design.md の Migration Plan）
 
 - [x] 12.1 【運用者】Vercel の Production 環境に `ALLOWED_AUTH_SUBJECTS` を設定する（現在の利用者の ID は Supabase Studio の Authentication > Users で確認する）。`vercel env ls production` に表示されることを確認する
-- [ ] 12.2 【運用者】マージ後に `migrate` workflow で `00016` を適用し、続けて `deploy` workflow でデプロイする。許可されたアカウントで一覧が表示されること、ブラウザの DevTools に CSP 違反が出ないこと、本番の応答ヘッダーに `frame-ancestors 'none'` があること（`curl -sI`）を確認する
-- [ ] 12.3 【運用者】`ops` workflow を `workflow_dispatch` で実行し、生成されたアーティファクトをローカルで `gpg --decrypt | gunzip | head` して、中身が読めることを確認する
-- [ ] 12.4 【運用者】12.3 の成功を確認してから、切り替え前の `postall-db-dump-*` アーティファクトを削除し、GitHub secrets から `DUMP_PASSPHRASE` を削除する。`gh api repos/sudabon/PostAll/actions/artifacts` に旧アーティファクトが残っていないことを確認する
-- [ ] 12.5 【運用者】GitHub・Supabase・Vercel の各アカウントで 2FA（パスキー推奨）が有効であることを確認し、DEPLOYMENT.md のチェックリストに記録する
+- [x] 12.2 【運用者】マージ後に `migrate` workflow で `00016` を適用し、続けて `deploy` workflow でデプロイする。許可されたアカウントで一覧が表示されること、ブラウザの DevTools に CSP 違反が出ないこと、本番の応答ヘッダーに `frame-ancestors 'none'` があること（`curl -sI`）を確認する
+- [x] 12.3 【運用者】`ops` workflow を `workflow_dispatch` で実行し、生成されたアーティファクトをローカルで `gpg --decrypt | gunzip | head` して、中身が読めることを確認する
+- [x] 12.4 【運用者】12.3 の成功を確認してから、切り替え前の `postall-db-dump-*` アーティファクトを削除し、GitHub secrets から `DUMP_PASSPHRASE` を削除する。`gh api repos/sudabon/PostAll/actions/artifacts` に旧アーティファクトが残っていないことを確認する
+- [x] 12.5 【運用者】GitHub・Supabase・Vercel の各アカウントで 2FA（パスキー推奨）が有効であることを確認し、DEPLOYMENT.md のチェックリストに記録する

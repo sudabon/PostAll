@@ -29,7 +29,7 @@ Supabase（Free）と Vercel（Hobby）へ PostAll を構築し、`memo.sudabon.
 - Supabase・Vercel・GitHub の各アカウント。GitHub OAuth App を作れる権限。
 - 各アカウントで 2FA（パスキー推奨）を有効にしてあること。本番のデータ・秘密情報・デプロイ権限はこの 3 アカウントに集まる。
 
-- [ ] GitHub / Supabase / Vercel の各アカウントで 2FA を有効化した（パスキー推奨）。
+- [x] GitHub / Supabase / Vercel の各アカウントで 2FA を有効化した（パスキー推奨）。
 - 旧環境（AWS Cognito / S3 / VPS）は Phase 8 まで**残しておく**。
 
 ---
@@ -380,7 +380,7 @@ gh api --paginate repos/sudabon/PostAll/actions/artifacts \
 # 残っていないことを確認する
 gh api --paginate repos/sudabon/PostAll/actions/artifacts \
   --jq '.artifacts[] | select(.name | startswith("postall-db-dump-")) | [.id, .name, .created_at] | @tsv'
-gh secret delete DUMP_PASSPHRASE
+gh secret delete DUMP_PASSPHRASE --env production   # repository secrets に置いた場合は --env を外す
 ```
 
 - [ ] 新方式のアーティファクトを復号・展開して中身を確認した。
