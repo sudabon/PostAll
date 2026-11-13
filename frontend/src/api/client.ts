@@ -35,16 +35,36 @@ export class ApiError extends Error {
   }
 }
 
+export const ACCOUNT_NOT_ALLOWED_CODE = 'account_not_allowed'
+
+/** API の許可リストに含まれないアカウントの拒否か。添付の 403（forbidden）とは区別する。 */
+export function isAccountNotAllowed(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 403 && error.code === ACCOUNT_NOT_ALLOWED_CODE
+}
+
 export type TokenGetter = () => Promise<string | null>
 export type BaseGetter = () => string
+export type AccountNotAllowedListener = () => void
 
 export class ApiClient {
   private readonly getBase: BaseGetter
   private readonly getToken: TokenGetter
+  private readonly accountNotAllowedListeners = new Set<AccountNotAllowedListener>()
 
   constructor(getBase: BaseGetter, getToken: TokenGetter) {
     this.getBase = getBase
     this.getToken = getToken
+  }
+
+  /**
+   * どの API が最初に `account_not_allowed` を受けても呼ばれる。登録を解除する関数を返す。
+   * 並行した要求が同時に拒否されると複数回呼ばれるので、受け手は冪等にすること。
+   */
+  onAccountNotAllowed(listener: AccountNotAllowedListener): () => void {
+    this.accountNotAllowedListeners.add(listener)
+    return () => {
+      this.accountNotAllowedListeners.delete(listener)
+    }
   }
 
   getHealth() {
@@ -215,8 +235,20 @@ export class ApiClient {
       } catch {
         // Non-JSON error bodies still use the shared HTTP error shape below.
       }
-      throw new ApiError(res.status, err ?? { code: 'http_error', message: res.statusText })
+      const error = new ApiError(res.status, err ?? { code: 'http_error', message: res.statusText })
+      if (isAccountNotAllowed(error)) this.notifyAccountNotAllowed()
+      throw error
     }
     return res
+  }
+
+  private notifyAccountNotAllowed() {
+    for (const listener of [...this.accountNotAllowedListeners]) {
+      try {
+        listener()
+      } catch (err) {
+        console.error('account_not_allowed listener failed', err)
+      }
+    }
   }
 }

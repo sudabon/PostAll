@@ -38,6 +38,9 @@ type Config struct {
 	Blob        blob.Store
 	EmojiBlob   blob.Store
 	CronSecret  string
+	// AllowedAuthSubjects は API の利用を許可する Supabase のユーザー ID（JWT の sub）。
+	// 空なら認可が必要な経路はすべて 403 account_not_allowed になる。
+	AllowedAuthSubjects []string
 }
 
 type Server struct {
@@ -153,7 +156,8 @@ func New(cfg Config) (*Server, error) {
 			writeAPIError(w, http.StatusBadRequest, "validation", "リクエストが不正です", nil)
 		},
 	})
-	s.mux = requestIDMiddleware(auth.Middleware(v, users)(inner))
+	allowed := auth.NewAllowedSubjects(cfg.AllowedAuthSubjects...)
+	s.mux = requestIDMiddleware(auth.Middleware(v, users, allowed)(inner))
 	return s, nil
 }
 

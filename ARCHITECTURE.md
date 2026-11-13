@@ -109,7 +109,7 @@ flowchart TB
 
 ### 3. 認証
 
-Supabase Auth の GitHub OAuth に固定し、新規 signup は無効（招待制）。クライアントは PKCE でトークンを取得し、`Authorization: Bearer <JWT>` を API へ送る。
+Supabase Auth の GitHub OAuth に固定し、新規 signup は無効（招待制）。クライアントは PKCE でトークンを取得し、`Authorization: Bearer <JWT>` を API へ送る。API は Supabase の設定とは独立に、環境変数 `ALLOWED_AUTH_SUBJECTS` の許可リストでも利用者を限定する。どちらか片方の誤設定だけでは突破されない。
 
 ```mermaid
 flowchart LR
@@ -117,14 +117,18 @@ flowchart LR
     auth -- "2. access token (JWT)" --> c
     c -- "3. Bearer JWT" --> mw["auth.Middleware"]
     mw -- "4. JWKS で署名検証" --> jwks["Supabase JWKS"]
-    mw -- "5. sub → users.auth_subject" --> db[("users")]
-    mw -- "6. Principal を context へ" --> h["ハンドラ"]
+    mw -- "5. sub を許可リストで判定" --> allow["ALLOWED_AUTH_SUBJECTS"]
+    mw -- "6. sub → users.auth_subject" --> db[("users")]
+    mw -- "7. Principal を context へ" --> h["ハンドラ"]
 ```
 
 - JWKS は `internal/auth.Verifier` がキャッシュし、未知の `kid` は TTL・クールダウン付きで再取得する（`singleflight` で同時再取得を 1 本に畳む）。JWKS 到達不可は 401 ではなく 503 を返し、鍵配布の一時障害をサインアウト扱いにしない。
+- 署名検証に通った `sub` を、`users` 行の解決より前に許可リスト（`ALLOWED_AUTH_SUBJECTS`、Supabase のユーザー ID のカンマ区切り）と照合する。含まれなければ 401 と区別できる `403 account_not_allowed` を返し、`users` 行は作らない。判定を解決より前に置くことで、拒否したアカウントの行が作られないことを構造で保証する。`users` 行が既にあっても、許可リストから外せば即座に拒否される。
+- 許可リストが空・未設定なら、認可が必要な経路はすべて拒否する（fail-closed）。起動自体は止めず、起動時に `slog.Warn` で設定漏れを記録する（止めると `/health` と `/internal/*` まで応答できず、keep-alive が途切れるため）。
+- クライアントは `account_not_allowed` を受けたら `ApiClient` の 1 か所で検知し、トークンを破棄してサインイン画面へ戻り、利用が許可されていない旨を示す。並行した要求が同時に拒否されても、サインアウトは 1 回だけ行う。
 - `sub` から `users` 行を解決（無ければ作成）して `Principal{UserID, AuthSubject}` を context に載せる。以降のサービス層は Supabase の概念を知らない。
-- 認証をスキップするのは `/health`・`/ready`・`/internal/*` の 4 経路のみ。`/internal/*` は `CRON_SECRET` の Bearer を定数時間比較で検証する。
-- トークン保管はプラットフォーム任せ: Electron は `safeStorage`、ブラウザは永続ストレージへ平文で置かない。
+- 認証と許可リストの判定をスキップするのは `/health`・`/ready`・`/internal/*` の 4 経路のみ。`/internal/*` は `CRON_SECRET` の Bearer を定数時間比較で検証する。
+- トークン保管はプラットフォームごと: Electron は `safeStorage` で暗号化したファイルに置き、`safeStorage` が使えない環境ではメモリにだけ持ってディスクへ書かない（過去に平文で書いたファイルは起動時に削除する）。ブラウザ / PWA は再訪時に復元できるよう、リフレッシュトークンを origin の `localStorage` に置く。XSS への備えは、Markdown の無害化と CSP（§9）で行う。
 
 ### 4. 変更同期（SSE を使わない理由）
 
@@ -209,11 +213,34 @@ PGroonga（`pgroonga_text_regexp_ops_v2`）で `posts.body` を検索する。�
 
 検索結果はスレッド返信にも当たるため、`timelinePostId`（タイムラインに表示すべきルートポスト）を併せて返し、クライアントは `GET /v1/channels/{id}/posts?around=` で該当箇所の前後を復元する。
 
-### 9. 多層防御としての RLS
+### 9. 多層防御
+
+#### RLS
 
 Supabase の Data API（PostgREST）は `public` スキーマを公開し、クライアントは publishable key と `authenticated` ロールの JWT を持つ。放置すると Go API の認可を迂回して直接読み書きできてしまうため、マイグレーション `00013_public_schema_lockdown.sql` で全テーブルの RLS を有効化し、`anon` / `authenticated` から `public` スキーマの権限を剥がしている。アプリケーションは常に Go API 経由でのみ DB に触れる。
 
-`realtime.messages` に対しては、`postall:events` トピックの broadcast だけを `authenticated` に許す SELECT ポリシーを置く（`00011_realtime_rls.sql`）。`using (true)` は他トピックの購読を許すため使わない。
+`realtime.messages` に対しては、`postall:events` トピックの broadcast だけを `authenticated` に許す SELECT ポリシーを置く（`00011_realtime_rls.sql`）。`using (true)` は他トピックの購読を許すため使わない。購読者が受け取るのはイベント ID だけで、本文は許可リストで閉じた API でしか取れない。
+
+#### 許可リスト
+
+利用者の限定を Supabase ダッシュボードの「新規 signup を無効化」だけに頼らない。API の `ALLOWED_AUTH_SUBJECTS` が独立した 2 枚目の守りになる（§3）。許可したアカウント全員が全データを共有するモデルは変えていない。
+
+#### CSP
+
+ビルド時に Vite のプラグイン（`frontend/vite-plugins/csp.ts`）が `index.html` の `<head>` 先頭へ CSP の `<meta>` を差し込む。Web と Electron は同じ `dist` を読むので、同じポリシーが効く（Electron では `'self'` が `app://localhost` を指す）。開発サーバ（HMR がインラインスクリプトを使う）には付けない。
+
+- `script-src 'self' 'wasm-unsafe-eval'`: インラインスクリプト・イベントハンドラ属性・`eval` を実行しない。`'wasm-unsafe-eval'` は Shiki の WASM 正規表現エンジンのためで、WASM のコンパイルだけを許す。
+- `connect-src`: 自オリジンと、ビルド時の `VITE_SUPABASE_URL` から導いた Supabase の `https:` / `wss:` / Storage（`<ref>.storage.supabase.co`）の origin だけ。`VITE_API_BASE_URL` が別オリジンを指すときだけ、その origin を加える。設定画面で実行時に別の Supabase / API を指定しても、ビルド時に許可した origin 以外へは通信できない。
+- `style-src 'unsafe-inline'`（Mermaid の `<style>` と Shiki の `style` 属性）と `img-src https:`（本文中の外部画像）は、スクリプト実行に繋がらないので許容する。`object-src 'none'`・`base-uri 'self'`・`form-action 'self'` も付ける。
+- `frame-ancestors` は `<meta>` では効かないので、`vercel.json` の `Content-Security-Policy: frame-ancestors 'none'` ヘッダーで配る。ヘッダーと `<meta>` の 2 つのポリシーは積集合として効く。
+
+#### 削除時の本文消去
+
+ポストの論理削除（`SoftDeletePost`）は、`deleted_at` を立てるのと同じ UPDATE で `body` を空にする。削除済みであることと、返信の `thread_root_id` は残す。表示層の隠蔽（`fromPost` が削除済みの本文を空にして返す）に頼らず、DB・PGroonga の索引・以後のバックアップから本文が消える。本変更より前に削除済みだった行は、マイグレーション `00016_erase_deleted_post_bodies.sql` で空にした（戻せないので Down は何もしない）。削除前に取得済みのバックアップには、保持期限（30 日）まで残る。
+
+#### バックアップの公開鍵暗号化
+
+日次のダンプは、リポジトリに置いた公開鍵（`ops/backup/postall-backup.pub.asc`）宛てに GPG で暗号化する。CI は復号できる鍵を持たず、秘密鍵は運用者が CI の外の 2 か所で保管する。アーティファクトは公開リポジトリに置かれ第三者も取得できるため、機密性は暗号化だけで保つ。暗号化の後に `ops/backup/verify-dump-recipients.sh` で、宛先が公開鍵ファイルの鍵だけであり共通鍵の復号経路を含まないことを確かめ、満たさなければアップロードしない。
 
 ### 10. 可用性とスケール
 
@@ -222,7 +249,7 @@ Supabase の Data API（PostgREST）は `public` スキーマを公開し、ク�
 - ステートレスな API。セッションはすべて JWT に載る。
 - Supabase Free の自動 pause を避けるため、GitHub Actions の `ops` workflow が 6 時間ごとに保守エンドポイントを叩き keep-alive を兼ねる。
 - 保守処理（添付回収・イベント整理）は Vercel Cron（日次）と GitHub Actions（6 時間ごと）の二重化。どちらか一方が止まっても回収が止まらない。
-- 日次で `public` スキーマのデータを dump し、gzip + GPG AES-256 で暗号化して Actions のアーティファクトに 30 日残す。
+- 日次で `public` スキーマのデータを dump し、gzip したうえでリポジトリの公開鍵宛てに GPG で暗号化して、Actions のアーティファクトに 30 日残す（§9）。復号には運用者が CI の外で保管する秘密鍵が要る。
 
 ## ディレクトリ構成
 
@@ -271,6 +298,6 @@ iPhone では同じ React シェルを PWA として配信し、768px 未満で�
 | 関心事 | Electron（macOS） | PWA（ブラウザ / iPhone） |
 |---|---|---|
 | 状態管理 | TanStack Query + Zustand | TanStack Query + Zustand |
-| トークン保管 | `safeStorage` | origin の `localStorage`（永続ストレージへ平文で置かない） |
+| トークン保管 | `safeStorage`（使えなければメモリのみ） | origin の `localStorage`（XSS への備えは無害化と CSP） |
 | 接続設定 | `POSTALL_API_BASE_URL` 環境変数 | `VITE_*` 環境変数 |
 | リダイレクト URI | `postall://auth/callback` | `https://memo.sudabon.com/auth/callback` |

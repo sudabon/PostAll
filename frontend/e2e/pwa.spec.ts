@@ -28,6 +28,39 @@ test.describe('pwa', () => {
     expect(manifest.display).toBe('standalone')
   })
 
+  test(
+    'アプリシェルにスクリプトの実行元を自オリジンへ限る CSP が付いている',
+    { tag: ['@harden-sensitive-data-protection', '@TP-003'] },
+    async ({ page, request }) => {
+      // fixture: build:pwa-preview
+      const html = await (await request.get('/')).text()
+      expect(html.match(/<meta http-equiv="Content-Security-Policy"/g)).toHaveLength(1)
+
+      await page.goto('/')
+      const meta = page.locator('meta[http-equiv="Content-Security-Policy"]')
+      await expect(meta).toHaveCount(1)
+      // <meta> より前に読まれたスクリプトには効かないので、<head> の先頭にあること。
+      const first = await page.evaluate(() => document.head.firstElementChild?.getAttribute('http-equiv'))
+      expect(first).toBe('Content-Security-Policy')
+
+      const policy = (await meta.getAttribute('content')) ?? ''
+      const directives = new Map(
+        policy.split(';').map((part) => {
+          const [name, ...values] = part.trim().split(/\s+/)
+          return [name, values] as const
+        }),
+      )
+      const scriptSrc = directives.get('script-src') ?? []
+      expect(scriptSrc).toContain("'self'")
+      expect(scriptSrc).not.toContain("'unsafe-inline'")
+      expect(scriptSrc).not.toContain("'unsafe-eval'")
+      expect(scriptSrc.filter((source) => source !== "'self'" && source !== "'wasm-unsafe-eval'")).toEqual([])
+      expect(directives.get('object-src')).toEqual(["'none'"])
+      expect(directives.get('base-uri')).toEqual(["'self'"])
+      expect(directives.get('default-src')).toEqual(["'self'"])
+    },
+  )
+
   test('service worker does not cache API routes', async ({ request }) => {
     const sw = await request.get('/sw.js')
     expect(sw.ok()).toBeTruthy()

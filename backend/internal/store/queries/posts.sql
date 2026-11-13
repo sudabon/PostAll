@@ -18,8 +18,10 @@ where id = sqlc.arg('id')
 returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at;
 
 -- name: SoftDeletePost :one
+-- 論理削除と同じ文で本文を消す。削除済みであることとスレッドの参照（thread_root_id）は残す。
 update posts
 set deleted_at = now(),
+    body = '',
     updated_at = now()
 where id = sqlc.arg('id')
   and deleted_at is null

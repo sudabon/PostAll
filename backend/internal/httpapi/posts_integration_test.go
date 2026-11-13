@@ -1,6 +1,8 @@
 package httpapi_test
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sudabon/PostAll/backend/internal/api"
 	"github.com/sudabon/PostAll/backend/internal/auth"
 	"github.com/sudabon/PostAll/backend/internal/httpapi"
@@ -26,7 +29,7 @@ func TestPostTimelineAndThreads(t *testing.T) {
 	t.Cleanup(jwksSrv.Close)
 
 	verifier := auth.NewVerifierFromURL(jwksSrv.URL, "https://issuer.example", "authenticated", jwksSrv.Client())
-	h, err := httpapi.New(httpapi.Config{DatabaseURL: url, Verifier: verifier})
+	h, err := httpapi.New(httpapi.Config{DatabaseURL: url, Verifier: verifier, AllowedAuthSubjects: []string{"user-sub"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,6 +165,80 @@ func TestPostTimelineAndThreads(t *testing.T) {
 	assertErrorCode(t, blocked.Body, "post_deleted")
 
 	_ = childPost
+}
+
+func TestDeletePostErasesBodyInDatabase(t *testing.T) {
+	url := testutil.PostgresURL(t)
+	key, jwks, kid := testRSA(t)
+	jwksSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(jwks)
+	}))
+	t.Cleanup(jwksSrv.Close)
+	verifier := auth.NewVerifierFromURL(jwksSrv.URL, "https://issuer.example", "authenticated", jwksSrv.Client())
+	h, err := httpapi.New(httpapi.Config{DatabaseURL: url, Verifier: verifier, AllowedAuthSubjects: []string{"user-sub"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(h.Close)
+	authz := "Bearer " + mint(t, key, kid, "user-sub")
+	pool, err := pgxpool.New(context.Background(), url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	channel := createChannel(t, h, authz, map[string]any{"name": "erase"})
+	root := createPost(t, h, authz, channel.Id.String(), "secret root body")
+	reply := createReply(t, h, authz, root.Id.String(), "secret reply body")
+	live := createReply(t, h, authz, root.Id.String(), "live reply body")
+
+	for _, id := range []uuid.UUID{reply.Id, root.Id} {
+		res := doJSON(t, h, http.MethodDelete, "/v1/posts/"+id.String(), authz, nil)
+		if res.Code != http.StatusNoContent {
+			t.Fatalf("delete %s=%d %s", id, res.Code, res.Body)
+		}
+	}
+
+	type row struct {
+		body         string
+		deleted      bool
+		threadRootID sql.NullString
+	}
+	read := func(id uuid.UUID) row {
+		t.Helper()
+		var r row
+		if err := pool.QueryRow(context.Background(), `
+			select body, deleted_at is not null, thread_root_id::text from posts where id = $1
+		`, id).Scan(&r.body, &r.deleted, &r.threadRootID); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	if r := read(root.Id); r.body != "" || !r.deleted || r.threadRootID.Valid {
+		t.Fatalf("deleted root row=%+v, want empty body and deleted_at set", r)
+	}
+	if r := read(reply.Id); r.body != "" || !r.deleted || r.threadRootID.String != root.Id.String() {
+		t.Fatalf("deleted reply row=%+v, want empty body, deleted_at set, thread_root_id %s", r, root.Id)
+	}
+	if r := read(live.Id); r.body != "live reply body" || r.deleted || r.threadRootID.String != root.Id.String() {
+		t.Fatalf("live reply row changed: %+v", r)
+	}
+	var leaked int
+	if err := pool.QueryRow(context.Background(), `select count(*) from posts where body like '%secret%'`).Scan(&leaked); err != nil {
+		t.Fatal(err)
+	}
+	if leaked != 0 {
+		t.Fatalf("%d rows still hold deleted bodies", leaked)
+	}
+
+	thread := getThread(t, h, authz, root.Id.String())
+	if !thread.Root.Deleted || thread.Root.Body != "" {
+		t.Fatalf("deleted root placeholder=%+v", thread.Root)
+	}
+	if len(thread.Replies) != 1 || thread.Replies[0].Id != live.Id {
+		t.Fatalf("thread structure lost: %+v", thread.Replies)
+	}
 }
 
 func createPost(t *testing.T, h http.Handler, authz, channelID, body string) api.Post {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sudabon/PostAll/backend/internal/auth"
 	"github.com/sudabon/PostAll/backend/internal/blob"
 	"github.com/sudabon/PostAll/backend/internal/emoji"
 	"github.com/sudabon/PostAll/backend/internal/httpapi"
@@ -52,6 +54,12 @@ func main() {
 	}
 
 	addr := listenAddr()
+	allowedSubjects := auth.ParseAllowedSubjects(os.Getenv("ALLOWED_AUTH_SUBJECTS"))
+	if allowedSubjects.Len() == 0 {
+		// 起動は止めない。止めると /health と /internal/* まで応答できなくなり、
+		// keep-alive が途切れて Supabase Free の自動 pause を招く。
+		slog.Warn("ALLOWED_AUTH_SUBJECTS is empty; every authenticated API request will be rejected with 403 account_not_allowed")
+	}
 	handler, err := httpapi.New(httpapi.Config{
 		DatabaseURL: databaseURL,
 		SupabaseURL: os.Getenv("SUPABASE_URL"),
@@ -62,6 +70,8 @@ func main() {
 		S3SecretKey: firstEnv("S3_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"),
 		EmojiBucket: os.Getenv("EMOJI_S3_BUCKET"),
 		CronSecret:  os.Getenv("CRON_SECRET"),
+
+		AllowedAuthSubjects: allowedSubjects.Subjects(),
 	})
 	if err != nil {
 		log.Fatalf("init server: %v", err)

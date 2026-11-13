@@ -62,7 +62,7 @@ func channelDeleteTestServer(t *testing.T) (http.Handler, string) {
 	t.Cleanup(jwksSrv.Close)
 
 	verifier := auth.NewVerifierFromURL(jwksSrv.URL, "https://issuer.example", "authenticated", jwksSrv.Client())
-	h, err := httpapi.New(httpapi.Config{DatabaseURL: dbURL, Verifier: verifier})
+	h, err := httpapi.New(httpapi.Config{DatabaseURL: dbURL, Verifier: verifier, AllowedAuthSubjects: []string{"user-sub"}})
 	if err != nil {
 		t.Fatal(err)
 	}

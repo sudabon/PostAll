@@ -33,7 +33,7 @@ func TestAttachmentsUploadDownloadAndReap(t *testing.T) {
 
 	mem := blob.NewMemory()
 	verifier := auth.NewVerifierFromURL(jwksSrv.URL, "https://issuer.example", "authenticated", jwksSrv.Client())
-	h, err := httpapi.New(httpapi.Config{DatabaseURL: dbURL, Verifier: verifier, Blob: mem})
+	h, err := httpapi.New(httpapi.Config{DatabaseURL: dbURL, Verifier: verifier, Blob: mem, AllowedAuthSubjects: []string{"user-sub"}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,12 +3,14 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { cspPlugin } from './vite-plugins/csp.ts'
 
 export default defineConfig({
   base: '/',
   plugins: [
     react(),
     tailwindcss(),
+    cspPlugin(),
     VitePWA({
       registerType: 'prompt',
       injectRegister: false,

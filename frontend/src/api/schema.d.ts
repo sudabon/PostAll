@@ -535,6 +535,21 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description このアカウントでは利用が許可されていない（許可リストに含まれない） */
+        AccountNotAllowed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "account_not_allowed",
+                 *       "message": "このアカウントでは利用が許可されていません"
+                 *     }
+                 */
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
     parameters: {
         ChannelId: string;
@@ -596,6 +611,7 @@ export interface operations {
                     "application/json": components["schemas"]["ChannelList"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -621,6 +637,7 @@ export interface operations {
                     "application/json": components["schemas"]["Channel"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -642,6 +659,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -669,6 +687,7 @@ export interface operations {
                     "application/json": components["schemas"]["Channel"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -696,6 +715,7 @@ export interface operations {
                     "application/json": components["schemas"]["Channel"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -725,6 +745,7 @@ export interface operations {
                     "application/json": components["schemas"]["PostList"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -752,6 +773,7 @@ export interface operations {
                     "application/json": components["schemas"]["Post"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -773,6 +795,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -800,6 +823,7 @@ export interface operations {
                     "application/json": components["schemas"]["Post"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -823,6 +847,7 @@ export interface operations {
                     "application/json": components["schemas"]["Thread"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -850,6 +875,7 @@ export interface operations {
                     "application/json": components["schemas"]["Post"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -875,6 +901,7 @@ export interface operations {
                     "application/json": components["schemas"]["StartUploadResponse"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -896,6 +923,19 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Attachment"];
+                };
+            };
+            /**
+             * @description 次のいずれか。`code` で区別する。
+             *     - `account_not_allowed`: このアカウントでは利用が許可されていない（許可リストに含まれない）
+             *     - `forbidden`: 他人がアップロードした添付を確定しようとした
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             default: components["responses"]["Error"];
@@ -921,6 +961,19 @@ export interface operations {
                     "application/json": components["schemas"]["DownloadUrlResponse"];
                 };
             };
+            /**
+             * @description 次のいずれか。`code` で区別する。
+             *     - `account_not_allowed`: このアカウントでは利用が許可されていない（許可リストに含まれない）
+             *     - `forbidden`: 他人がアップロードした添付を取得しようとした
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             default: components["responses"]["Error"];
         };
     };
@@ -942,6 +995,7 @@ export interface operations {
                     "application/json": components["schemas"]["EmojiList"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -967,6 +1021,7 @@ export interface operations {
                     "application/json": components["schemas"]["Emoji"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -991,6 +1046,7 @@ export interface operations {
                     "image/gif": string;
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -1015,6 +1071,7 @@ export interface operations {
                     "application/json": components["schemas"]["Reaction"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -1037,6 +1094,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -1065,6 +1123,7 @@ export interface operations {
                     "application/json": components["schemas"]["SearchResultPage"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };
@@ -1090,6 +1149,7 @@ export interface operations {
                     "application/json": components["schemas"]["ChangeEventPage"];
                 };
             };
+            403: components["responses"]["AccountNotAllowed"];
             default: components["responses"]["Error"];
         };
     };

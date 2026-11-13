@@ -62,10 +62,26 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: electron/package-lock.json
+          cache-dependency-path: |
+            electron/package-lock.json
+            frontend/package-lock.json
+      # csp.e2e.mjs（electron:built-dist）は本番ビルドの frontend/dist を読み込む。
+      - name: Build frontend for Electron E2E
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
       - run: npm ci
       # E2E は実際に BrowserWindow を開くので仮想ディスプレイが要る。
       - run: xvfb-run -a npm test
+
+  backup-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # ubuntu-latest には shellcheck と gpg が入っている。
+      - run: shellcheck ops/backup/*.sh
+      - run: bash ops/backup/verify-dump-recipients.test.sh
 
   openapi-generated:
     runs-on: ubuntu-latest

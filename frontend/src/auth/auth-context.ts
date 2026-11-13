@@ -1,6 +1,8 @@
 import { createContext, useContext } from 'react'
 import type { ApiClient } from '@/api/client'
 
+export const ACCOUNT_NOT_ALLOWED_MESSAGE = 'このアカウントでは利用が許可されていません'
+
 export type AuthState = {
   ready: boolean
   signedIn: boolean

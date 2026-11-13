@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiClient, ApiError } from './client'
+import { ApiClient, ApiError, isAccountNotAllowed } from './client'
 
 describe('ApiClient', () => {
   afterEach(() => {
@@ -107,5 +107,75 @@ describe('ApiClient', () => {
     expect((error as ApiError).status).toBe(409)
     expect((error as ApiError).code).toBe('shortcode_conflict')
     expect((error as ApiError).message).toContain('shipit')
+  })
+
+  describe('account_not_allowed', () => {
+    function respondWith(status: number, body: unknown) {
+      const fetchMock = vi.fn().mockImplementation(
+        async () => new Response(JSON.stringify(body), { status }),
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      return fetchMock
+    }
+
+    it('notifies the listener before rejecting with the ApiError', async () => {
+      respondWith(403, { code: 'account_not_allowed', message: 'このアカウントでは利用が許可されていません' })
+      const api = new ApiClient(() => 'https://api.example', async () => 'token')
+      const listener = vi.fn()
+      api.onAccountNotAllowed(listener)
+
+      const error = await api.listChannels().catch((e: unknown) => e)
+
+      expect(listener).toHaveBeenCalledTimes(1)
+      expect(error).toBeInstanceOf(ApiError)
+      expect((error as ApiError).status).toBe(403)
+      expect((error as ApiError).code).toBe('account_not_allowed')
+      expect(isAccountNotAllowed(error)).toBe(true)
+    })
+
+    it.each([
+      ['another 403 such as an attachment forbidden', 403, { code: 'forbidden', message: 'この添付を取得できません' }],
+      ['401 unauthorized', 401, { code: 'unauthorized', message: '認可情報を検証できませんでした' }],
+      ['403 without a JSON body', 403, 'not json'],
+      ['account_not_allowed code with a non-403 status', 401, { code: 'account_not_allowed', message: 'x' }],
+    ])('does not notify on %s', async (_label, status, body) => {
+      respondWith(status, body)
+      const api = new ApiClient(() => 'https://api.example', async () => 'token')
+      const listener = vi.fn()
+      api.onAccountNotAllowed(listener)
+
+      const error = await api.getDownloadUrl('attachment-1').catch((e: unknown) => e)
+
+      expect(error).toBeInstanceOf(ApiError)
+      expect((error as ApiError).status).toBe(status)
+      expect(isAccountNotAllowed(error)).toBe(false)
+      expect(listener).not.toHaveBeenCalled()
+    })
+
+    it('stops notifying after the listener unsubscribes and still rejects', async () => {
+      respondWith(403, { code: 'account_not_allowed', message: 'x' })
+      const api = new ApiClient(() => 'https://api.example', async () => 'token')
+      const listener = vi.fn()
+      const unsubscribe = api.onAccountNotAllowed(listener)
+      unsubscribe()
+
+      await expect(api.listChannels()).rejects.toBeInstanceOf(ApiError)
+      expect(listener).not.toHaveBeenCalled()
+    })
+
+    it('rejects with the ApiError even when a listener throws', async () => {
+      respondWith(403, { code: 'account_not_allowed', message: 'x' })
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const api = new ApiClient(() => 'https://api.example', async () => 'token')
+      api.onAccountNotAllowed(() => {
+        throw new Error('listener failed')
+      })
+
+      const error = await api.listChannels().catch((e: unknown) => e)
+
+      expect(isAccountNotAllowed(error)).toBe(true)
+      expect(consoleError).toHaveBeenCalled()
+      consoleError.mockRestore()
+    })
   })
 })

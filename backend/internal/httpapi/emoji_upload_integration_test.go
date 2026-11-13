@@ -106,7 +106,7 @@ func newUploadServer(t *testing.T, objects blob.Store) (http.Handler, string, st
 	t.Cleanup(jwksServer.Close)
 
 	verifier := auth.NewVerifierFromURL(jwksServer.URL, "https://issuer.example", "authenticated", jwksServer.Client())
-	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier, EmojiBlob: objects})
+	h, err := httpapi.New(httpapi.Config{DatabaseURL: databaseURL, Verifier: verifier, EmojiBlob: objects, AllowedAuthSubjects: []string{"upload-user"}})
 	if err != nil {
 		t.Fatal(err)
 	}

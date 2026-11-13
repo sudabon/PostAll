@@ -53,21 +53,30 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: supabase/setup-cli@v1
         with:
           version: "2.116.0"
       - name: Dump and encrypt database
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DUMP_PASSPHRASE: ${{ secrets.DUMP_PASSPHRASE }}
         run: |
           set -euo pipefail
           umask 077
+          public_key="$GITHUB_WORKSPACE/ops/backup/postall-backup.pub.asc"
           plain="$RUNNER_TEMP/postall.dump.sql"
           compressed="$RUNNER_TEMP/postall.dump.sql.gz"
           encrypted="$GITHUB_WORKSPACE/postall.dump.sql.gz.gpg"
-          trap 'rm -f "$plain" "$compressed"' EXIT
-          : "${DUMP_PASSPHRASE:?DUMP_PASSPHRASE secret is required}"
+          # CI は復号できる鍵を持たない。公開鍵だけを空の一時キーリングで使う。
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          trap 'rm -rf "$plain" "$compressed" "$GNUPGHOME"' EXIT
+          if [ ! -s "$public_key" ]; then
+            echo "Backup public key is missing: $public_key" >&2
+            exit 1
+          fi
           supabase db dump \
             --db-url "$DATABASE_URL" \
             --data-only \
@@ -87,15 +96,20 @@ jobs:
             exit 1
           fi
           gzip -9 -c "$plain" > "$compressed"
-          printf '%s' "$DUMP_PASSPHRASE" | gpg \
+          # 鍵の正しさはキーリングの信頼モデルではなく、リポジトリへのコミット（レビュー）で担保する。
+          gpg \
             --batch \
             --yes \
-            --pinentry-mode loopback \
-            --passphrase-fd 0 \
-            --symmetric \
-            --cipher-algo AES256 \
+            --trust-model always \
+            --recipient-file "$public_key" \
             --output "$encrypted" \
+            --encrypt \
             "$compressed"
+          # 公開鍵だけが宛先で、共通鍵の復号経路が無いことを確かめてからアップロードする。
+          if ! bash "$GITHUB_WORKSPACE/ops/backup/verify-dump-recipients.sh" "$encrypted" "$public_key"; then
+            rm -f "$encrypted"
+            exit 1
+          fi
           max_bytes=$((10 * 1024 * 1024))
           actual_bytes=$(stat -c '%s' "$encrypted")
           if (( actual_bytes > max_bytes )); then

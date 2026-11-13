@@ -27,6 +27,9 @@ Supabase（Free）と Vercel（Hobby）へ PostAll を構築し、`memo.sudabon.
 - `sudabon/PostAll` が **個人アカウント所有**であること。Vercel Hobby は Organization 所有のリポジトリへ接続できない。
 - 手元に Go 1.26+ / Node.js 22+ / Supabase CLI / Vercel CLI / `gpg` / `psql`。
 - Supabase・Vercel・GitHub の各アカウント。GitHub OAuth App を作れる権限。
+- 各アカウントで 2FA（パスキー推奨）を有効にしてあること。本番のデータ・秘密情報・デプロイ権限はこの 3 アカウントに集まる。
+
+- [ ] GitHub / Supabase / Vercel の各アカウントで 2FA を有効化した（パスキー推奨）。
 - 旧環境（AWS Cognito / S3 / VPS）は Phase 8 まで**残しておく**。
 
 ---
@@ -206,6 +209,7 @@ signup を無効化しているため、**初回 GitHub サインインより先
 
 - [x] Authentication → Users で、GitHub が返す**検証済みメールと完全に同一**のアドレスでユーザーを作成し、確認済みにする。
 - [x] 以後の GitHub サインインが自動 identity linking で既存ユーザーへ結び付くことを Phase 7 で確認する。
+- [ ] 作成したユーザーの **User UID**（JWT の `sub`）を控え、Vercel の `ALLOWED_AUTH_SUBJECTS`（4.4）に加える。API は signup の設定とは独立にこの許可リストで利用者を限定し、含まれない `sub` を `403 account_not_allowed` で拒否する。
 
 ---
 
@@ -273,6 +277,7 @@ Settings → Environment Variables で **Production** に登録する（`vercel 
 | `EMOJI_S3_BUCKET`                           | Config | `emojis`                            |                      |
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Secret | 3.7 で発行した値                          |                      |
 | `CRON_SECRET`                               | Secret | 32 バイト以上のランダム値                      | 下記コマンドで生成            |
+| `ALLOWED_AUTH_SUBJECTS`                     | Config | Supabase のユーザー ID（UUID）のカンマ区切り       | **未設定・空なら全員を 403 で拒否**。3.11 / 11.3 |
 | `VITE_SUPABASE_URL`                         | Config | `https://<project-ref>.supabase.co` | ビルド時                 |
 | `VITE_SUPABASE_PUBLISHABLE_KEY`             | Config | publishable key                     | ビルド時                 |
 | `VITE_API_BASE_URL`                         | Config | 空文字（同一オリジン）                         | 未登録でも可               |
@@ -284,6 +289,7 @@ openssl rand -base64 32   # CRON_SECRET の生成
 
 - [x] 上記を Production へ登録した。
 - [x] `CRON_SECRET` を控えた（GitHub secrets にも同じ値を入れる）。
+- [ ] `ALLOWED_AUTH_SUBJECTS` を設定済み（`vercel env ls production` に表示される）。**API をデプロイする前に**入れる。未設定のまま出すと、全員が「このアカウントでは利用が許可されていません」でサインイン画面へ戻される（`/health` と `/internal/*` は動き続ける）。起動ログに `ALLOWED_AUTH_SUBJECTS is empty` の警告が出る。
 
 `CRON_SECRET` を設定すると、Vercel Cron は `Authorization: Bearer <CRON_SECRET>` を付けて `vercel.json` の `crons` を叩く。ハンドラは GET / POST の両方を受ける。
 
@@ -331,12 +337,54 @@ Vercel CLI 59 の `vercel pull` は、プロジェクト限定トークンだと
 | `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID`                    | deploy                          | 4.6 の値                                          |
 | `APP_URL`                                                                 | ops(reap / prune-events)        | `https://memo.sudabon.com`（切替前は Vercel の本番 URL） |
 | `CRON_SECRET`                                                             | ops(reap / prune-events)        | Vercel と**同じ値**                                 |
-| `DUMP_PASSPHRASE`                                                         | ops(db-dump)                    | 十分に長いランダム値。復元に必須                                |
 
 
 - [x] 上記をすべて登録した。
-- [x] `DUMP_PASSPHRASE` をパスワードマネージャへ保管した（**紛失するとバックアップを復号できない**）。
 - [x] GitHub の Billing → Budgets and alerts で **Actions storage の予算を** `$0` にした。上限到達で停止し、追加課金へ移行しない。
+
+### 5.1 バックアップ鍵
+
+`db-dump` は、リポジトリの公開鍵 `ops/backup/postall-backup.pub.asc` 宛てにダンプを GPG で暗号化する。**CI は復号できる鍵を持たない**（secret も不要）。アーティファクトは公開リポジトリに置かれ、サインインした任意の GitHub ユーザーが取得できるので、機密性は暗号化だけで保つ。暗号化の後に `ops/backup/verify-dump-recipients.sh` が、宛先が公開鍵の鍵だけで共通鍵の復号経路が無いことを確かめ、満たさなければアップロードせずに失敗する。
+
+鍵の生成（手元で 1 回）:
+
+```bash
+gpg --quick-gen-key 'PostAll backup' future-default default never   # 秘密鍵のパスフレーズを設定する
+gpg --armor --export 'PostAll backup' > ops/backup/postall-backup.pub.asc
+gpg --show-keys ops/backup/postall-backup.pub.asc   # sub 行に [E]（暗号化用サブ鍵）があること
+gpg --armor --export-secret-keys 'PostAll backup' > postall-backup.secret.asc   # 保管用。保管後に消す
+```
+
+- [ ] 公開鍵 `ops/backup/postall-backup.pub.asc` をコミットした。鍵の正しさはこのコミットのレビューで担保する（ワークフローは `--trust-model always` で使う）。
+- [ ] 秘密鍵（`postall-backup.secret.asc`）とパスフレーズを **CI の外の 2 か所**（パスワードマネージャと、オフラインの媒体など）に保管し、手元のファイルを消した。**秘密鍵を失うとバックアップを復号できない。**
+
+復旧（秘密鍵を持つ手元で）:
+
+```bash
+gh run download <run-id> -n postall-db-dump-<run-id>        # または Actions 画面から取得
+gpg --import postall-backup.secret.asc                      # 初回のみ
+gpg --decrypt postall.dump.sql.gz.gpg | gunzip | head       # 中身が読めることの確認
+set -o pipefail
+gpg --decrypt postall.dump.sql.gz.gpg | gunzip | psql "$DATABASE_URL"   # 空の DB（migration 適用済み）へ復元
+```
+
+### 5.2 旧方式（共通鍵）からの切り替え
+
+旧方式のアーティファクトは、最長 30 日、旧 `DUMP_PASSPHRASE` で開ける。新方式の `db-dump` が 1 回成功し、5.1 の復旧手順で中身を確認できてから、次を**先送りせず**に行う。
+
+```bash
+# 切り替え前に作られた postall-db-dump-* を列挙して削除する（<cutover> は新方式の初回成功の時刻、UTC）
+gh api --paginate repos/sudabon/PostAll/actions/artifacts \
+  --jq '.artifacts[] | select(.name | startswith("postall-db-dump-")) | select(.created_at < "<cutover>") | .id' \
+  | while read -r id; do gh api -X DELETE "repos/sudabon/PostAll/actions/artifacts/$id"; done
+# 残っていないことを確認する
+gh api --paginate repos/sudabon/PostAll/actions/artifacts \
+  --jq '.artifacts[] | select(.name | startswith("postall-db-dump-")) | [.id, .name, .created_at] | @tsv'
+gh secret delete DUMP_PASSPHRASE
+```
+
+- [ ] 新方式のアーティファクトを復号・展開して中身を確認した。
+- [ ] 切り替え前の `postall-db-dump-*` を削除し、GitHub secrets から `DUMP_PASSPHRASE` を削除した。
 
 ---
 
@@ -432,6 +480,13 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://memo.sudabon.com/intern
 
 - [x] `authenticated` の JWT で PostgREST 経由の直接読み書きができない（00013 の lockdown が効いている）。
 - [x] 匿名で `postall:events` を購読できない。
+- [ ] `ALLOWED_AUTH_SUBJECTS` に含まれない GitHub アカウントは、サインインできても API が `403 account_not_allowed` を返し、サインイン画面に「このアカウントでは利用が許可されていません」と出る。
+- [ ] ブラウザの DevTools の Console に CSP 違反（`Refused to ...`）が出ない。アプリシェルに CSP の `<meta>` があり、応答ヘッダーに `frame-ancestors 'none'` がある。
+
+```bash
+curl -sI https://memo.sudabon.com/ | grep -i content-security-policy   # frame-ancestors 'none'
+curl -s https://memo.sudabon.com/ | grep -o '<meta http-equiv="Content-Security-Policy"[^>]*>'
+```
 - [ ] パッケージ済み Electron アプリでサインインからタイムライン表示までが通る。
 
 
@@ -440,7 +495,8 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://memo.sudabon.com/intern
 
 - [ ] `ops` workflow を手動実行し、`reap` / `prune-events` / `db-dump` の 3 ジョブが成功する。
 - [ ] `db-dump` の Artifact が `postall.dump.sql.gz.gpg` **のみ**であり、平文が含まれない。
-- [ ] 暗号化ダンプを復号し、空の DB へ復元できる（README の「暗号化バックアップ」の手順）。
+- [ ] `db-dump` のログに `verify-dump-recipients: OK` が出ている（公開鍵宛てで、共通鍵の復号経路が無い）。
+- [ ] 暗号化ダンプを秘密鍵で復号し、空の DB へ復元できる（5.1 の復旧手順）。
 
 ---
 
@@ -501,7 +557,10 @@ select * from change_event_retention;   -- pruned_through が単調増加する
 ### 11.3 利用者を追加する
 
 1. Supabase の Authentication → Users で、GitHub の検証済みメールと同一のアドレスで確認済みユーザーを作る。
-2. 本人に GitHub サインインしてもらう。identity linking で既存ユーザーへ結び付く。
+2. 作成したユーザーの User UID を Vercel の `ALLOWED_AUTH_SUBJECTS` に**カンマ区切りで追記**し（既存の ID を消さない）、`deploy` workflow で再デプロイする。環境変数はデプロイ時に読まれる。
+3. 本人に GitHub サインインしてもらう。identity linking で既存ユーザーへ結び付く。
+
+利用を止めるときは、`ALLOWED_AUTH_SUBJECTS` から当該 ID を外して再デプロイする。`users` 行と過去の投稿は残るが、API は即座に拒否する。許可リストを空にすると**全員**が拒否されるので、一時停止の手段には使わない。
 
 
 
@@ -519,6 +578,9 @@ select * from change_event_retention;   -- pruned_through が単調増加する
 | 症状                                               | 確認する箇所                                                                                                                                                     |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 全 API が 401                                      | JWT 署名鍵が ES256 か（3.4）。`SUPABASE_URL` の末尾スラッシュ。issuer / audience                                                                                            |
+| サインイン直後に「このアカウントでは利用が許可されていません」で戻される      | API が `403 account_not_allowed` を返している。`ALLOWED_AUTH_SUBJECTS` に当該ユーザーの User UID（メールではない）が入っているか。変更後に再デプロイしたか。起動ログの `ALLOWED_AUTH_SUBJECTS is empty` 警告 |
+| Console に `Refused to connect to ...`（CSP）           | ビルド時の `VITE_SUPABASE_URL` / `VITE_API_BASE_URL` から導いた接続先以外へ通信している。設定画面で別の Supabase / API を指定していないか。値を変えたら web を再ビルドする                     |
+| `db-dump` が `Backup public key is missing` / `verify-dump-recipients` で失敗 | `ops/backup/postall-backup.pub.asc` がコミットされているか（5.1）。暗号化用サブ鍵（`[E]`）があるか。検査に落ちた成果物はアップロードされない                                              |
 | サインインが Redirect エラー                              | Supabase の Redirect URLs（3.6）と GitHub OAuth App の callback（3.5）                                                                                            |
 | サインインは通るが投稿が他人のものに見えない                           | `users.auth_subject` と JWT の `sub` の対応。別プロジェクトへ復元した場合は一致しない                                                                                                |
 | 変更が他クライアントへ届かない                                  | `postall_notify_failures` の件数。`realtime.messages` の RLS（3.10）。ポーリング退避で反映されるなら Realtime 側の問題                                                                |

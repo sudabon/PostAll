@@ -10,7 +10,7 @@ test-plan.md の「前提(fixture)」列に書いた fixture 名は、必ずこ�
 
 | fixture 名 | 作られる状態 | 使用する TP-ID | 方式 |
 |-----------|-------------|---------------|------|
-| `mock:signed-in-with-emojis` | サインイン済み + チャネル `inbox` とポスト 1 件 + 既存スタンプ 3 件（shipit / party / fail）。`installApiMock(page)` の既定 | TP-001〜TP-007, TP-009, TP-012 | fixture 直接方式 |
+| `mock:signed-in-with-emojis` | サインイン済み + チャネル `inbox` とポスト 1 件 + 既存スタンプ 3 件（shipit / party / fail）。`installApiMock(page)` の既定 | TP-001〜TP-007, TP-009, TP-012 / harden: TP-004, TP-005 | fixture 直接方式 |
 | `mock:signed-in-empty-catalog` | 上記からスタンプカタログだけを空にした状態。`installApiMock(page, { emptyEmojiCatalog: true })` | TP-011 | fixture 直接方式 |
 | `mock:emoji-upload-conflict` | スタンプ登録要求に `409 shortcode_conflict` を返す。`installApiMock(page, { emojiUpload: 'conflict' })` | TP-008 | fixture 直接方式 |
 | `mock:emoji-upload-error` | スタンプ登録要求に `500` を返す。`installApiMock(page, { emojiUpload: 'error' })` | TP-009 | fixture 直接方式 |
@@ -20,6 +20,16 @@ test-plan.md の「前提(fixture)」列に書いた fixture 名は、必ずこ�
 | `file:unsupported-format` | PNG でも GIF でもないファイル（`unsupportedFormat`） | TP-006 | fixture 直接方式 |
 | `file:oversized-png` | 上限 512 KiB を 1 バイト超える PNG（`oversizedPng`） | TP-007 | fixture 直接方式 |
 | `file:unusable-name-png` | ショートコードに整えられないファイル名の PNG（`unusableNamePng`） | TP-005 | fixture 直接方式 |
+| `mock:account-not-allowed` | サインイン済み（拒否されるトークン `REJECTED_ACCESS_TOKEN` を端末の永続ストレージにも置く）の状態から、全 `/v1/*` に `403 {"code":"account_not_allowed"}` を返す。受けた要求は `v1Requests()` で数えられる。`installApiMock(page, { accountNotAllowed: true })` | harden: TP-001, TP-002 | fixture 直接方式 |
+| `mock:rich-content-post` | チャネル `rich` に、コードブロック（ts）・Mermaid 図・画像添付を 1 つずつ含むポスト 1 件（`RICH_CONTENT_BODY` / `RICH_CONTENT_IMAGE`）。添付のダウンロード URL は同一オリジンのモック画像 `/e2e-assets/rich-content.png` を指す。`installApiMock(page, { richContentPost: true })` | harden: TP-006 | fixture 直接方式 |
+| `build:pwa-preview` | `VITE_E2E` 無し・`VITE_SUPABASE_URL=https://auth.example.test` で `vite build` した `dist` を `vite preview`（4174）で配る。CSP 付きのサインイン前のアプリシェル。`playwright.config.ts` の `pwa` project | harden: TP-003 | 配信設定（シード無し） |
+| `build:csp-e2e` | `VITE_E2E=true` で `dist-csp-e2e` へ `vite build` し、`vite preview`（4175）で配る。CSP 付きの本番ビルドで、サインイン済みのモックを描画できる。`playwright.config.ts` の `csp` project | harden: TP-004〜TP-006 | 配信設定（シード無し） |
+| `electron:built-dist` | `cd frontend && npm run build` の `frontend/dist`（CSP 付き）を一時ディレクトリへ写し、観測用の同一オリジンスクリプト `/__e2e__/csp-probe.js` を 1 行足して Electron に読み込ませる（`POSTALL_FRONTEND_DIR`）。`electron/test/csp.e2e.mjs` | harden: TP-007 | 配信設定（シード無し） |
+
+TP-ID の「harden:」は change `harden-sensitive-data-protection` の test-plan の ID で、接頭辞の無いものは
+`add-stamp-upload-in-picker` の ID である。
+
+`build:*` と `electron:*` はデータではなく、CSP を観測するための配信の仕方である（CSP は本番ビルドにだけ付く）。
 
 `mock:*` は `installApiMock` のオプションで作るモックの初期状態、`file:*` は
 `setInputFiles` に渡す画像ペイロードで、どちらも `frontend/e2e/fixtures/` にある。

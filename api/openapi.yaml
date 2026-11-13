@@ -36,6 +36,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChannelList"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
     post:
@@ -55,6 +57,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Channel"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/channels/{channelId}:
@@ -77,6 +81,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Channel"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
     delete:
@@ -86,6 +92,8 @@ paths:
       responses:
         "204":
           description: 削除成功
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/channels/{channelId}/move:
@@ -108,6 +116,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Channel"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/channels/{channelId}/posts:
@@ -147,6 +157,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PostList"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
     post:
@@ -166,6 +178,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Post"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/posts/{postId}:
@@ -188,6 +202,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Post"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
     delete:
@@ -197,6 +213,8 @@ paths:
       responses:
         "204":
           description: 削除成功
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/posts/{postId}/thread:
@@ -216,6 +234,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Thread"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/posts/{postId}/replies:
@@ -239,6 +259,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Post"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/attachments/uploads:
@@ -259,6 +281,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StartUploadResponse"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/attachments/{attachmentId}/complete:
@@ -275,6 +299,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Attachment"
+        "403":
+          description: |
+            次のいずれか。`code` で区別する。
+            - `account_not_allowed`: このアカウントでは利用が許可されていない（許可リストに含まれない）
+            - `forbidden`: 他人がアップロードした添付を確定しようとした
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
   /v1/attachments/{attachmentId}/download:
@@ -291,6 +324,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DownloadUrlResponse"
+        "403":
+          description: |
+            次のいずれか。`code` で区別する。
+            - `account_not_allowed`: このアカウントでは利用が許可されていない（許可リストに含まれない）
+            - `forbidden`: 他人がアップロードした添付を取得しようとした
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
   /v1/emojis:
@@ -305,6 +347,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EmojiList"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
     post:
@@ -328,6 +372,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Emoji"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/emojis/{shortcode}/image:
@@ -349,6 +395,8 @@ paths:
               schema:
                 type: string
                 format: binary
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/posts/{postId}/reactions/{emojiId}:
@@ -367,6 +415,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Reaction"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
     delete:
@@ -376,6 +426,8 @@ paths:
       responses:
         "204":
           description: 解除成功。既に解除済みの場合も成功する。
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/search:
@@ -423,6 +475,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SearchResultPage"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
   /v1/events:
@@ -452,6 +506,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChangeEventPage"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
 components:
@@ -503,6 +559,15 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    AccountNotAllowed:
+      description: このアカウントでは利用が許可されていない（許可リストに含まれない）
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: account_not_allowed
+            message: このアカウントでは利用が許可されていません
   schemas:
     Health:
       type: object

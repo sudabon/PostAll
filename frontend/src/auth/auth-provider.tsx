@@ -2,12 +2,14 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
 import { authorizeUrl, exchangeCode, generatePkce, oauthCallbackParams } from '@/auth/pkce'
 import {
   createApiClient,
+  hasTokens,
   loadTokens,
   persistTokens,
   PKCE_VERIFIER_KEY,
@@ -15,7 +17,7 @@ import {
 } from '@/auth/session'
 import { usePlatform } from '@/platform'
 import { useSettings } from '@/state/settings'
-import { AuthContext, type AuthState } from './auth-context'
+import { ACCOUNT_NOT_ALLOWED_MESSAGE, AuthContext, type AuthState } from './auth-context'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const platform = usePlatform()
@@ -23,6 +25,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [signedIn, setSignedIn] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [api] = useState(() => createApiClient(platform))
+  const signOutInFlight = useRef<Promise<void> | null>(null)
 
   const redirectUri =
     platform.kind === 'electron' ? 'postall://auth/callback' : `${window.location.origin}/auth/callback`
@@ -111,9 +114,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [platform, redirectUri])
 
-  const signOut = useCallback(async () => {
-    await persistTokens(platform, null)
+  // 冪等にする。並行した要求が同時に拒否されると複数回呼ばれるが、破棄は 1 回だけ行う。
+  const signOut = useCallback(() => {
+    if (signOutInFlight.current) return signOutInFlight.current
+    if (!hasTokens()) return Promise.resolve()
+    const run = persistTokens(platform, null).finally(() => {
+      signOutInFlight.current = null
+    })
+    signOutInFlight.current = run
+    return run
   }, [platform])
+
+  // 案内文はサインイン画面を離れる（signIn の開始・サインインの成功）まで error に残す。
+  useEffect(
+    () =>
+      api.onAccountNotAllowed(() => {
+        setError(ACCOUNT_NOT_ALLOWED_MESSAGE)
+        signOut().catch((err: unknown) => {
+          console.error('failed to discard tokens after account_not_allowed', err)
+        })
+      }),
+    [api, signOut],
+  )
 
   const value = useMemo<AuthState>(
     () => ({ ready, signedIn, error, api, signIn, signOut, handleRedirect: handleRedirectUrl }),
