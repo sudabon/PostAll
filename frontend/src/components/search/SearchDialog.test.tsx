@@ -22,18 +22,31 @@ const channel: Channel = {
   parentId: null,
   name: 'メモ',
   sortKey: 'a',
+  encrypted: false,
   createdAt: '2026-08-23T00:00:00Z',
   updatedAt: '2026-08-23T00:00:00Z',
 }
 
-function renderDialog(search: (input: SearchInput) => Promise<SearchResultPage>, onSelect = vi.fn()) {
+const encryptedChannel: Channel = {
+  ...channel,
+  id: '33333333-3333-3333-3333-333333333333',
+  name: '秘密',
+  sortKey: 'b',
+  encrypted: true,
+}
+
+function renderDialog(
+  search: (input: SearchInput) => Promise<SearchResultPage>,
+  onSelect = vi.fn(),
+  channels: Channel[] = [channel],
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   function Harness() {
     const [open, setOpen] = useState(true)
     return (
       <SearchDialog
         open={open}
-        channels={[channel]}
+        channels={channels}
         search={search}
         onClose={() => setOpen(false)}
         onSelect={onSelect}
@@ -50,6 +63,14 @@ function renderDialog(search: (input: SearchInput) => Promise<SearchResultPage>,
 }
 
 describe('SearchDialog', () => {
+  it('offers only unencrypted channels in the channel filter', async () => {
+    const search = vi.fn<(input: SearchInput) => Promise<SearchResultPage>>()
+    renderDialog(search, vi.fn(), [channel, encryptedChannel])
+    const select = await screen.findByLabelText('チャネル')
+    const options = Array.from((select as HTMLSelectElement).options).map((option) => option.textContent)
+    expect(options).toEqual(['すべてのチャネル', 'メモ'])
+  })
+
   it('requires two characters, exposes visible filters, and highlights safe result text', async () => {
     const page: SearchResultPage = {
       results: [
@@ -110,12 +131,13 @@ describe('SearchDialog', () => {
 
     fireEvent.change(screen.getByLabelText('検索語'), { target: { value: '検索結果' } })
     fireEvent.submit(screen.getByRole('search'))
-    expect(await screen.findByText('さらに読み込む')).toBeVisible()
+    // ダイアログは開くアニメーションの途中で結果を描くので、見えるようになるまで待つ。
+    await waitFor(() => expect(screen.getByText('さらに読み込む')).toBeVisible())
     fireEvent.click(screen.getByText('さらに読み込む'))
     await waitFor(() => expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'cursor-1' })))
 
     fireEvent.change(screen.getByLabelText('検索語'), { target: { value: '一致なし' } })
     fireEvent.submit(screen.getByRole('search'))
-    expect(await screen.findByText('一致するポストはありません')).toBeVisible()
+    await waitFor(() => expect(screen.getByText('一致するポストはありません')).toBeVisible())
   })
 })

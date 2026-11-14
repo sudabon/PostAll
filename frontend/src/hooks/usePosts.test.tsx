@@ -9,9 +9,20 @@ import { deleteFailureMessage, usePostMutations, useTimeline } from './usePosts'
 const mocks = vi.hoisted(() => ({
   listPosts: vi.fn(),
   editPost: vi.fn(),
+  editEncryptedPost: vi.fn(),
   createPost: vi.fn(),
+  createEncryptedPost: vi.fn(),
   createReply: vi.fn(),
+  createEncryptedReply: vi.fn(),
   deletePost: vi.fn(),
+}))
+
+vi.mock('@/encryption/encryption-context', () => ({
+  useEncryptionOptional: () => ({
+    phase: 'unlocked',
+    encryptBody: async () => 'pe1.sealed',
+    rememberDecryption: () => {},
+  }),
 }))
 
 vi.mock('@/auth/AuthProvider', () => ({
@@ -19,8 +30,11 @@ vi.mock('@/auth/AuthProvider', () => ({
     api: {
       listPosts: mocks.listPosts,
       editPost: mocks.editPost,
+      editEncryptedPost: mocks.editEncryptedPost,
       createPost: mocks.createPost,
+      createEncryptedPost: mocks.createEncryptedPost,
       createReply: mocks.createReply,
+      createEncryptedReply: mocks.createEncryptedReply,
       deletePost: mocks.deletePost,
     },
     signedIn: true,
@@ -30,8 +44,11 @@ vi.mock('@/auth/AuthProvider', () => ({
 beforeEach(() => {
   mocks.listPosts.mockReset()
   mocks.editPost.mockReset()
+  mocks.editEncryptedPost.mockReset()
   mocks.createPost.mockReset()
+  mocks.createEncryptedPost.mockReset()
   mocks.createReply.mockReset()
+  mocks.createEncryptedReply.mockReset()
   mocks.deletePost.mockReset()
   useUi.setState({
     canMutate: true,
@@ -71,6 +88,7 @@ function post(overrides: Partial<Post> = {}): Post {
     attachments: [],
     reactions: [],
     ...overrides,
+    encrypted: overrides.encrypted ?? false,
   }
 }
 
@@ -343,6 +361,28 @@ function timelineOf(client: QueryClient) {
 function threadOf(client: QueryClient) {
   return client.getQueryData<{ root: Post; replies: Post[] }>(['thread', 'root-post'])
 }
+
+describe('usePostMutations encrypted channel', () => {
+  it('sends ciphertext and keeps the plaintext off the request', async () => {
+    const request = deferred<Post>()
+    mocks.createEncryptedPost.mockReturnValue(request.promise)
+    const client = mutationClient()
+    const { result } = renderHook(() => usePostMutations(channelId), { wrapper: wrapper(client) })
+
+    act(() => {
+      result.current.create.mutate({ body: '秘密の本文', encrypted: true })
+    })
+
+    await waitFor(() => expect(useUi.getState().pendingPosts[0]).toMatchObject({
+      body: '秘密の本文',
+      ciphertext: 'pe1.sealed',
+    }))
+    expect(mocks.createEncryptedPost).toHaveBeenCalledWith(channelId, 'pe1.sealed')
+    expect(mocks.createPost).not.toHaveBeenCalled()
+    expect(JSON.stringify(mocks.createEncryptedPost.mock.calls)).not.toContain('秘密の本文')
+    await act(async () => request.resolve(post({ id: newPostId, body: '', encrypted: true, ciphertext: 'pe1.sealed' })))
+  })
+})
 
 describe('usePostMutations create', () => {
   it('shows the post as pending before the server responds', async () => {

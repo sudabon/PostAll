@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AnimatePresence, animate, m } from 'motion/react'
-import { ChevronLeft, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { ChevronLeft, ChevronsLeft, ChevronsRight, KeyRound } from 'lucide-react'
 import { ChannelTree } from '@/components/channels/ChannelTree'
 import { Timeline } from '@/components/timeline/Timeline'
 import { ThreadPanel } from '@/components/thread/ThreadPanel'
@@ -220,13 +220,14 @@ function NarrowShell() {
 function ChannelTitle() {
   const id = useUi((s) => s.selectedChannelId)
   const { data = [] } = useChannels()
-  const name = data.find((c) => c.id === id)?.name
-  if (!name) return null
+  const channel = data.find((c) => c.id === id)
+  if (!channel) return null
   return (
     // 広幅ではヘッダ中央に固定されたブランド表記と衝突しないよう、中央から一定距離で頭打ちにする。
     // 7rem = ブランドの半幅 + 戻る/折りたたみボタンと gap の 40px + 間隔 9px。
-    <h1 className="max-w-[70%] truncate text-title font-semibold md:max-w-[calc(50%-7rem)]" data-testid="channel-title">
-      {`# ${name}`}
+    <h1 className="flex max-w-[70%] items-center gap-1 truncate text-title font-semibold md:max-w-[calc(50%-7rem)]" data-testid="channel-title">
+      <span className="truncate">{`# ${channel.name}`}</span>
+      {channel.encrypted ? <KeyRound className="size-4 shrink-0" aria-label="暗号化チャネル" data-testid="encrypted-channel-mark" /> : null}
     </h1>
   )
 }

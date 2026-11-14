@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react'
+import { useDecryptedBody } from '@/encryption/useDecryptedBody'
 import type { Attachment, Post } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
 import { usePlatform } from '@/platform'
 import { Composer } from '@/components/composer/Composer'
+import { UndecryptablePostBody } from '@/components/post/PostBody'
 import { postChangedElsewhereMessage, staleEditDiscardedMessage } from '@/lib/submit-failure'
 import { uploadPickedFile } from '@/lib/upload'
 import { useUi } from '@/state/ui'
@@ -11,6 +13,7 @@ import { useUi } from '@/state/ui'
  * ポストの本文表示と入れ替わるインライン編集フォーム。
  * 入力の実体は新規投稿と同じ Composer なので、書式ツールバー・コードブロック補助・
  * 添付の追加が編集でもそのまま使える。
+ * 暗号化チャネルのポストは、復号した本文で開き、添付は扱わない（保存時の暗号化は usePostMutations）。
  */
 export function PostEditor({
   post,
@@ -23,6 +26,7 @@ export function PostEditor({
 }) {
   const { api } = useAuth()
   const platform = usePlatform()
+  const decrypted = useDecryptedBody(post)
   const host = useRef<HTMLDivElement>(null)
   const failedEdit = useUi((state) => state.failedEdits[post.id])
   const autoOpened = useUi((state) => state.autoOpenedEditPostId === post.id)
@@ -62,26 +66,43 @@ export function PostEditor({
     }
   }, [autoOpened])
 
+  const onCancel = () => {
+    const ui = useUi.getState()
+    ui.clearFailedEdit(post.id)
+    ui.setEditingPost(null)
+  }
+
+  // 暗号化チャネルのポストは、復号できてから入力欄を作る（初期値は最初の描画で決まる）。
+  // ロック中は行の側が編集フォームを閉じる（useCloseEditorOnLock）。
+  if (post.encrypted && decrypted.status !== 'plain') {
+    return (
+      <div ref={host} data-testid={`post-editor-${post.id}`}>
+        {decrypted.status === 'undecryptable' ? (
+          <UndecryptablePostBody />
+        ) : decrypted.status === 'pending' ? (
+          <p className="text-caption text-muted-foreground">復号しています…</p>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
     <div ref={host} data-testid={`post-editor-${post.id}`}>
       <Composer
         storageKey={`edit:${post.id}`}
         persistDraft={false}
+        encrypted={post.encrypted}
         autoFocus
         suppressAutoFocus={autoOpened}
-        initialBody={restored?.body ?? post.body}
-        initialAttachments={restored?.attachments ?? post.attachments ?? []}
+        initialBody={restored?.body ?? (decrypted.status === 'plain' ? decrypted.text : post.body)}
+        initialAttachments={post.encrypted ? [] : restored?.attachments ?? post.attachments ?? []}
         initialError={failedEdit?.error}
         submitLabel="保存"
         placeholder="本文を入力"
         mutationDisabled={mutationDisabled}
-        uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress, platform.putBytes)}
+        uploadFile={post.encrypted ? undefined : (file, onProgress) => uploadPickedFile(api, file, onProgress, platform.putBytes)}
         resolveAttachmentUrl={(id) => api.getDownloadUrl(id).then((r) => r.url)}
-        onCancel={() => {
-          const ui = useUi.getState()
-          ui.clearFailedEdit(post.id)
-          ui.setEditingPost(null)
-        }}
+        onCancel={onCancel}
         onSubmit={onSave}
       />
     </div>

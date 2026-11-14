@@ -29,8 +29,33 @@ export type PickedFile = {
   data: ArrayBuffer
 }
 
+/** 端末に記憶した解錠状態。暗号鍵は取り出せない（non-extractable）CryptoKey で返す。 */
+export type RememberedKey = {
+  keyId: string
+  dataKey: CryptoKey
+}
+
+/**
+ * 解錠した状態を端末に記憶する保管場所（design.md D6）。
+ * パスフレーズと復旧キーは記憶しない。安全に記憶できない端末では save が失敗する。
+ */
+export interface EncryptionKeyStore {
+  canPersist(): Promise<boolean>
+  save(keyId: string, masterKey: Uint8Array): Promise<void>
+  load(): Promise<RememberedKey | null>
+  clear(): Promise<void>
+}
+
+export class KeyStoreUnavailableError extends Error {
+  constructor() {
+    super('この端末では鍵を安全に記憶できません')
+    this.name = 'KeyStoreUnavailableError'
+  }
+}
+
 export interface PlatformAdapter {
   readonly kind: PlatformKind
+  readonly encryptionKeyStore: EncryptionKeyStore
   has(capability: Capability): boolean
   getItem(key: string): Promise<string | null>
   setItem(key: string, value: string): Promise<void>

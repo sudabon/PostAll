@@ -14,31 +14,31 @@ from users
 where id = $1;
 
 -- name: ListChannels :many
-select id, parent_id, name, sort_key, created_at, updated_at
+select id, parent_id, name, sort_key, created_at, updated_at, encrypted
 from channels
 order by parent_id nulls first, sort_key, id;
 
 -- name: GetChannel :one
-select id, parent_id, name, sort_key, created_at, updated_at
+select id, parent_id, name, sort_key, created_at, updated_at, encrypted
 from channels
 where id = $1;
 
 -- name: ListSiblings :many
-select id, parent_id, name, sort_key, created_at, updated_at
+select id, parent_id, name, sort_key, created_at, updated_at, encrypted
 from channels
 where parent_id is not distinct from sqlc.narg('parent_id')::uuid
 order by sort_key, id;
 
 -- name: InsertChannel :one
-insert into channels (parent_id, name, sort_key)
-values (sqlc.narg('parent_id')::uuid, sqlc.arg('name'), sqlc.arg('sort_key'))
-returning id, parent_id, name, sort_key, created_at, updated_at;
+insert into channels (parent_id, name, sort_key, encrypted)
+values (sqlc.narg('parent_id')::uuid, sqlc.arg('name'), sqlc.arg('sort_key'), sqlc.arg('encrypted'))
+returning id, parent_id, name, sort_key, created_at, updated_at, encrypted;
 
 -- name: RenameChannel :one
 update channels
 set name = sqlc.arg('name'), updated_at = now()
 where id = sqlc.arg('id')
-returning id, parent_id, name, sort_key, created_at, updated_at;
+returning id, parent_id, name, sort_key, created_at, updated_at, encrypted;
 
 -- name: UpdateChannelLocation :one
 update channels
@@ -46,7 +46,7 @@ set parent_id = sqlc.narg('parent_id')::uuid,
     sort_key = sqlc.arg('sort_key'),
     updated_at = now()
 where id = sqlc.arg('id')
-returning id, parent_id, name, sort_key, created_at, updated_at;
+returning id, parent_id, name, sort_key, created_at, updated_at, encrypted;
 
 -- name: DeleteChannel :exec
 delete from channels

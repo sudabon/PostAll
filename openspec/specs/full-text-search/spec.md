@@ -48,6 +48,8 @@ TBD - created by archiving change slack-style-memo-app. Update Purpose after arc
 ### Requirement: 検索対象からの除外
 システムは、論理削除されたポストを検索結果に含めてはならない (MUST NOT)。認可されていないユーザーに対して検索結果を返してはならない (MUST NOT)。
 
+システムは、暗号化チャネルのポストを検索結果に含めてはならない (MUST NOT)。サーバーは暗号化チャネルのポストの本文の平文を持たないので、それらのポストを本文の索引の対象にしてはならない (MUST NOT)。
+
 #### Scenario: 削除されたポストは出ない
 - **WHEN** 検索語に一致するポストが論理削除されている
 - **THEN** システムは当該ポストを検索結果に含めない
@@ -55,6 +57,10 @@ TBD - created by archiving change slack-style-memo-app. Update Purpose after arc
 #### Scenario: 認可されていない検索要求
 - **WHEN** 認可情報を伴わない検索要求が API へ到達する
 - **THEN** サーバは要求を拒否し、結果を返さない
+
+#### Scenario: 暗号化チャネルのポストは出ない
+- **WHEN** 暗号化チャネルのポストの本文に含まれる語句で検索する
+- **THEN** システムは当該ポストを検索結果に含めず、暗号文の文字列にも一致させない
 
 ### Requirement: 検索結果の絞り込み
 システムは、検索結果をチャネルおよび投稿日時の範囲で絞り込めるようにしなければならない (SHALL)。

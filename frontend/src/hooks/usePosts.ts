@@ -16,6 +16,7 @@ import {
   updatePostInQueryData,
 } from '@/lib/post-cache'
 import { submitFailureMessage } from '@/lib/submit-failure'
+import { useEncryptionOptional } from '@/encryption/encryption-context'
 import { requireMutationConnection, useUi } from '@/state/ui'
 
 type EditPostInput = {
@@ -23,6 +24,8 @@ type EditPostInput = {
   body: string
   attachments: Attachment[]
   postUpdatedAt: string
+  encrypted?: boolean
+  ciphertext?: string
 }
 
 type EditMutationContext = {
@@ -36,6 +39,9 @@ type CreatePostInput = {
   attachments?: Attachment[]
   /** 再送のときだけ渡す。同じ保留行を使い回して位置を変えない */
   pendingKey?: string
+  /** 暗号化チャネル。送信前に暗号文を作り、本文は送らない */
+  encrypted?: boolean
+  ciphertext?: string
 }
 
 type ReplyInput = CreatePostInput & { postId: string }
@@ -75,7 +81,14 @@ export function useThread(postId: string | null) {
 
 export function usePostMutations(channelId: string | null) {
   const { api } = useAuth()
+  const encryption = useEncryptionOptional()
   const qc = useQueryClient()
+  const seal = async (input: { body: string; encrypted?: boolean; ciphertext?: string }) => {
+    if (!input.encrypted || input.ciphertext) return input.ciphertext
+    if (!encryption) throw new Error('解錠されていません')
+    input.ciphertext = await encryption.encryptBody(input.body)
+    return input.ciphertext
+  }
   const invalidate = async () => {
     await Promise.all([
       qc.invalidateQueries({ queryKey: ['posts', channelId] }),
@@ -87,12 +100,16 @@ export function usePostMutations(channelId: string | null) {
       networkMode: 'always',
       mutationFn: (input) => {
         requireMutationConnection()
+        if (input.encrypted) return api.createEncryptedPost(channelId!, input.ciphertext ?? '')
         return api.createPost(channelId!, input.body, input.attachmentIds)
       },
       // 接続を先に確かめる。接続断では保留行を作らず、呼び出し側が入力をフォームに残す。
       onMutate: (input) => {
         requireMutationConnection()
-        return beginPending(input, { channelId: channelId!, threadRootId: null })
+        if (!input.encrypted || input.ciphertext) {
+          return beginPending(input, { channelId: channelId!, threadRootId: null })
+        }
+        return seal(input).then(() => beginPending(input, { channelId: channelId!, threadRootId: null }))
       },
       onError: (_error, _input, context) => {
         if (context) useUi.getState().failPendingPost(context.key)
@@ -106,12 +123,17 @@ export function usePostMutations(channelId: string | null) {
     }),
     edit: useMutation<Post, Error, EditPostInput, EditMutationContext>({
       networkMode: 'always',
-      mutationFn: (input) => {
+      mutationFn: async (input) => {
         requireMutationConnection()
+        if (input.encrypted) {
+          const ciphertext = input.ciphertext ?? await seal(input)
+          return api.editEncryptedPost(input.id, ciphertext ?? '')
+        }
         return api.editPost(input.id, input.body, input.attachments.map((attachment) => attachment.id))
       },
       onMutate: async (input) => {
         requireMutationConnection()
+        if (input.encrypted) await seal(input)
         await Promise.all([
           qc.cancelQueries({ queryKey: ['posts'] }),
           qc.cancelQueries({ queryKey: ['thread'] }),
@@ -120,9 +142,12 @@ export function usePostMutations(channelId: string | null) {
           ...qc.getQueriesData({ queryKey: ['posts'] }),
           ...qc.getQueriesData({ queryKey: ['thread'] }),
         ] as [QueryKey, unknown][]
+        if (input.encrypted && input.ciphertext) encryption?.rememberDecryption(input.ciphertext, input.body)
         updatePostCaches(qc, (data) =>
           updatePostInQueryData(data, input.id, (post) =>
-            applyPostEdit(post, { body: input.body, attachments: input.attachments }),
+            input.encrypted
+              ? { ...post, body: '', ciphertext: input.ciphertext, attachments: [], editedAt: new Date().toISOString() }
+              : applyPostEdit(post, { body: input.body, attachments: input.attachments }),
           ),
         )
         return { snapshots }
@@ -137,6 +162,7 @@ export function usePostMutations(channelId: string | null) {
           attachments: input.attachments,
           error: editFailureMessage,
           postUpdatedAt: input.postUpdatedAt,
+          encrypted: input.encrypted,
         })
         // キャッシュから落ちたポストに editingPostId を立てると、以後 editingPostId が
         // null に戻らず後続の失敗がすべて無通知になる。表示できるときだけ開く。
@@ -180,11 +206,15 @@ export function usePostMutations(channelId: string | null) {
       networkMode: 'always',
       mutationFn: (input) => {
         requireMutationConnection()
+        if (input.encrypted) return api.createEncryptedReply(input.postId, input.ciphertext ?? '')
         return api.createReply(input.postId, input.body, input.attachmentIds)
       },
       onMutate: (input) => {
         requireMutationConnection()
-        return beginPending(input, { channelId: channelId!, threadRootId: input.postId })
+        if (!input.encrypted || input.ciphertext) {
+          return beginPending(input, { channelId: channelId!, threadRootId: input.postId })
+        }
+        return seal(input).then(() => beginPending(input, { channelId: channelId!, threadRootId: input.postId }))
       },
       onError: (_error, _input, context) => {
         if (context) useUi.getState().failPendingPost(context.key)
@@ -214,6 +244,8 @@ function beginPending(
     channelId: location.channelId,
     threadRootId: location.threadRootId,
     body: input.body,
+    encrypted: input.encrypted,
+    ciphertext: input.ciphertext,
     attachments: input.attachments ?? [],
     createdAt: new Date().toISOString(),
     status: 'sending',

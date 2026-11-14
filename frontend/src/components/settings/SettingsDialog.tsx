@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { AnimatePresence, m } from 'motion/react'
 import { useAuth } from '@/auth/AuthProvider'
+import { EncryptionSettings } from '@/components/encryption/EncryptionSettings'
 import { Button } from '@/components/ui/button'
 import { useOverlayPresence } from '@/lib/motion/useOverlayPresence'
 import { usePlatform } from '@/platform'
@@ -62,6 +63,7 @@ function SettingsForm() {
   return (
     <>
         <h2 id="settings-title" className="mb-4 text-heading font-semibold">設定</h2>
+        <EncryptionSettings />
         <GlobalShortcutHint />
         <label className="mb-3 block text-body">
           API 接続先

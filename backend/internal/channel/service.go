@@ -31,7 +31,8 @@ func (s *Service) List(ctx context.Context) ([]store.Channel, error) {
 	return rows, nil
 }
 
-func (s *Service) Create(ctx context.Context, name string, parentID *uuid.UUID) (store.Channel, error) {
+// Create はチャネルを作る。暗号化の有無はここでだけ決まり、親からは引き継がない。
+func (s *Service) Create(ctx context.Context, name string, parentID *uuid.UUID, encrypted bool) (store.Channel, error) {
 	name, err := normalizeName(name)
 	if err != nil {
 		return store.Channel{}, err
@@ -39,14 +40,23 @@ func (s *Service) Create(ctx context.Context, name string, parentID *uuid.UUID) 
 	if err := s.requireParent(ctx, parentID); err != nil {
 		return store.Channel{}, err
 	}
+	// 鍵束より先に暗号化チャネルができると、誰も投稿できないチャネルが残る。
+	if encrypted {
+		if _, err := s.q.GetEncryptionKeyring(ctx); errors.Is(err, pgx.ErrNoRows) {
+			return store.Channel{}, errEncryptionNotConfigured()
+		} else if err != nil {
+			return store.Channel{}, err
+		}
+	}
 	key, err := s.sortKeyAtEnd(ctx, parentID, uuid.Nil)
 	if err != nil {
 		return store.Channel{}, err
 	}
 	row, err := s.q.InsertChannel(ctx, store.InsertChannelParams{
-		ParentID: parentID,
-		Name:     name,
-		SortKey:  key,
+		ParentID:  parentID,
+		Name:      name,
+		SortKey:   key,
+		Encrypted: encrypted,
 	})
 	if err != nil {
 		return store.Channel{}, mapWriteErr(err)

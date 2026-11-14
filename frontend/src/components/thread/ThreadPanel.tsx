@@ -3,6 +3,8 @@ import { m, useReducedMotion } from 'motion/react'
 import { X } from 'lucide-react'
 import type { Attachment, Post } from '@/api/client'
 import { usePostMutations, useThread } from '@/hooks/usePosts'
+import { useChannels } from '@/hooks/useChannels'
+import { useEncryptionOptional } from '@/encryption/encryption-context'
 import { formatDateTime } from '@/lib/dates'
 import { requireMutationConnection, THREAD_MAX_WIDTH, THREAD_MIN_WIDTH, useUi } from '@/state/ui'
 import { useAuth } from '@/auth/AuthProvider'
@@ -13,6 +15,7 @@ import { DeleteFailureNotice } from '@/components/post/DeleteFailureNotice'
 import { PendingPostRow } from '@/components/post/PendingPostRow'
 import { PostActions } from '@/components/post/PostActions'
 import { PostEditor } from '@/components/post/PostEditor'
+import { useCloseEditorOnLock } from '@/components/post/useCloseEditorOnLock'
 import { ReactionBar } from '@/components/reactions/ReactionBar'
 import { uploadPickedFile } from '@/lib/upload'
 import { Button } from '@/components/ui/button'
@@ -38,6 +41,10 @@ export function ThreadPanel({
   const replies = (data?.replies ?? []).filter((reply) => !deletingPostIds.includes(reply.id))
   const pending = pendingPosts.filter((entry) => entry.threadRootId === postId)
   const mutations = usePostMutations(channelId)
+  const { data: channels = [] } = useChannels()
+  const encrypted = channels.some((channel) => channel.id === channelId && channel.encrypted)
+  const encryption = useEncryptionOptional()
+  const locked = encrypted && encryption?.phase !== 'unlocked'
   const { api } = useAuth()
   const platform = usePlatform()
   const shouldReduceMotion = useReducedMotion()
@@ -147,9 +154,16 @@ export function ThreadPanel({
               reply={reply}
               highlighted={reply.id === targetReplyId}
               mutationDisabled={!canMutate}
+              locked={Boolean(reply.encrypted) && encryption?.phase !== 'unlocked'}
               onSave={(body, _attachmentIds, attachments) => {
                 useUi.getState().setEditingPost(null)
-                mutations.edit.mutate({ id: reply.id, body, attachments, postUpdatedAt: reply.updatedAt })
+                mutations.edit.mutate({
+                  id: reply.id,
+                  body,
+                  attachments,
+                  postUpdatedAt: reply.updatedAt,
+                  encrypted: reply.encrypted,
+                })
               }}
               onDelete={() => mutations.remove.mutate(reply.id)}
               onRetryDelete={() => mutations.remove.mutate(reply.id)}
@@ -164,6 +178,8 @@ export function ThreadPanel({
                 mutations.reply.mutate({
                   postId,
                   body: entry.body,
+                  encrypted: entry.encrypted,
+                  ciphertext: entry.ciphertext,
                   attachmentIds: entry.attachments.map((attachment) => attachment.id),
                   attachments: entry.attachments,
                   pendingKey: entry.key,
@@ -178,11 +194,14 @@ export function ThreadPanel({
           storageKey={`draft:thread:${postId}`}
           placeholder="返信を入力"
           mutationDisabled={!canMutate}
-          uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress, platform.putBytes)}
+          encrypted={encrypted}
+          locked={locked}
+          onRequestUnlock={() => encryption?.requestUnlock() ?? Promise.resolve(false)}
+          uploadFile={encrypted ? undefined : (file, onProgress) => uploadPickedFile(api, file, onProgress, platform.putBytes)}
           // タイムラインと同じく応答は待たない。接続断だけ mutate の前に弾く。
           onSubmit={(body, attachmentIds, attachments) => {
             requireMutationConnection()
-            mutations.reply.mutate({ postId, body, attachmentIds, attachments })
+            mutations.reply.mutate({ postId, body, attachmentIds, attachments, encrypted })
           }}
         />
       </aside>
@@ -194,6 +213,7 @@ function ThreadReply({
   reply,
   highlighted,
   mutationDisabled,
+  locked = false,
   onSave,
   onDelete,
   onRetryDelete,
@@ -201,6 +221,7 @@ function ThreadReply({
   reply: Post
   highlighted: boolean
   mutationDisabled: boolean
+  locked?: boolean
   onSave: (body: string, attachmentIds: string[], attachments: Attachment[]) => void | Promise<void>
   onDelete: () => void
   onRetryDelete: () => void
@@ -208,6 +229,7 @@ function ThreadReply({
   // 返信ごとに真偽値で購読するので、編集の開始・終了で再描画されるのは当該返信だけになる
   const editing = useUi((s) => s.editingPostId === reply.id)
   const deleteError = useUi((s) => s.failedDeletes[reply.id])
+  useCloseEditorOnLock(reply.id, locked)
   return (
     <article
       id={`thread-reply-${reply.id}`}
@@ -217,19 +239,21 @@ function ThreadReply({
       }`}
     >
       <p className="text-caption text-muted-foreground">{formatDateTime(reply.createdAt)}</p>
-      {editing ? (
+      {editing && !locked ? (
         <PostEditor post={reply} mutationDisabled={mutationDisabled} onSave={onSave} />
       ) : (
         <PostBody post={reply} />
       )}
       <DeleteFailureNotice message={deleteError} mutationDisabled={mutationDisabled} onRetry={onRetryDelete} />
       <ReactionBar postId={reply.id} reactions={reply.reactions ?? []} />
+      {locked ? null : (
       <PostActions
         post={reply}
         kind="返信"
         mutationDisabled={mutationDisabled}
         onDelete={onDelete}
       />
+      )}
     </article>
   )
 }

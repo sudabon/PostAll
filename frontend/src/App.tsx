@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { SearchDialog } from '@/components/search/SearchDialog'
 import { UpdateBanner } from '@/components/pwa/UpdateBanner'
+import { EncryptionDialogs } from '@/components/encryption/EncryptionDialogs'
 import { useChannels } from '@/hooks/useChannels'
 import { useShellChrome } from '@/hooks/useShellChrome'
 import { useChangeSync } from '@/hooks/useChangeSync'
@@ -61,6 +62,7 @@ export default function App() {
   return (
     <>
       {signedIn ? <AppShell /> : <SignInScreen />}
+      {signedIn ? <EncryptionDialogs /> : null}
       <SettingsDialog />
       <UpdateBanner />
       {signedIn ? (

@@ -16,6 +16,7 @@ const channel: Channel = {
   parentId: null,
   name: 'inbox',
   sortKey: 'a',
+  encrypted: false,
   createdAt: '2026-09-07T00:00:00Z',
   updatedAt: '2026-09-07T00:00:00Z',
 }

@@ -136,9 +136,11 @@ erDiagram
 | `sort_key` | text | NOT NULL | |
 | `created_at` | timestamptz | NOT NULL | default `now()` |
 | `updated_at` | timestamptz | NOT NULL | default `now()` |
+| `encrypted` | boolean | NOT NULL | default `false`。作成後はトリガーで変更不可 |
 
-| インデックス | 種別 | 定義 |
+| インデックス / 制約 | 種別 | 定義 |
 |---|---|---|
+| `channels_id_encrypted_key` | UNIQUE | `(id, encrypted)`。ポストとの複合外部キーの親 |
 | `channels_name_in_parent` | UNIQUE（部分） | `(parent_id, name) WHERE parent_id IS NOT NULL` |
 | `channels_name_at_root` | UNIQUE（部分） | `(name) WHERE parent_id IS NULL` |
 | `channels_parent_sort` | BTREE | `(parent_id, sort_key)` |
@@ -164,6 +166,15 @@ erDiagram
 | `updated_at` | timestamptz | NOT NULL | default `now()` |
 | `edited_at` | timestamptz | NULL | 編集時に記録 |
 | `deleted_at` | timestamptz | NULL | 論理削除 |
+| `encrypted` | boolean | NOT NULL | default `false`。属するチャネルの値の複製 |
+| `body_ciphertext` | text | NULL | 暗号化チャネルの暗号文。平文チャネルでは必ず NULL |
+
+| 制約 | 内容 |
+|---|---|
+| `posts_channel_encryption_fkey` | `(channel_id, encrypted)` → `channels(id, encrypted)` ON DELETE CASCADE |
+| `posts_encrypted_has_no_plain_body` | 暗号化ポストの `body` は空 |
+| `posts_plain_has_no_ciphertext` | 非暗号化ポストに暗号文は無い |
+| `posts_live_encrypted_has_ciphertext` | 未削除の暗号化ポストは暗号文を持つ |
 
 | インデックス | 種別 | 定義 |
 |---|---|---|
@@ -178,6 +189,23 @@ erDiagram
 `body` の空文字は許容する（添付のみのポスト）。本文と添付の両方が空であることの禁止は `post.Service` 側（`empty_content`）で判断する。
 
 PGroonga 索引はクラッシュで壊れることがある。その場合は `REINDEX INDEX posts_body_pgroonga;`（実索引名は `\d posts` で確認）。
+
+`00003_posts.sql` に加え、暗号化の列と制約は `00017_channel_encryption.sql`。検索は `not encrypted` のポストだけを見る。論理削除は `body` と `body_ciphertext` を同じ UPDATE で空にする。
+
+### encryption_keyring — 包んだマスター鍵
+
+`00017_channel_encryption.sql`
+
+ワークスペースに 1 行だけ。`singleton` の一意制約で 2 行目を拒否する。RLS を有効にし、`anon` / `authenticated` の権限は剥がす。
+
+| カラム | 型 | NULL | 制約 |
+|---|---|---|---|
+| `key_id` | uuid | NOT NULL | PK。暗号文に埋め込む鍵 ID |
+| `singleton` | boolean | NOT NULL | default `true`、UNIQUE、CHECK `singleton` |
+| `auth_hash` | bytea | NOT NULL | SHA-256(所持の証明)。証明そのものは保存しない |
+| `passphrase_wrap` | jsonb | NOT NULL | パスフレーズで包んだマスター鍵 |
+| `recovery_wrap` | jsonb | NOT NULL | 復旧キーで包んだマスター鍵 |
+| `created_at` / `updated_at` | timestamptz | NOT NULL | default `now()` |
 
 ### attachments — 添付
 

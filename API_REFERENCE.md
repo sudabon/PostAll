@@ -129,7 +129,7 @@ DB へ ping できないときだけ 503 + `unhealthy` / `unreachable`。
   "channels": [
     {
       "id": "…", "parentId": null, "name": "general",
-      "sortKey": "m", "createdAt": "…", "updatedAt": "…"
+      "sortKey": "m", "encrypted": false, "createdAt": "…", "updatedAt": "…"
     }
   ]
 }
@@ -140,10 +140,10 @@ DB へ ping できないときだけ 503 + `unhealthy` / `unreachable`。
 ### POST /v1/channels
 
 ```json
-{ "name": "design", "parentId": null }
+{ "name": "design", "parentId": null, "encrypted": false }
 ```
 
-`name` は空白のみ不可。同一階層で重複すると `name_conflict`。201 で作成されたチャネルを返す。
+`name` は空白のみ不可。同一階層で重複すると `name_conflict`。`encrypted` を省略すると非暗号化チャネルになる。`true` で鍵束が未設定なら `409 encryption_not_configured`。暗号化の有無は作成時だけで、リネームと移動では変わらない。201 で作成されたチャネルを返す。
 
 ### PATCH /v1/channels/{channelId}
 
@@ -355,6 +355,18 @@ DB へ ping できないときだけ 503 + `unhealthy` / `unreachable`。
 | `reactorIds` | 付与者 ID。`reactedByMe` が true なら自分が先頭 |
 
 ---
+
+### 暗号化チャネルのポスト
+
+暗号化チャネルへの作成・返信・編集は `ciphertext`（`pe1.<keyId>.<iv>.<ciphertext>`）だけを送り、`body` は空にする。非暗号化チャネルへ暗号文を送ると `400 encryption_not_allowed`、暗号化チャネルへ平文を送ると `400 encryption_required`、添付を付けると `400 encrypted_attachments_unsupported`、形式か鍵 ID が違うと `400 invalid_ciphertext`。鍵束が無い状態の投稿は `409 encryption_not_configured`。応答の `Post.encrypted` が true のとき `body` は空で、削除済みなら `ciphertext` は null。
+
+### GET / POST /v1/encryption/keyring
+
+包んだマスター鍵を取得・登録する。未設定の GET は `404 encryption_not_configured`。POST は既にあれば `409 encryption_already_configured` で、既存の鍵束は置き換えない。リクエストの `keyProof` は所持の証明で、サーバーは SHA-256 だけを保存する。
+
+### PUT /v1/encryption/keyring/{kind}
+
+`kind` は `passphrase` か `recovery`。ヘッダー `X-Postall-Key-Proof` の所持の証明が一致しないと `403 key_proof_mismatch` で、鍵束は変わらない。一致すれば指定した包みだけを置き換える。パスフレーズ、復旧キー、マスター鍵の平文は、どの要求にも載せない。
 
 ### GET /v1/search
 

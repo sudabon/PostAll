@@ -147,7 +147,7 @@ export function SearchDialog({
                 onChange={(event) => setChannelId(event.target.value)}
               >
                 <option value="">すべてのチャネル</option>
-                {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+                {channels.filter((channel) => !channel.encrypted).map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
               </select>
             </label>
             <label>

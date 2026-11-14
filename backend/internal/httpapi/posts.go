@@ -52,7 +52,8 @@ func (s *Server) CreateChannelPost(w http.ResponseWriter, r *http.Request, chann
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	row, err := s.posts.Create(r.Context(), uuid.UUID(channelId), author, derefBody(body.Body), uuidList(body.AttachmentIds))
+	content := post.Content{Body: derefBody(body.Body), Ciphertext: body.Ciphertext}
+	row, err := s.posts.Create(r.Context(), uuid.UUID(channelId), author, content, uuidList(body.AttachmentIds))
 	if err != nil {
 		writeAppError(w, r, err)
 		return
@@ -77,7 +78,8 @@ func (s *Server) EditPost(w http.ResponseWriter, r *http.Request, postId api.Pos
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	row, err := s.posts.Edit(r.Context(), uuid.UUID(postId), body.Body, body.AttachmentIds)
+	content := post.Content{Body: body.Body, Ciphertext: body.Ciphertext}
+	row, err := s.posts.Edit(r.Context(), uuid.UUID(postId), content, body.AttachmentIds)
 	if err != nil {
 		writeAppError(w, r, err)
 		return
@@ -113,7 +115,8 @@ func (s *Server) CreateReply(w http.ResponseWriter, r *http.Request, postId api.
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	row, err := s.posts.CreateReply(r.Context(), uuid.UUID(postId), author, derefBody(body.Body), uuidList(body.AttachmentIds))
+	content := post.Content{Body: derefBody(body.Body), Ciphertext: body.Ciphertext}
+	row, err := s.posts.CreateReply(r.Context(), uuid.UUID(postId), author, content, uuidList(body.AttachmentIds))
 	if err != nil {
 		writeAppError(w, r, err)
 		return
@@ -201,6 +204,8 @@ func toAPIPost(v post.View) api.Post {
 		ThreadRootId: v.ThreadRootID,
 		AuthorId:     v.AuthorID,
 		Body:         v.Body,
+		Encrypted:    v.Encrypted,
+		Ciphertext:   v.Ciphertext,
 		CreatedAt:    v.CreatedAt,
 		UpdatedAt:    v.UpdatedAt,
 		EditedAt:     v.EditedAt,

@@ -1,31 +1,40 @@
 -- name: InsertPost :one
-insert into posts (channel_id, thread_root_id, author_id, body)
-values (sqlc.arg('channel_id'), sqlc.narg('thread_root_id')::uuid, sqlc.arg('author_id'), sqlc.arg('body'))
-returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at;
+insert into posts (channel_id, thread_root_id, author_id, body, encrypted, body_ciphertext)
+values (
+    sqlc.arg('channel_id'),
+    sqlc.narg('thread_root_id')::uuid,
+    sqlc.arg('author_id'),
+    sqlc.arg('body'),
+    sqlc.arg('encrypted'),
+    sqlc.narg('body_ciphertext')::text
+)
+returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at, encrypted, body_ciphertext;
 
 -- name: GetPost :one
-select id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at
+select id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at, encrypted, body_ciphertext
 from posts
 where id = $1;
 
 -- name: UpdatePostBody :one
 update posts
 set body = sqlc.arg('body'),
+    body_ciphertext = sqlc.narg('body_ciphertext')::text,
     edited_at = now(),
     updated_at = now()
 where id = sqlc.arg('id')
   and deleted_at is null
-returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at;
+returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at, encrypted, body_ciphertext;
 
 -- name: SoftDeletePost :one
--- 論理削除と同じ文で本文を消す。削除済みであることとスレッドの参照（thread_root_id）は残す。
+-- 論理削除と同じ文で本文と暗号文を消す。削除済みであることとスレッドの参照（thread_root_id）は残す。
 update posts
 set deleted_at = now(),
     body = '',
+    body_ciphertext = null,
     updated_at = now()
 where id = sqlc.arg('id')
   and deleted_at is null
-returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at;
+returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at, encrypted, body_ciphertext;
 
 -- name: ListTimelineLatest :many
 select
@@ -38,6 +47,8 @@ select
     p.updated_at,
     p.edited_at,
     p.deleted_at,
+    p.encrypted,
+    p.body_ciphertext,
     coalesce(s.reply_count, 0)::bigint as reply_count,
     s.last_reply_at
 from posts p
@@ -67,6 +78,8 @@ select
     p.updated_at,
     p.edited_at,
     p.deleted_at,
+    p.encrypted,
+    p.body_ciphertext,
     coalesce(s.reply_count, 0)::bigint as reply_count,
     s.last_reply_at
 from posts p
@@ -103,6 +116,8 @@ select
     p.updated_at,
     p.edited_at,
     p.deleted_at,
+    p.encrypted,
+    p.body_ciphertext,
     coalesce(s.reply_count, 0)::bigint as reply_count,
     s.last_reply_at
 from posts target
@@ -140,6 +155,8 @@ select
     p.updated_at,
     p.edited_at,
     p.deleted_at,
+    p.encrypted,
+    p.body_ciphertext,
     0::bigint as reply_count,
     null::timestamptz as last_reply_at
 from posts p

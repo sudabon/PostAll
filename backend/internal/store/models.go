@@ -48,6 +48,7 @@ type Channel struct {
 	SortKey   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	Encrypted bool
 }
 
 type Emoji struct {
@@ -58,16 +59,28 @@ type Emoji struct {
 	CreatedAt  time.Time
 }
 
+type EncryptionKeyring struct {
+	KeyID          uuid.UUID
+	Singleton      bool
+	AuthHash       []byte
+	PassphraseWrap []byte
+	RecoveryWrap   []byte
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 type Post struct {
-	ID           uuid.UUID
-	ChannelID    uuid.UUID
-	ThreadRootID *uuid.UUID
-	AuthorID     uuid.UUID
-	Body         string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	EditedAt     *time.Time
-	DeletedAt    *time.Time
+	ID             uuid.UUID
+	ChannelID      uuid.UUID
+	ThreadRootID   *uuid.UUID
+	AuthorID       uuid.UUID
+	Body           string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	EditedAt       *time.Time
+	DeletedAt      *time.Time
+	Encrypted      bool
+	BodyCiphertext pgtype.Text
 }
 
 type Reaction struct {

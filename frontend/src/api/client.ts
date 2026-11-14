@@ -12,6 +12,10 @@ export type SearchResultPage = components['schemas']['SearchResultPage']
 export type ChangeEvent = components['schemas']['ChangeEvent']
 export type ChangeEventPage = components['schemas']['ChangeEventPage']
 export type ApiErrorBody = components['schemas']['Error']
+export type EncryptionKeyring = components['schemas']['EncryptionKeyring']
+export type CreateEncryptionKeyringRequest = components['schemas']['CreateEncryptionKeyringRequest']
+export type KeyWrap = components['schemas']['KeyWrap']
+export type KeyWrapKind = 'passphrase' | 'recovery'
 
 export type SearchInput = {
   query: string
@@ -75,7 +79,7 @@ export class ApiClient {
     return this.request<{ channels: Channel[] }>('/v1/channels').then((r) => r.channels)
   }
 
-  createChannel(body: { name: string; parentId?: string | null }) {
+  createChannel(body: { name: string; parentId?: string | null; encrypted?: boolean }) {
     return this.request<Channel>('/v1/channels', { method: 'POST', json: body })
   }
 
@@ -119,6 +123,16 @@ export class ApiClient {
     })
   }
 
+  /** 暗号化チャネルへの投稿。本文の項目は送らない。 */
+  createEncryptedPost(channelId: string, ciphertext: string) {
+    return this.request<Post>(`/v1/channels/${channelId}/posts`, { method: 'POST', json: { ciphertext } })
+  }
+
+  /** 暗号化チャネルのポストの編集。本文は空にして、新しい暗号文だけを送る。 */
+  editEncryptedPost(id: string, ciphertext: string) {
+    return this.request<Post>(`/v1/posts/${id}`, { method: 'PATCH', json: { body: '', ciphertext } })
+  }
+
   deletePost(id: string) {
     return this.request<void>(`/v1/posts/${id}`, { method: 'DELETE' })
   }
@@ -131,6 +145,32 @@ export class ApiClient {
     return this.request<Post>(`/v1/posts/${postId}/replies`, {
       method: 'POST',
       json: { body, attachmentIds },
+    })
+  }
+
+  createEncryptedReply(postId: string, ciphertext: string) {
+    return this.request<Post>(`/v1/posts/${postId}/replies`, { method: 'POST', json: { ciphertext } })
+  }
+
+  /** 鍵束が未設定なら null を返す。 */
+  async getEncryptionKeyring(): Promise<EncryptionKeyring | null> {
+    try {
+      return await this.request<EncryptionKeyring>('/v1/encryption/keyring')
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404 && err.code === 'encryption_not_configured') return null
+      throw err
+    }
+  }
+
+  createEncryptionKeyring(body: CreateEncryptionKeyringRequest) {
+    return this.request<EncryptionKeyring>('/v1/encryption/keyring', { method: 'POST', json: body })
+  }
+
+  replaceEncryptionKeyWrap(kind: KeyWrapKind, wrap: KeyWrap, keyProof: string) {
+    return this.request<EncryptionKeyring>(`/v1/encryption/keyring/${kind}`, {
+      method: 'PUT',
+      json: wrap,
+      headers: { 'X-Postall-Key-Proof': keyProof },
     })
   }
 
@@ -194,7 +234,7 @@ export class ApiClient {
 
   private async request<T>(
     path: string,
-    init: { method?: string; json?: unknown; formData?: FormData; auth?: boolean } = {},
+    init: { method?: string; json?: unknown; formData?: FormData; auth?: boolean; headers?: HeadersInit } = {},
   ): Promise<T> {
     const res = await this.fetchResponse(path, init)
     if (res.status === 204) return undefined as T

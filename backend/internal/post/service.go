@@ -8,8 +8,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sudabon/PostAll/backend/internal/attachment"
+	"github.com/sudabon/PostAll/backend/internal/encryption"
 	"github.com/sudabon/PostAll/backend/internal/store"
 )
 
@@ -32,6 +34,8 @@ type View struct {
 	ThreadRootID *uuid.UUID
 	AuthorID     uuid.UUID
 	Body         string
+	Encrypted    bool
+	Ciphertext   *string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	EditedAt     *time.Time
@@ -51,15 +55,22 @@ type Thread struct {
 	Replies []View
 }
 
-func (s *Service) Create(ctx context.Context, channelID, authorID uuid.UUID, body string, attachmentIDs []uuid.UUID) (View, error) {
-	body, err := requireContent(body, len(attachmentIDs))
+// Content は作成・返信・編集で受け取る本文。暗号化チャネルでは Body を空にし、Ciphertext を渡す。
+type Content struct {
+	Body       string
+	Ciphertext *string
+}
+
+func (s *Service) Create(ctx context.Context, channelID, authorID uuid.UUID, content Content, attachmentIDs []uuid.UUID) (View, error) {
+	channel, err := s.q.GetChannel(ctx, channelID)
+	if err != nil {
+		return View{}, mapNotFound(err, "チャネルが見つかりません")
+	}
+	content, err = s.checkContent(ctx, channel.Encrypted, content, len(attachmentIDs))
 	if err != nil {
 		return View{}, err
 	}
-	if _, err := s.q.GetChannel(ctx, channelID); err != nil {
-		return View{}, mapNotFound(err, "チャネルが見つかりません")
-	}
-	return s.insert(ctx, channelID, nil, authorID, body, attachmentIDs)
+	return s.insert(ctx, channelID, nil, authorID, channel.Encrypted, content, attachmentIDs)
 }
 
 func (s *Service) ListTimeline(ctx context.Context, channelID uuid.UUID, limit int, before *string, around *uuid.UUID) (ListResult, error) {
@@ -139,7 +150,14 @@ func (s *Service) ListTimeline(ctx context.Context, channelID uuid.UUID, limit i
 	return res, nil
 }
 
-func (s *Service) Edit(ctx context.Context, id uuid.UUID, body string, attachmentIDs *[]uuid.UUID) (View, error) {
+func (s *Service) Edit(ctx context.Context, id uuid.UUID, content Content, attachmentIDs *[]uuid.UUID) (View, error) {
+	current, err := s.q.GetPost(ctx, id)
+	if err != nil {
+		return View{}, mapNotFound(err, "ポストが見つかりません")
+	}
+	if current.DeletedAt != nil {
+		return View{}, errDeleted()
+	}
 	nAttach := 0
 	if attachmentIDs != nil {
 		nAttach = len(*attachmentIDs)
@@ -150,10 +168,11 @@ func (s *Service) Edit(ctx context.Context, id uuid.UUID, body string, attachmen
 		}
 		nAttach = len(existing)
 	}
-	body, err := requireContent(body, nAttach)
+	content, err = s.checkContent(ctx, current.Encrypted, content, nAttach)
 	if err != nil {
 		return View{}, err
 	}
+	update := store.UpdatePostBodyParams{ID: id, Body: content.Body, BodyCiphertext: textOf(content.Ciphertext)}
 	if attachmentIDs != nil && s.pool != nil && s.attachments != nil {
 		tx, err := s.pool.Begin(ctx)
 		if err != nil {
@@ -161,7 +180,7 @@ func (s *Service) Edit(ctx context.Context, id uuid.UUID, body string, attachmen
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 		q := s.q.WithTx(tx)
-		row, err := q.UpdatePostBody(ctx, store.UpdatePostBodyParams{ID: id, Body: body})
+		row, err := q.UpdatePostBody(ctx, update)
 		if err != nil {
 			_ = tx.Rollback(ctx)
 			return View{}, mapWrite(ctx, s, id, err)
@@ -174,7 +193,7 @@ func (s *Service) Edit(ctx context.Context, id uuid.UUID, body string, attachmen
 		}
 		return s.viewOf(ctx, row)
 	}
-	row, err := s.q.UpdatePostBody(ctx, store.UpdatePostBodyParams{ID: id, Body: body})
+	row, err := s.q.UpdatePostBody(ctx, update)
 	if err != nil {
 		return View{}, mapWrite(ctx, s, id, err)
 	}
@@ -194,20 +213,22 @@ func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (s *Service) CreateReply(ctx context.Context, postID, authorID uuid.UUID, body string, attachmentIDs []uuid.UUID) (View, error) {
-	body, err := requireContent(body, len(attachmentIDs))
-	if err != nil {
-		return View{}, err
-	}
+// CreateReply は親と同じチャネルに返信を作る。posts.encrypted はチャネルの値の複製なので、
+// 親の値でスレッドの暗号化の有無が決まる。
+func (s *Service) CreateReply(ctx context.Context, postID, authorID uuid.UUID, content Content, attachmentIDs []uuid.UUID) (View, error) {
 	parent, err := s.q.GetPost(ctx, postID)
 	if err != nil {
 		return View{}, mapNotFound(err, "ポストが見つかりません")
+	}
+	content, err = s.checkContent(ctx, parent.Encrypted, content, len(attachmentIDs))
+	if err != nil {
+		return View{}, err
 	}
 	rootID := parent.ID
 	if parent.ThreadRootID != nil {
 		rootID = *parent.ThreadRootID
 	}
-	return s.insert(ctx, parent.ChannelID, &rootID, authorID, body, attachmentIDs)
+	return s.insert(ctx, parent.ChannelID, &rootID, authorID, parent.Encrypted, content, attachmentIDs)
 }
 
 func (s *Service) GetThread(ctx context.Context, postID uuid.UUID) (Thread, error) {
@@ -241,12 +262,14 @@ func (s *Service) GetThread(ctx context.Context, postID uuid.UUID) (Thread, erro
 	return Thread{Root: rootView, Replies: out}, nil
 }
 
-func (s *Service) insert(ctx context.Context, channelID uuid.UUID, threadRootID *uuid.UUID, authorID uuid.UUID, body string, attachmentIDs []uuid.UUID) (View, error) {
+func (s *Service) insert(ctx context.Context, channelID uuid.UUID, threadRootID *uuid.UUID, authorID uuid.UUID, encrypted bool, content Content, attachmentIDs []uuid.UUID) (View, error) {
 	params := store.InsertPostParams{
-		ChannelID:    channelID,
-		ThreadRootID: threadRootID,
-		AuthorID:     authorID,
-		Body:         body,
+		ChannelID:      channelID,
+		ThreadRootID:   threadRootID,
+		AuthorID:       authorID,
+		Body:           content.Body,
+		Encrypted:      encrypted,
+		BodyCiphertext: textOf(content.Ciphertext),
 	}
 	if len(attachmentIDs) == 0 || s.pool == nil || s.attachments == nil {
 		if len(attachmentIDs) > 0 {
@@ -318,11 +341,64 @@ func (s *Service) hydrateAll(ctx context.Context, views []View) error {
 	return nil
 }
 
-func requireContent(body string, nAttach int) (string, error) {
-	if strings.TrimSpace(body) == "" && nAttach == 0 {
-		return "", errEmptyContent()
+// checkContent は、検証規則（validateContent）に加えて、暗号文の鍵 ID が鍵束と一致することを確かめる。
+func (s *Service) checkContent(ctx context.Context, encrypted bool, content Content, nAttach int) (Content, error) {
+	keyID, err := validateContent(encrypted, content, nAttach)
+	if err != nil || !encrypted {
+		return content, err
 	}
-	return body, nil
+	keyring, err := s.q.GetEncryptionKeyring(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Content{}, errEncryptionNotConfigured()
+	}
+	if err != nil {
+		return Content{}, err
+	}
+	if keyring.KeyID != keyID {
+		return Content{}, errInvalidCiphertext()
+	}
+	return content, nil
+}
+
+// validateContent は、チャネルの暗号化の有無に応じて平文と暗号文のどちらか一方だけを受け付ける。
+// 暗号化チャネルでは、暗号文に埋め込まれた鍵 ID を返す。
+func validateContent(encrypted bool, content Content, nAttach int) (uuid.UUID, error) {
+	if !encrypted {
+		if content.Ciphertext != nil {
+			return uuid.Nil, errEncryptionNotAllowed()
+		}
+		if strings.TrimSpace(content.Body) == "" && nAttach == 0 {
+			return uuid.Nil, errEmptyContent()
+		}
+		return uuid.Nil, nil
+	}
+	if content.Ciphertext == nil || content.Body != "" {
+		return uuid.Nil, errEncryptionRequired()
+	}
+	if nAttach > 0 {
+		return uuid.Nil, errEncryptedAttachments()
+	}
+	keyID, ok := encryption.EnvelopeKeyID(*content.Ciphertext)
+	if !ok {
+		return uuid.Nil, errInvalidCiphertext()
+	}
+	return keyID, nil
+}
+
+func textOf(s *string) pgtype.Text {
+	if s == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *s, Valid: true}
+}
+
+// ciphertextOf は応答に載せる暗号文を返す。削除済みのポストでは返さない。
+func ciphertextOf(t pgtype.Text, deleted bool) *string {
+	if !t.Valid || deleted {
+		return nil
+	}
+	s := t.String
+	return &s
 }
 
 func mapNotFound(err error, msg string) error {
@@ -353,6 +429,8 @@ func fromPost(row store.Post, replies int64, last *time.Time) View {
 		ThreadRootID: row.ThreadRootID,
 		AuthorID:     row.AuthorID,
 		Body:         row.Body,
+		Encrypted:    row.Encrypted,
+		Ciphertext:   ciphertextOf(row.BodyCiphertext, row.DeletedAt != nil),
 		CreatedAt:    row.CreatedAt,
 		UpdatedAt:    row.UpdatedAt,
 		EditedAt:     row.EditedAt,
@@ -374,6 +452,8 @@ func fromLatest(row store.ListTimelineLatestRow) View {
 		ThreadRootID: row.ThreadRootID,
 		AuthorID:     row.AuthorID,
 		Body:         row.Body,
+		Encrypted:    row.Encrypted,
+		Ciphertext:   ciphertextOf(row.BodyCiphertext, row.DeletedAt != nil),
 		CreatedAt:    row.CreatedAt,
 		UpdatedAt:    row.UpdatedAt,
 		EditedAt:     row.EditedAt,
@@ -405,6 +485,8 @@ func fromReply(row store.ListThreadRepliesRow) View {
 		ThreadRootID: row.ThreadRootID,
 		AuthorID:     row.AuthorID,
 		Body:         row.Body,
+		Encrypted:    row.Encrypted,
+		Ciphertext:   ciphertextOf(row.BodyCiphertext, row.DeletedAt != nil),
 		CreatedAt:    row.CreatedAt,
 		UpdatedAt:    row.UpdatedAt,
 		EditedAt:     row.EditedAt,
@@ -419,17 +501,19 @@ func beforeToLatest(rows []store.ListTimelineBeforeRow) []store.ListTimelineLate
 	out := make([]store.ListTimelineLatestRow, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, store.ListTimelineLatestRow{
-			ID:           row.ID,
-			ChannelID:    row.ChannelID,
-			ThreadRootID: row.ThreadRootID,
-			AuthorID:     row.AuthorID,
-			Body:         row.Body,
-			CreatedAt:    row.CreatedAt,
-			UpdatedAt:    row.UpdatedAt,
-			EditedAt:     row.EditedAt,
-			DeletedAt:    row.DeletedAt,
-			ReplyCount:   row.ReplyCount,
-			LastReplyAt:  row.LastReplyAt,
+			ID:             row.ID,
+			ChannelID:      row.ChannelID,
+			ThreadRootID:   row.ThreadRootID,
+			AuthorID:       row.AuthorID,
+			Body:           row.Body,
+			CreatedAt:      row.CreatedAt,
+			UpdatedAt:      row.UpdatedAt,
+			EditedAt:       row.EditedAt,
+			DeletedAt:      row.DeletedAt,
+			Encrypted:      row.Encrypted,
+			BodyCiphertext: row.BodyCiphertext,
+			ReplyCount:     row.ReplyCount,
+			LastReplyAt:    row.LastReplyAt,
 		})
 	}
 	return out
@@ -442,6 +526,7 @@ func aroundToLatest(rows []store.ListTimelineAroundRow) []store.ListTimelineLate
 			ID: row.ID, ChannelID: row.ChannelID, ThreadRootID: row.ThreadRootID,
 			AuthorID: row.AuthorID, Body: row.Body, CreatedAt: row.CreatedAt,
 			UpdatedAt: row.UpdatedAt, EditedAt: row.EditedAt, DeletedAt: row.DeletedAt,
+			Encrypted: row.Encrypted, BodyCiphertext: row.BodyCiphertext,
 			ReplyCount: row.ReplyCount, LastReplyAt: row.LastReplyAt,
 		})
 	}

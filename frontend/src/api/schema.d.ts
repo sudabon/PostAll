@@ -322,6 +322,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/encryption/keyring": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 包んだマスター鍵（鍵束）を取得する
+         * @description ワークスペースに 1 つの鍵束を返す。サーバーはパスフレーズ・復旧キー・マスター鍵の平文を持たない。
+         */
+        get: operations["getEncryptionKeyring"];
+        put?: never;
+        /**
+         * 鍵束を登録する（初期設定）
+         * @description 既に鍵束があれば置き換えずに 409 を返す。
+         */
+        post: operations["createEncryptionKeyring"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/encryption/keyring/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["parameters"]["KeyWrapKind"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * パスフレーズまたは復旧キーの包みを置き換える
+         * @description マスター鍵は変えずに、指定した種類の包みだけを置き換える。
+         *     `X-Postall-Key-Proof` にマスター鍵から導いた所持の証明を付ける。
+         */
+        put: operations["replaceEncryptionKeyWrap"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -348,6 +395,8 @@ export interface components {
             parentId?: string | null;
             name: string;
             sortKey: string;
+            /** @description 暗号化チャネルか。作成時に決まり、以後は変わらない。 */
+            encrypted: boolean;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -360,6 +409,11 @@ export interface components {
             name: string;
             /** Format: uuid */
             parentId?: string | null;
+            /**
+             * @description 暗号化チャネルとして作るか。親の値は引き継がない。
+             * @default false
+             */
+            encrypted: boolean;
         };
         RenameChannelRequest: {
             name: string;
@@ -387,7 +441,15 @@ export interface components {
             threadRootId?: string | null;
             /** Format: uuid */
             authorId: string;
+            /** @description 本文。暗号化チャネルのポストでは常に空文字。 */
             body: string;
+            /** @description 暗号化チャネルのポストか。属するチャネルの値と一致する。 */
+            encrypted: boolean;
+            /**
+             * @description 暗号化チャネルのポストの暗号文（`pe1.<keyId>.<iv>.<ciphertext>`）。
+             *     非暗号化チャネルのポストと、削除済みのポストでは null。
+             */
+            ciphertext?: string | null;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -409,12 +471,17 @@ export interface components {
             nextBefore?: string | null;
         };
         CreatePostRequest: {
-            /** @description 本文。添付が無い場合は空であってはならない。 */
+            /** @description 本文。添付が無い場合は空であってはならない。暗号化チャネルでは空にする。 */
             body?: string;
+            /** @description 暗号化チャネルでだけ指定する暗号文。非暗号化チャネルでは指定してはならない。 */
+            ciphertext?: string;
             attachmentIds?: string[];
         };
         EditPostRequest: {
+            /** @description 本文。暗号化チャネルのポストでは空にする。 */
             body: string;
+            /** @description 暗号化チャネルのポストでだけ指定する、新しい暗号文。 */
+            ciphertext?: string;
             /** @description 指定した場合は添付の集合を置き換える。省略時は既存の添付を維持する。 */
             attachmentIds?: string[];
         };
@@ -524,6 +591,46 @@ export interface components {
             /** @description 指定カーソルが保持期間外で、表示中データの全再取得が必要か。省略時は false */
             resetRequired?: boolean;
         };
+        /**
+         * @description マスター鍵を、パスフレーズまたは復旧キーから導いた鍵で AES-GCM により包んだもの。
+         *     バイト列の値はすべて base64url（パディング無し）。サーバーは中身を解かずに保存する。
+         */
+        KeyWrap: {
+            /**
+             * @description パスフレーズの包みは pbkdf2-sha256、復旧キーの包みは hkdf-sha256
+             * @enum {string}
+             */
+            kdf: "pbkdf2-sha256" | "hkdf-sha256";
+            /** @description kdf が pbkdf2-sha256 のときの反復回数 */
+            iterations?: number;
+            salt: string;
+            /** @description kdf が hkdf-sha256 のときの info */
+            info?: string;
+            iv: string;
+            /** @description 包んだマスター鍵（32 バイト）と認証タグ */
+            wrapped: string;
+        };
+        EncryptionKeyring: {
+            /**
+             * Format: uuid
+             * @description マスター鍵の ID。暗号文に埋め込まれる
+             */
+            keyId: string;
+            passphraseWrap: components["schemas"]["KeyWrap"];
+            recoveryWrap: components["schemas"]["KeyWrap"];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        CreateEncryptionKeyringRequest: {
+            /** Format: uuid */
+            keyId: string;
+            /** @description マスター鍵から HKDF で導いた所持の証明（32 バイト、base64url）。サーバーは SHA-256 だけを保存する */
+            keyProof: string;
+            passphraseWrap: components["schemas"]["KeyWrap"];
+            recoveryWrap: components["schemas"]["KeyWrap"];
+        };
     };
     responses: {
         /** @description 一貫したエラー形式 */
@@ -550,6 +657,43 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /**
+         * @description 本文の検証に失敗した。`code` で区別する。
+         *     - `empty_content`: 本文も添付も無い
+         *     - `encryption_required`: 暗号化チャネルへの平文（`ciphertext` が無い、または `body` が空でない）
+         *     - `encryption_not_allowed`: 非暗号化チャネルへの暗号文
+         *     - `encrypted_attachments_unsupported`: 暗号化チャネルへの添付
+         *     - `invalid_ciphertext`: 暗号文の形式が不正、または鍵 ID が鍵束と一致しない
+         */
+        PostContentRejected: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "encryption_required",
+                 *       "message": "暗号化チャネルには暗号文で投稿してください"
+                 *     }
+                 */
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 鍵束が未設定の状態で、暗号化チャネルへ投稿しようとした */
+        EncryptionNotConfigured: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "code": "encryption_not_configured",
+                 *       "message": "暗号化の鍵が設定されていません"
+                 *     }
+                 */
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
     parameters: {
         ChannelId: string;
@@ -557,6 +701,9 @@ export interface components {
         AttachmentId: string;
         EmojiId: string;
         EmojiShortcode: string;
+        KeyWrapKind: "passphrase" | "recovery";
+        /** @description マスター鍵から HKDF で導いた所持の証明（32 バイト、base64url） */
+        KeyProof: string;
     };
     requestBodies: never;
     headers: never;
@@ -638,6 +785,19 @@ export interface operations {
                 };
             };
             403: components["responses"]["AccountNotAllowed"];
+            /**
+             * @description 次のいずれか。`code` で区別する。
+             *     - `name_conflict`: 同じ階層に同名のチャネルがある
+             *     - `encryption_not_configured`: 鍵束が未設定の状態で暗号化チャネルを作ろうとした
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             default: components["responses"]["Error"];
         };
     };
@@ -773,7 +933,9 @@ export interface operations {
                     "application/json": components["schemas"]["Post"];
                 };
             };
+            400: components["responses"]["PostContentRejected"];
             403: components["responses"]["AccountNotAllowed"];
+            409: components["responses"]["EncryptionNotConfigured"];
             default: components["responses"]["Error"];
         };
     };
@@ -823,7 +985,21 @@ export interface operations {
                     "application/json": components["schemas"]["Post"];
                 };
             };
+            400: components["responses"]["PostContentRejected"];
             403: components["responses"]["AccountNotAllowed"];
+            /**
+             * @description 次のいずれか。`code` で区別する。
+             *     - `post_deleted`: 削除済みのポストを編集しようとした
+             *     - `encryption_not_configured`: 鍵束が未設定の状態で暗号化チャネルのポストを編集しようとした
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             default: components["responses"]["Error"];
         };
     };
@@ -875,7 +1051,9 @@ export interface operations {
                     "application/json": components["schemas"]["Post"];
                 };
             };
+            400: components["responses"]["PostContentRejected"];
             403: components["responses"]["AccountNotAllowed"];
+            409: components["responses"]["EncryptionNotConfigured"];
             default: components["responses"]["Error"];
         };
     };
@@ -1150,6 +1328,124 @@ export interface operations {
                 };
             };
             403: components["responses"]["AccountNotAllowed"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getEncryptionKeyring: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 鍵束 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EncryptionKeyring"];
+                };
+            };
+            403: components["responses"]["AccountNotAllowed"];
+            /** @description 鍵束が未設定（`encryption_not_configured`） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createEncryptionKeyring: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateEncryptionKeyringRequest"];
+            };
+        };
+        responses: {
+            /** @description 登録された鍵束 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EncryptionKeyring"];
+                };
+            };
+            403: components["responses"]["AccountNotAllowed"];
+            /** @description 既に鍵束が登録されている（`encryption_already_configured`） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    replaceEncryptionKeyWrap: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description マスター鍵から HKDF で導いた所持の証明（32 バイト、base64url） */
+                "X-Postall-Key-Proof": components["parameters"]["KeyProof"];
+            };
+            path: {
+                kind: components["parameters"]["KeyWrapKind"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeyWrap"];
+            };
+        };
+        responses: {
+            /** @description 置き換え後の鍵束 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EncryptionKeyring"];
+                };
+            };
+            /**
+             * @description 次のいずれか。`code` で区別する。
+             *     - `account_not_allowed`: このアカウントでは利用が許可されていない（許可リストに含まれない）
+             *     - `key_proof_mismatch`: 所持の証明が鍵束と一致しない。鍵束は変更されない
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 鍵束が未設定（`encryption_not_configured`） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             default: components["responses"]["Error"];
         };
     };

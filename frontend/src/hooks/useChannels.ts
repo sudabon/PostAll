@@ -19,9 +19,9 @@ export function useChannelMutations() {
   const invalidate = () => qc.invalidateQueries({ queryKey: ['channels'] })
 
   const create = useMutation({
-    mutationFn: (input: { name: string; parentId?: string | null }) => {
+    mutationFn: (input: { name: string; parentId?: string | null; encrypted?: boolean }) => {
       requireMutationConnection()
-      return api.createChannel(input)
+      return api.createChannel({ ...input, encrypted: input.encrypted ?? false })
     },
     onSuccess: invalidate,
   })
@@ -65,6 +65,7 @@ export function useChannelMutations() {
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.code === 'name_conflict') return '同じ階層に同名のチャネルがあります'
+    if (err.code === 'encryption_not_configured') return '暗号化チャネルを作る前に、初期設定を行ってください'
     if (err.code === 'channel_has_posts') return `ポストが存在するため削除できません（${String(err.details?.count ?? '')}件）`
     if (err.code === 'cycle') return '自身または子孫へは移動できません'
     return err.message

@@ -36,7 +36,9 @@ export function PendingPostRow({
         <span>{failed ? '未送信' : '送信中'}</span>
       </header>
       <div className={cn(failed && 'text-muted-foreground')}>
-        {pending.body.trim() ? <MarkdownBody markdown={pending.body} /> : null}
+        {pending.encrypted && !pending.body.trim() ? (
+          <p className="text-body text-muted-foreground">ロック中</p>
+        ) : pending.body.trim() ? <MarkdownBody markdown={pending.body} /> : null}
         <AttachmentGallery items={pending.attachments} />
       </div>
       {failed ? (

@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
 import type { Attachment, Post } from '@/api/client'
 import { flattenPages, usePostMutations, useTimeline } from '@/hooks/usePosts'
+import { useChannels } from '@/hooks/useChannels'
+import { useEncryptionOptional } from '@/encryption/encryption-context'
 import { formatDateLabel, formatTime, localDateKey } from '@/lib/dates'
 import { requireMutationConnection, useUi } from '@/state/ui'
 import { useAuth } from '@/auth/AuthProvider'
@@ -11,6 +13,7 @@ import { PendingPostRow } from '@/components/post/PendingPostRow'
 import { PostActions } from '@/components/post/PostActions'
 import { PostBody } from '@/components/post/PostBody'
 import { PostEditor } from '@/components/post/PostEditor'
+import { useCloseEditorOnLock } from '@/components/post/useCloseEditorOnLock'
 import { ReactionBar } from '@/components/reactions/ReactionBar'
 import { uploadPickedFile } from '@/lib/upload'
 import { cn } from '@/lib/utils'
@@ -57,6 +60,10 @@ export function Timeline({
   const isContentUnderChrome = useScrollEdge(scroller, sentinelRef)
   const loading = useRef(false)
   const mutations = usePostMutations(channelId)
+  const { data: channels = [] } = useChannels()
+  const encrypted = channels.some((channel) => channel.id === channelId && channel.encrypted)
+  const encryption = useEncryptionOptional()
+  const locked = encrypted && encryption?.phase !== 'unlocked'
   const { api } = useAuth()
   const platform = usePlatform()
   const initial = useRef(true)
@@ -186,9 +193,16 @@ export function Timeline({
                   post={post}
                   highlighted={post.id === targetPostId}
                   mutationDisabled={!canMutate}
+                  locked={Boolean(post.encrypted) && encryption?.phase !== 'unlocked'}
                   onSave={(body, _attachmentIds, attachments) => {
                     useUi.getState().setEditingPost(null)
-                    mutations.edit.mutate({ id: post.id, body, attachments, postUpdatedAt: post.updatedAt })
+                    mutations.edit.mutate({
+                      id: post.id,
+                      body,
+                      attachments,
+                      postUpdatedAt: post.updatedAt,
+                      encrypted: post.encrypted,
+                    })
                   }}
                   onDelete={() => mutations.remove.mutate(post.id)}
                   onRetryDelete={() => mutations.remove.mutate(post.id)}
@@ -204,6 +218,8 @@ export function Timeline({
               onRetry={() =>
                 mutations.create.mutate({
                   body: entry.body,
+                  encrypted: entry.encrypted,
+                  ciphertext: entry.ciphertext,
                   attachmentIds: entry.attachments.map((attachment) => attachment.id),
                   attachments: entry.attachments,
                   pendingKey: entry.key,
@@ -219,11 +235,14 @@ export function Timeline({
         storageKey={`draft:${channelId}`}
         disabled={!channelId}
         mutationDisabled={!canMutate}
-        uploadFile={(file, onProgress) => uploadPickedFile(api, file, onProgress, platform.putBytes)}
+        encrypted={encrypted}
+        locked={locked}
+        onRequestUnlock={() => encryption?.requestUnlock() ?? Promise.resolve(false)}
+        uploadFile={encrypted ? undefined : (file, onProgress) => uploadPickedFile(api, file, onProgress, platform.putBytes)}
         // 応答は待たない。接続断だけは mutate の前に弾き、throw して Composer に入力を戻させる。
         onSubmit={(body, attachmentIds, attachments) => {
           requireMutationConnection()
-          mutations.create.mutate({ body, attachmentIds, attachments })
+          mutations.create.mutate({ body, attachmentIds, attachments, encrypted })
           const el = scroller.current
           if (!el) return
           pinnedToBottom.current = true
@@ -238,6 +257,7 @@ function PostRow({
   post,
   highlighted,
   mutationDisabled,
+  locked = false,
   onSave,
   onDelete,
   onRetryDelete,
@@ -245,6 +265,7 @@ function PostRow({
   post: Post
   highlighted: boolean
   mutationDisabled: boolean
+  locked?: boolean
   onSave: (body: string, attachmentIds: string[], attachments: Attachment[]) => void | Promise<void>
   onDelete: () => void
   onRetryDelete: () => void
@@ -252,6 +273,7 @@ function PostRow({
   // 行ごとに真偽値で購読するので、編集の開始・終了で再描画されるのは当該行だけになる
   const editing = useUi((s) => s.editingPostId === post.id)
   const deleteError = useUi((s) => s.failedDeletes[post.id])
+  useCloseEditorOnLock(post.id, locked)
   return (
     <article
       id={`post-${post.id}`}
@@ -267,14 +289,16 @@ function PostRow({
         <time>{formatTime(post.createdAt)}</time>
         {post.editedAt ? <span>編集済み</span> : null}
       </header>
-      {editing ? (
+      {editing && !locked ? (
         <PostEditor post={post} mutationDisabled={mutationDisabled} onSave={onSave} />
       ) : (
         <PostBody post={post} />
       )}
       <DeleteFailureNotice message={deleteError} mutationDisabled={mutationDisabled} onRetry={onRetryDelete} />
       <ReactionBar postId={post.id} reactions={post.reactions ?? []} />
-      {post.replyCount > 0 ? (
+      {locked ? (
+        post.replyCount > 0 ? <p className="mt-1 text-caption text-muted-foreground">{post.replyCount} 件の返信</p> : null
+      ) : post.replyCount > 0 ? (
         <Button
           type="button"
           variant="ghost"
@@ -296,12 +320,14 @@ function PostRow({
           スレッドで返信
         </Button>
       )}
+      {locked ? null : (
       <PostActions
         post={post}
         kind="ポスト"
         mutationDisabled={mutationDisabled}
         onDelete={onDelete}
       />
+      )}
     </article>
   )
 }

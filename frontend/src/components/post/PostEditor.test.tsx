@@ -1,17 +1,33 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment, Post } from '@/api/client'
+import { encryptPost } from '@/crypto/envelope'
+import { deriveDataKey, generateMasterKey, wrapWithPassphrase, wrapWithRecoveryKey } from '@/crypto/keys'
+import { generateRecoveryKey } from '@/crypto/recovery-key'
+import { useEncryption } from '@/encryption/encryption-context'
+import { EncryptionProvider } from '@/encryption/encryption-provider'
 import { postChangedElsewhereMessage, staleEditDiscardedMessage } from '@/lib/submit-failure'
-import { PlatformProvider, createFakeAdapter } from '@/platform'
+import { PlatformProvider, createFakeAdapter, createMemoryKeyStore } from '@/platform'
 import { useUi } from '@/state/ui'
 import { PostEditor } from './PostEditor'
+import { useCloseEditorOnLock } from './useCloseEditorOnLock'
 
-const mocks = vi.hoisted(() => ({
-  getDownloadUrl: vi.fn(),
-}))
+const mocks = vi.hoisted(() => {
+  const getDownloadUrl = vi.fn()
+  const getEncryptionKeyring = vi.fn()
+  return {
+    getDownloadUrl,
+    getEncryptionKeyring,
+    auth: { signedIn: true, api: { getDownloadUrl, getEncryptionKeyring } },
+  }
+})
 
 vi.mock('@/auth/AuthProvider', () => ({
-  useAuth: () => ({ api: { getDownloadUrl: mocks.getDownloadUrl } }),
+  useAuth: () => mocks.auth,
+}))
+
+vi.mock('@/auth/auth-context', () => ({
+  useAuth: () => mocks.auth,
 }))
 
 const postAttachment: Attachment = {
@@ -37,6 +53,7 @@ const post: Post = {
   threadRootId: null,
   authorId: 'author-1',
   body: 'original body',
+  encrypted: false,
   createdAt: '2026-09-04T00:00:00Z',
   updatedAt: '2026-09-04T00:00:00Z',
   editedAt: null,
@@ -209,5 +226,123 @@ describe('PostEditor', () => {
     )
     // 画面の入力は勝手に捨てない
     expect(screen.getByTestId('composer-input')).toHaveValue('my own draft')
+  })
+})
+
+describe('PostEditor on an encrypted channel', () => {
+  const KEY_ID = '0b6c5c1e-8d2a-4f7e-9c3b-1a2b3c4d5e6f'
+
+  async function unlockedStore(plaintext: string) {
+    const master = generateMasterKey()
+    const recovery = generateRecoveryKey()
+    const dataKey = await deriveDataKey(master, KEY_ID)
+    const ciphertext = await encryptPost(dataKey, KEY_ID, plaintext)
+    const store = createMemoryKeyStore()
+    await store.save(KEY_ID, master)
+    mocks.getEncryptionKeyring.mockResolvedValue({
+      keyId: KEY_ID,
+      passphraseWrap: await wrapWithPassphrase(master, 'correct horse battery staple', KEY_ID, { iterations: 1_000 }),
+      recoveryWrap: await wrapWithRecoveryKey(master, recovery, KEY_ID),
+      createdAt: '2026-11-13T00:00:00Z',
+      updatedAt: '2026-11-13T00:00:00Z',
+    })
+    master.fill(0)
+    recovery.fill(0)
+    return { store, ciphertext }
+  }
+
+  function encryptedPost(ciphertext: string): Post {
+    return { ...post, body: '', encrypted: true, ciphertext, attachments: [] }
+  }
+
+  /** タイムラインの行と同じく、ロック中は編集フォームを描かずに閉じる。 */
+  function Row({ node, onSave }: { node: Post; onSave: () => void }) {
+    const encryption = useEncryption()
+    const editing = useUi((state) => state.editingPostId === node.id)
+    const locked = encryption.phase !== 'unlocked'
+    useCloseEditorOnLock(node.id, locked)
+    return (
+      <>
+        <p data-testid="phase">{encryption.phase}</p>
+        <button type="button" onClick={() => void encryption.lock()}>lock</button>
+        {editing && !locked ? <PostEditor post={node} mutationDisabled={false} onSave={onSave} /> : null}
+      </>
+    )
+  }
+
+  function renderRow(node: Post, store: ReturnType<typeof createMemoryKeyStore>, onSave = vi.fn()) {
+    render(
+      <PlatformProvider adapter={createFakeAdapter({ encryptionKeyStore: store })}>
+        <EncryptionProvider>
+          <Row node={node} onSave={onSave} />
+        </EncryptionProvider>
+      </PlatformProvider>,
+    )
+    return onSave
+  }
+
+  /** 解錠の後に編集を開く（ロック中は編集の導線が無い）。 */
+  async function openEditorWhenUnlocked() {
+    await waitFor(() => expect(screen.getByTestId('phase')).toHaveTextContent('unlocked'))
+    act(() => useUi.getState().setEditingPost(post.id))
+  }
+
+  beforeEach(() => {
+    mocks.getEncryptionKeyring.mockReset()
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    useUi.setState({ editingPostId: null, autoOpenedEditPostId: null, failedEdits: {} })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('opens with the decrypted body, without attachments, and saves the edited text', async () => {
+    const { store, ciphertext } = await unlockedStore('復号した本文')
+    const onSave = renderRow(encryptedPost(ciphertext), store)
+    await openEditorWhenUnlocked()
+
+    const input = await screen.findByTestId('composer-input')
+    expect(input).toHaveValue('復号した本文')
+    expect(screen.getByTestId('composer-encrypted')).toBeTruthy()
+    expect(screen.queryByTestId('composer-attach')).toBeNull()
+    expect(screen.queryByText(ciphertext)).toBeNull()
+
+    fireEvent.change(input, { target: { value: '書き換えた本文' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('書き換えた本文', [], []))
+  })
+
+  it('closes on lock and discards the unsaved plaintext', async () => {
+    const { store, ciphertext } = await unlockedStore('復号した本文')
+    renderRow(encryptedPost(ciphertext), store)
+    await waitFor(() => expect(screen.getByTestId('phase')).toHaveTextContent('unlocked'))
+    act(() => {
+      useUi.getState().setFailedEdit(post.id, {
+        body: '保存に失敗した平文',
+        attachments: [],
+        error: '保存に失敗しました。入力は保持されています。',
+        postUpdatedAt: post.updatedAt,
+        encrypted: true,
+      })
+      useUi.getState().setEditingPost(post.id)
+    })
+    expect(await screen.findByTestId('composer-input')).toHaveValue('保存に失敗した平文')
+
+    fireEvent.click(screen.getByRole('button', { name: 'lock' }))
+
+    await waitFor(() => expect(useUi.getState().editingPostId).toBeNull())
+    expect(screen.queryByTestId(`post-editor-${post.id}`)).toBeNull()
+    expect(screen.queryByText('保存に失敗した平文')).toBeNull()
+    expect(useUi.getState().failedEdits[post.id]).toBeUndefined()
+  })
+
+  it('does not open while locked', async () => {
+    const { ciphertext } = await unlockedStore('見せない本文')
+    renderRow(encryptedPost(ciphertext), createMemoryKeyStore())
+    await waitFor(() => expect(screen.getByTestId('phase')).toHaveTextContent('locked'))
+    act(() => useUi.getState().setEditingPost(post.id))
+    await waitFor(() => expect(useUi.getState().editingPostId).toBeNull())
+    expect(screen.queryByTestId('composer-input')).toBeNull()
   })
 })

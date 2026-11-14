@@ -15,6 +15,7 @@ function post(reactions: Reaction[] = []): Post {
     channelId: '33333333-3333-3333-3333-333333333333',
     authorId: '44444444-4444-4444-4444-444444444444',
     body: 'memo',
+    encrypted: false,
     createdAt: '2026-08-23T00:00:00Z',
     updatedAt: '2026-08-23T00:00:00Z',
     deleted: false,

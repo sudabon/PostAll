@@ -22,7 +22,7 @@ func (q *Queries) DeleteChannel(ctx context.Context, id uuid.UUID) error {
 }
 
 const getChannel = `-- name: GetChannel :one
-select id, parent_id, name, sort_key, created_at, updated_at
+select id, parent_id, name, sort_key, created_at, updated_at, encrypted
 from channels
 where id = $1
 `
@@ -37,6 +37,7 @@ func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (Channel, error)
 		&i.SortKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Encrypted,
 	)
 	return i, err
 }
@@ -78,19 +79,25 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 }
 
 const insertChannel = `-- name: InsertChannel :one
-insert into channels (parent_id, name, sort_key)
-values ($1::uuid, $2, $3)
-returning id, parent_id, name, sort_key, created_at, updated_at
+insert into channels (parent_id, name, sort_key, encrypted)
+values ($1::uuid, $2, $3, $4)
+returning id, parent_id, name, sort_key, created_at, updated_at, encrypted
 `
 
 type InsertChannelParams struct {
-	ParentID *uuid.UUID
-	Name     string
-	SortKey  string
+	ParentID  *uuid.UUID
+	Name      string
+	SortKey   string
+	Encrypted bool
 }
 
 func (q *Queries) InsertChannel(ctx context.Context, arg InsertChannelParams) (Channel, error) {
-	row := q.db.QueryRow(ctx, insertChannel, arg.ParentID, arg.Name, arg.SortKey)
+	row := q.db.QueryRow(ctx, insertChannel,
+		arg.ParentID,
+		arg.Name,
+		arg.SortKey,
+		arg.Encrypted,
+	)
 	var i Channel
 	err := row.Scan(
 		&i.ID,
@@ -99,6 +106,7 @@ func (q *Queries) InsertChannel(ctx context.Context, arg InsertChannelParams) (C
 		&i.SortKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Encrypted,
 	)
 	return i, err
 }
@@ -122,7 +130,7 @@ func (q *Queries) InsertUserByAuthSubject(ctx context.Context, authSubject strin
 }
 
 const listChannels = `-- name: ListChannels :many
-select id, parent_id, name, sort_key, created_at, updated_at
+select id, parent_id, name, sort_key, created_at, updated_at, encrypted
 from channels
 order by parent_id nulls first, sort_key, id
 `
@@ -143,6 +151,7 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 			&i.SortKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Encrypted,
 		); err != nil {
 			return nil, err
 		}
@@ -155,7 +164,7 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 }
 
 const listSiblings = `-- name: ListSiblings :many
-select id, parent_id, name, sort_key, created_at, updated_at
+select id, parent_id, name, sort_key, created_at, updated_at, encrypted
 from channels
 where parent_id is not distinct from $1::uuid
 order by sort_key, id
@@ -177,6 +186,7 @@ func (q *Queries) ListSiblings(ctx context.Context, parentID *uuid.UUID) ([]Chan
 			&i.SortKey,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Encrypted,
 		); err != nil {
 			return nil, err
 		}
@@ -192,7 +202,7 @@ const renameChannel = `-- name: RenameChannel :one
 update channels
 set name = $1, updated_at = now()
 where id = $2
-returning id, parent_id, name, sort_key, created_at, updated_at
+returning id, parent_id, name, sort_key, created_at, updated_at, encrypted
 `
 
 type RenameChannelParams struct {
@@ -210,6 +220,7 @@ func (q *Queries) RenameChannel(ctx context.Context, arg RenameChannelParams) (C
 		&i.SortKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Encrypted,
 	)
 	return i, err
 }
@@ -220,7 +231,7 @@ set parent_id = $1::uuid,
     sort_key = $2,
     updated_at = now()
 where id = $3
-returning id, parent_id, name, sort_key, created_at, updated_at
+returning id, parent_id, name, sort_key, created_at, updated_at, encrypted
 `
 
 type UpdateChannelLocationParams struct {
@@ -239,6 +250,7 @@ func (q *Queries) UpdateChannelLocation(ctx context.Context, arg UpdateChannelLo
 		&i.SortKey,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Encrypted,
 	)
 	return i, err
 }

@@ -41,7 +41,21 @@ export default defineConfig({
     },
   ],
   projects: [
-    { name: 'app', testMatch: /(app|stamp-upload|security)\.spec\.ts/, use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${appPort}` } },
+    {
+      name: 'app',
+      testMatch: /(app|stamp-upload|security|encryption)\.spec\.ts/,
+      // TP-032 は iPhone 相当の WebKit でだけ観測する（browser:webkit-iphone）。
+      grepInvert: /@TP-032\b/,
+      use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${appPort}` },
+    },
+    {
+      // browser:webkit-iphone: iPhone の PWA 相当。WebKit の端末エミュレーションで、
+      // 取り出せない鍵を IndexedDB に記憶できることを見る。対象は TP-032 だけ。
+      name: 'webkit-iphone',
+      testMatch: /encryption\.spec\.ts/,
+      grep: /@TP-032\b/,
+      use: { ...devices['iPhone 15'], baseURL: `http://127.0.0.1:${appPort}` },
+    },
     { name: 'pwa', testMatch: /pwa\.spec\.ts/, use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${pwaPort}` } },
     { name: 'csp', testMatch: /csp\.spec\.ts/, use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${cspPort}` } },
   ],

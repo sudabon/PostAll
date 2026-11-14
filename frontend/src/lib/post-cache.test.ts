@@ -24,6 +24,7 @@ function post(overrides: Partial<Post> = {}): Post {
     attachments: [],
     reactions: [],
     ...overrides,
+    encrypted: overrides.encrypted ?? false,
   }
 }
 

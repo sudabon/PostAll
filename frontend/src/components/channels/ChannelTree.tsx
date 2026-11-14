@@ -10,8 +10,9 @@ import {
   type DragOverEvent,
 } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, KeyRound, Plus, Trash2 } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
+import { useEncryptionOptional } from '@/encryption/encryption-context'
 import type { Channel } from '@/api/client'
 import { buildForest, descendantIds, flattenVisible } from '@/lib/tree'
 import { useChannelMutations, useChannels, errorMessage } from '@/hooks/useChannels'
@@ -32,6 +33,8 @@ export function ChannelTree() {
   const renamingId = useUi((s) => s.renamingId)
   const canMutate = useUi((s) => s.canMutate)
   const [notice, setNotice] = useState<string | null>(null)
+  const [encryptNext, setEncryptNext] = useState(false)
+  const encryption = useEncryptionOptional()
   const [overId, setOverId] = useState<string | null>(null)
   const [intent, setIntent] = useState<Intent>(null)
   const wide = useWideViewport()
@@ -121,13 +124,26 @@ export function ChannelTree() {
       {creating ? (
         <NameForm
           disabled={!canMutate}
+          allowEncrypted
+          encrypted={encryptNext}
+          onEncryptedChange={setEncryptNext}
           placeholder={creating.parentId ? '子チャネル名' : 'チャネル名'}
           onSubmit={(name) => {
-            mutations.create.mutate(
-              { name, parentId: creating.parentId },
+            const parentId = creating.parentId
+            const encrypted = encryptNext
+            return (async () => {
+              // 初期設定や解錠を取りやめたら作成しない。フォームは残し、そのまま確定し直せるようにする。
+              if (encrypted && encryption?.phase === 'unconfigured') {
+                if (!(await encryption.requestSetup())) return false
+              } else if (encrypted && encryption && encryption.phase !== 'unlocked') {
+                if (!(await encryption.requestUnlock())) return false
+              }
+              mutations.create.mutate(
+              { name, parentId, encrypted },
               {
                 onError: (err) => setNotice(errorMessage(err)),
                 onSuccess: (ch) => {
+                  setEncryptNext(false)
                   useUi.setState({ creating: null })
                   useUi.getState().selectChannel(ch.id)
                   if (creating.parentId) {
@@ -137,8 +153,12 @@ export function ChannelTree() {
                 },
               },
             )
+            })()
           }}
-          onCancel={() => useUi.setState({ creating: null })}
+          onCancel={() => {
+            setEncryptNext(false)
+            useUi.setState({ creating: null })
+          }}
         />
       ) : null}
       <div className="min-h-0 flex-1 overflow-auto shell-list-bottom">
@@ -279,6 +299,7 @@ function TreeRow({
             }}
           >
             # {channel.name}
+            {channel.encrypted ? <KeyRound className="ml-1 inline size-3.5" aria-label="暗号化チャネル" data-testid={`encrypted-channel-${channel.name}`} /> : null}
           </button>
         </>
       )}
@@ -307,6 +328,9 @@ function NameForm({
   placeholder,
   disabled = false,
   submitOnBlur = false,
+  allowEncrypted = false,
+  encrypted = false,
+  onEncryptedChange,
   onSubmit,
   onCancel,
 }: {
@@ -315,7 +339,12 @@ function NameForm({
   disabled?: boolean
   /** フォーカスが外れた時点で確定する（名前の変更） */
   submitOnBlur?: boolean
-  onSubmit: (name: string) => void
+  /** 作成時だけ。リネームや移動では暗号化を変えられない */
+  allowEncrypted?: boolean
+  encrypted?: boolean
+  onEncryptedChange?: (encrypted: boolean) => void
+  /** false で解決したら、確定を取りやめたものとして同じ入力で確定し直せるようにする */
+  onSubmit: (name: string) => void | Promise<boolean | void>
   onCancel: () => void
 }) {
   const [value, setValue] = useState(initial)
@@ -323,10 +352,15 @@ function NameForm({
   // 入力が再開されたら解除して、失敗した変更をやり直せるようにする。
   const settled = useRef(false)
 
-  const finish = (run: () => void) => {
+  const finish = (run: () => void | Promise<boolean | void>) => {
     if (settled.current) return
     settled.current = true
-    run()
+    const result = run()
+    if (result instanceof Promise) {
+      void result.then((done) => {
+        if (done === false) settled.current = false
+      })
+    }
   }
 
   return (
@@ -364,6 +398,18 @@ function NameForm({
           else finish(() => onSubmit(name))
         }}
       />
+      {allowEncrypted ? (
+        <label className="mt-1 flex items-center gap-1.5 text-caption text-foreground">
+          <input
+            type="checkbox"
+            data-testid="channel-encrypted-toggle"
+            checked={encrypted}
+            onChange={(event) => onEncryptedChange?.(event.target.checked)}
+          />
+          <KeyRound className="size-3.5" aria-hidden="true" />
+          暗号化
+        </label>
+      ) : null}
     </form>
   )
 }

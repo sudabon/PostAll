@@ -31,3 +31,27 @@ func errDeleted() *Error {
 func errEmptyContent() *Error {
 	return &Error{Code: "empty_content", Message: "本文または添付のいずれかが必要です", Status: http.StatusBadRequest}
 }
+
+func errEncryptionRequired() *Error {
+	return &Error{Code: "encryption_required", Message: "暗号化チャネルには暗号文で投稿してください", Status: http.StatusBadRequest}
+}
+
+func errEncryptionNotAllowed() *Error {
+	return &Error{Code: "encryption_not_allowed", Message: "非暗号化チャネルには暗号文を投稿できません", Status: http.StatusBadRequest}
+}
+
+func errEncryptedAttachments() *Error {
+	return &Error{
+		Code:    "encrypted_attachments_unsupported",
+		Message: "暗号化チャネルのポストには添付を付けられません",
+		Status:  http.StatusBadRequest,
+	}
+}
+
+func errInvalidCiphertext() *Error {
+	return &Error{Code: "invalid_ciphertext", Message: "暗号文の形式または鍵が不正です", Status: http.StatusBadRequest}
+}
+
+func errEncryptionNotConfigured() *Error {
+	return &Error{Code: "encryption_not_configured", Message: "暗号化の鍵が設定されていません", Status: http.StatusConflict}
+}
