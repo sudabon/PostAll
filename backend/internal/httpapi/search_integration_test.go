@@ -212,6 +212,37 @@ func TestSearchDoesNotMatchErasedBodiesOfDeletedPosts(t *testing.T) {
 	}
 }
 
+func TestSearchExcludesEncryptedChannelPosts(t *testing.T) {
+	h, authz, _ := searchTestServer(t)
+	keyring := setupKeyring(t, h, authz)
+	secret := createChannel(t, h, authz, map[string]any{"name": "secret", "encrypted": true})
+	plain := createChannel(t, h, authz, map[string]any{"name": "inbox"})
+
+	ct := "pe1." + keyring.keyID.String() + ".AAAAAAAAAAAAAAAA.CIPHERNEEDLE" + randomB64(t, 64)
+	res := doJSON(t, h, http.MethodPost, "/v1/channels/"+secret.Id.String()+"/posts", authz, map[string]any{"ciphertext": ct})
+	if res.Code != http.StatusCreated {
+		t.Fatalf("encrypted post=%d %s", res.Code, res.Body)
+	}
+	visible := createPost(t, h, authz, plain.Id.String(), "平文の CIPHERNEEDLE メモ")
+
+	for _, q := range []string{"CIPHERNEEDLE", keyring.keyID.String(), "pe1."} {
+		page := searchPosts(t, h, authz, "/v1/search?q="+url.QueryEscape(q))
+		for _, item := range page.Results {
+			if item.ChannelID == secret.Id.String() {
+				t.Fatalf("query %q returned an encrypted channel post: %+v", q, item)
+			}
+		}
+	}
+	page := searchPosts(t, h, authz, "/v1/search?q="+url.QueryEscape("CIPHERNEEDLE"))
+	if len(page.Results) != 1 || page.Results[0].PostID != visible.Id.String() {
+		t.Fatalf("results=%+v, want only the plain post", page.Results)
+	}
+	scoped := searchPosts(t, h, authz, "/v1/search?q="+url.QueryEscape("CIPHERNEEDLE")+"&channelId="+secret.Id.String())
+	if len(scoped.Results) != 0 {
+		t.Fatalf("scoped to encrypted channel: %+v", scoped.Results)
+	}
+}
+
 func searchTestServer(t *testing.T) (http.Handler, string, string) {
 	t.Helper()
 	databaseURL := testutil.PostgresURL(t)

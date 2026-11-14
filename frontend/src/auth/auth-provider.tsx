@@ -17,6 +17,8 @@ import {
 } from '@/auth/session'
 import { usePlatform } from '@/platform'
 import { useSettings } from '@/state/settings'
+import { EncryptionProvider } from '@/encryption/encryption-provider'
+import { forgetEncryption } from '@/encryption/forget'
 import { ACCOUNT_NOT_ALLOWED_MESSAGE, AuthContext, type AuthState } from './auth-context'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -118,7 +120,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(() => {
     if (signOutInFlight.current) return signOutInFlight.current
     if (!hasTokens()) return Promise.resolve()
-    const run = persistTokens(platform, null).finally(() => {
+    const run = (async () => {
+      await forgetEncryption()
+      await persistTokens(platform, null)
+    })().finally(() => {
       signOutInFlight.current = null
     })
     signOutInFlight.current = run
@@ -142,5 +147,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [api, error, handleRedirectUrl, ready, signIn, signOut, signedIn],
   )
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={value}>
+      <EncryptionProvider>{children}</EncryptionProvider>
+    </AuthContext.Provider>
+  )
 }

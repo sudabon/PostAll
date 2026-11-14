@@ -15,6 +15,7 @@ import (
 	changeservice "github.com/sudabon/PostAll/backend/internal/change"
 	"github.com/sudabon/PostAll/backend/internal/channel"
 	"github.com/sudabon/PostAll/backend/internal/emoji"
+	"github.com/sudabon/PostAll/backend/internal/encryption"
 	"github.com/sudabon/PostAll/backend/internal/post"
 	searchservice "github.com/sudabon/PostAll/backend/internal/search"
 	"github.com/sudabon/PostAll/backend/internal/store"
@@ -50,6 +51,7 @@ type Server struct {
 	search      *searchservice.Service
 	changes     *changeservice.Service
 	emojis      *emoji.Service
+	keyring     *encryption.Service
 	emojiBlobs  blob.Store
 	attachments *attachment.Service
 	cronSecret  string
@@ -137,6 +139,7 @@ func New(cfg Config) (*Server, error) {
 		s.search = searchservice.NewService(st.Queries)
 		s.changes = changeservice.NewService(st.Queries)
 		s.emojis = emoji.NewService(st.Queries)
+		s.keyring = encryption.NewService(st.Queries)
 	}
 
 	v := cfg.Verifier

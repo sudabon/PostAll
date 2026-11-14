@@ -4,6 +4,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { sanitizeOutboundHeaders } from './net-headers.mjs'
+import { registerSecretIpc } from './secret-ipc.mjs'
 import { createSecretStore } from './secret-store.mjs'
 
 protocol.registerSchemesAsPrivileged([
@@ -187,15 +188,7 @@ function registerIpc() {
     persist.delete(key)
     await savePersist()
   })
-  ipcMain.handle('secret:get', (_e, key) => secrets.get(key) ?? null)
-  ipcMain.handle('secret:set', async (_e, key, value) => {
-    secrets.set(key, value)
-    await saveSecrets()
-  })
-  ipcMain.handle('secret:delete', async (_e, key) => {
-    secrets.delete(key)
-    await saveSecrets()
-  })
+  registerSecretIpc({ ipcMain, safeStorage, secrets, save: saveSecrets })
   ipcMain.handle('files:open', async (_e, options) => {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: options?.multiple ? ['openFile', 'multiSelections'] : ['openFile'],

@@ -16,6 +16,8 @@ export type FailedEdit = {
   error: string
   /** 保存を試みた時点のポストの updatedAt。復元してよいかの判定に使う */
   postUpdatedAt: string
+  /** 暗号化チャネルのポスト。ロックで本文ごと捨てる */
+  encrypted?: boolean
   /**
    * 保持入力より後にポストが更新されていたため復元をやめた印。
    * エントリを消さずに残すのは、破棄した事実を編集フォームの再マウント後も伝えるため。
@@ -34,6 +36,9 @@ export type PendingPost = {
   /** 返信なら親スレッドの id。チャネル直下のポストなら null */
   threadRootId: string | null
   body: string
+  /** 暗号化チャネルの送信待ち。ロック後も再送できるよう、暗号文は残す */
+  encrypted?: boolean
+  ciphertext?: string
   attachments: Attachment[]
   createdAt: string
   status: 'sending' | 'failed'

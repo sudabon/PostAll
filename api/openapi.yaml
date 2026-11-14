@@ -59,6 +59,15 @@ paths:
                 $ref: "#/components/schemas/Channel"
         "403":
           $ref: "#/components/responses/AccountNotAllowed"
+        "409":
+          description: |
+            次のいずれか。`code` で区別する。
+            - `name_conflict`: 同じ階層に同名のチャネルがある
+            - `encryption_not_configured`: 鍵束が未設定の状態で暗号化チャネルを作ろうとした
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
   /v1/channels/{channelId}:
@@ -178,8 +187,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Post"
+        "400":
+          $ref: "#/components/responses/PostContentRejected"
         "403":
           $ref: "#/components/responses/AccountNotAllowed"
+        "409":
+          $ref: "#/components/responses/EncryptionNotConfigured"
         default:
           $ref: "#/components/responses/Error"
   /v1/posts/{postId}:
@@ -202,8 +215,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Post"
+        "400":
+          $ref: "#/components/responses/PostContentRejected"
         "403":
           $ref: "#/components/responses/AccountNotAllowed"
+        "409":
+          description: |
+            次のいずれか。`code` で区別する。
+            - `post_deleted`: 削除済みのポストを編集しようとした
+            - `encryption_not_configured`: 鍵束が未設定の状態で暗号化チャネルのポストを編集しようとした
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
     delete:
@@ -259,8 +283,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Post"
+        "400":
+          $ref: "#/components/responses/PostContentRejected"
         "403":
           $ref: "#/components/responses/AccountNotAllowed"
+        "409":
+          $ref: "#/components/responses/EncryptionNotConfigured"
         default:
           $ref: "#/components/responses/Error"
   /v1/attachments/uploads:
@@ -510,6 +538,100 @@ paths:
           $ref: "#/components/responses/AccountNotAllowed"
         default:
           $ref: "#/components/responses/Error"
+  /v1/encryption/keyring:
+    get:
+      operationId: getEncryptionKeyring
+      tags: [encryption]
+      summary: 包んだマスター鍵（鍵束）を取得する
+      description: |
+        ワークスペースに 1 つの鍵束を返す。サーバーはパスフレーズ・復旧キー・マスター鍵の平文を持たない。
+      responses:
+        "200":
+          description: 鍵束
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EncryptionKeyring"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
+        "404":
+          description: 鍵束が未設定（`encryption_not_configured`）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createEncryptionKeyring
+      tags: [encryption]
+      summary: 鍵束を登録する（初期設定）
+      description: 既に鍵束があれば置き換えずに 409 を返す。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEncryptionKeyringRequest"
+      responses:
+        "201":
+          description: 登録された鍵束
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EncryptionKeyring"
+        "403":
+          $ref: "#/components/responses/AccountNotAllowed"
+        "409":
+          description: 既に鍵束が登録されている（`encryption_already_configured`）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/encryption/keyring/{kind}:
+    parameters:
+      - $ref: "#/components/parameters/KeyWrapKind"
+    put:
+      operationId: replaceEncryptionKeyWrap
+      tags: [encryption]
+      summary: パスフレーズまたは復旧キーの包みを置き換える
+      description: |
+        マスター鍵は変えずに、指定した種類の包みだけを置き換える。
+        `X-Postall-Key-Proof` にマスター鍵から導いた所持の証明を付ける。
+      parameters:
+        - $ref: "#/components/parameters/KeyProof"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KeyWrap"
+      responses:
+        "200":
+          description: 置き換え後の鍵束
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EncryptionKeyring"
+        "403":
+          description: |
+            次のいずれか。`code` で区別する。
+            - `account_not_allowed`: このアカウントでは利用が許可されていない（許可リストに含まれない）
+            - `key_proof_mismatch`: 所持の証明が鍵束と一致しない。鍵束は変更されない
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: 鍵束が未設定（`encryption_not_configured`）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
 components:
   securitySchemes:
     bearerAuth:
@@ -552,6 +674,20 @@ components:
       schema:
         type: string
         pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
+    KeyWrapKind:
+      name: kind
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [passphrase, recovery]
+    KeyProof:
+      name: X-Postall-Key-Proof
+      in: header
+      required: true
+      description: マスター鍵から HKDF で導いた所持の証明（32 バイト、base64url）
+      schema:
+        type: string
   responses:
     Error:
       description: 一貫したエラー形式
@@ -568,6 +704,30 @@ components:
           example:
             code: account_not_allowed
             message: このアカウントでは利用が許可されていません
+    PostContentRejected:
+      description: |
+        本文の検証に失敗した。`code` で区別する。
+        - `empty_content`: 本文も添付も無い
+        - `encryption_required`: 暗号化チャネルへの平文（`ciphertext` が無い、または `body` が空でない）
+        - `encryption_not_allowed`: 非暗号化チャネルへの暗号文
+        - `encrypted_attachments_unsupported`: 暗号化チャネルへの添付
+        - `invalid_ciphertext`: 暗号文の形式が不正、または鍵 ID が鍵束と一致しない
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: encryption_required
+            message: 暗号化チャネルには暗号文で投稿してください
+    EncryptionNotConfigured:
+      description: 鍵束が未設定の状態で、暗号化チャネルへ投稿しようとした
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: encryption_not_configured
+            message: 暗号化の鍵が設定されていません
   schemas:
     Health:
       type: object
@@ -594,7 +754,7 @@ components:
           additionalProperties: true
     Channel:
       type: object
-      required: [id, name, sortKey, createdAt, updatedAt]
+      required: [id, name, sortKey, encrypted, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -607,6 +767,9 @@ components:
           type: string
         sortKey:
           type: string
+        encrypted:
+          type: boolean
+          description: 暗号化チャネルか。作成時に決まり、以後は変わらない。
         createdAt:
           type: string
           format: date-time
@@ -632,6 +795,10 @@ components:
           type: string
           format: uuid
           nullable: true
+        encrypted:
+          type: boolean
+          default: false
+          description: 暗号化チャネルとして作るか。親の値は引き継がない。
     RenameChannelRequest:
       type: object
       required: [name]
@@ -658,7 +825,7 @@ components:
           description: このチャネルの直後に挿入する。
     Post:
       type: object
-      required: [id, channelId, authorId, body, createdAt, updatedAt, deleted, replyCount]
+      required: [id, channelId, authorId, body, encrypted, createdAt, updatedAt, deleted, replyCount]
       properties:
         id:
           type: string
@@ -675,6 +842,16 @@ components:
           format: uuid
         body:
           type: string
+          description: 本文。暗号化チャネルのポストでは常に空文字。
+        encrypted:
+          type: boolean
+          description: 暗号化チャネルのポストか。属するチャネルの値と一致する。
+        ciphertext:
+          type: string
+          nullable: true
+          description: |
+            暗号化チャネルのポストの暗号文（`pe1.<keyId>.<iv>.<ciphertext>`）。
+            非暗号化チャネルのポストと、削除済みのポストでは null。
         createdAt:
           type: string
           format: date-time
@@ -721,7 +898,10 @@ components:
       properties:
         body:
           type: string
-          description: 本文。添付が無い場合は空であってはならない。
+          description: 本文。添付が無い場合は空であってはならない。暗号化チャネルでは空にする。
+        ciphertext:
+          type: string
+          description: 暗号化チャネルでだけ指定する暗号文。非暗号化チャネルでは指定してはならない。
         attachmentIds:
           type: array
           items:
@@ -734,6 +914,10 @@ components:
       properties:
         body:
           type: string
+          description: 本文。暗号化チャネルのポストでは空にする。
+        ciphertext:
+          type: string
+          description: 暗号化チャネルのポストでだけ指定する、新しい暗号文。
         attachmentIds:
           type: array
           items:
@@ -949,5 +1133,62 @@ components:
         resetRequired:
           type: boolean
           description: 指定カーソルが保持期間外で、表示中データの全再取得が必要か。省略時は false
+    KeyWrap:
+      type: object
+      description: |
+        マスター鍵を、パスフレーズまたは復旧キーから導いた鍵で AES-GCM により包んだもの。
+        バイト列の値はすべて base64url（パディング無し）。サーバーは中身を解かずに保存する。
+      required: [kdf, salt, iv, wrapped]
+      properties:
+        kdf:
+          type: string
+          enum: [pbkdf2-sha256, hkdf-sha256]
+          description: パスフレーズの包みは pbkdf2-sha256、復旧キーの包みは hkdf-sha256
+        iterations:
+          type: integer
+          minimum: 600000
+          description: kdf が pbkdf2-sha256 のときの反復回数
+        salt:
+          type: string
+        info:
+          type: string
+          description: kdf が hkdf-sha256 のときの info
+        iv:
+          type: string
+        wrapped:
+          type: string
+          description: 包んだマスター鍵（32 バイト）と認証タグ
+    EncryptionKeyring:
+      type: object
+      required: [keyId, passphraseWrap, recoveryWrap, createdAt, updatedAt]
+      properties:
+        keyId:
+          type: string
+          format: uuid
+          description: マスター鍵の ID。暗号文に埋め込まれる
+        passphraseWrap:
+          $ref: "#/components/schemas/KeyWrap"
+        recoveryWrap:
+          $ref: "#/components/schemas/KeyWrap"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateEncryptionKeyringRequest:
+      type: object
+      required: [keyId, keyProof, passphraseWrap, recoveryWrap]
+      properties:
+        keyId:
+          type: string
+          format: uuid
+        keyProof:
+          type: string
+          description: マスター鍵から HKDF で導いた所持の証明（32 バイト、base64url）。サーバーは SHA-256 だけを保存する
+        passphraseWrap:
+          $ref: "#/components/schemas/KeyWrap"
+        recoveryWrap:
+          $ref: "#/components/schemas/KeyWrap"
 security:
   - bearerAuth: []

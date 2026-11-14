@@ -28,6 +28,14 @@ func errNameConflict() *Error {
 	return &Error{Code: "name_conflict", Message: "同じ階層に同名のチャネルが既にあります", Status: http.StatusConflict}
 }
 
+func errEncryptionNotConfigured() *Error {
+	return &Error{
+		Code:    "encryption_not_configured",
+		Message: "暗号化チャネルを作る前に、暗号化の初期設定を行ってください",
+		Status:  http.StatusConflict,
+	}
+}
+
 func errCycle() *Error {
 	return &Error{Code: "cycle", Message: "自身または子孫を親にすることはできません", Status: http.StatusConflict}
 }

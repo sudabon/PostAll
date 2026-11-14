@@ -24,6 +24,8 @@ select
 from posts p
 join channels c on c.id = p.channel_id
 where p.deleted_at is null
+  -- 暗号化チャネルの本文はサーバーに無い。body は空だが、意図を明示して除く。
+  and not p.encrypted
   and p.body ilike $1::text escape '\'
   and ($2::uuid is null or p.channel_id = $2::uuid)
   and ($3::timestamptz is null or p.created_at >= $3::timestamptz)
@@ -107,6 +109,8 @@ select
 from posts p
 join channels c on c.id = p.channel_id
 where p.deleted_at is null
+  -- 暗号化チャネルの本文はサーバーに無い。body は空だが、意図を明示して除く。
+  and not p.encrypted
   and p.body ilike $1::text escape '\'
   and ($2::uuid is null or p.channel_id = $2::uuid)
   and ($3::timestamptz is null or p.created_at >= $3::timestamptz)

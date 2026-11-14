@@ -45,15 +45,15 @@ where p.deleted_at is null
 func (q *Queries) ListChannelTree(ctx context.Context) ([]Channel, error) {
 	const query = `
 with recursive tree as (
-    select id, parent_id, name, sort_key, created_at, updated_at
+    select id, parent_id, name, sort_key, created_at, updated_at, encrypted
     from channels
     where parent_id is null
     union all
-    select c.id, c.parent_id, c.name, c.sort_key, c.created_at, c.updated_at
+    select c.id, c.parent_id, c.name, c.sort_key, c.created_at, c.updated_at, c.encrypted
     from channels c
     inner join tree t on c.parent_id = t.id
 )
-select id, parent_id, name, sort_key, created_at, updated_at
+select id, parent_id, name, sort_key, created_at, updated_at, encrypted
 from tree
 order by parent_id nulls first, sort_key, id`
 	rows, err := q.db.Query(ctx, query)
@@ -64,7 +64,7 @@ order by parent_id nulls first, sort_key, id`
 	var items []Channel
 	for rows.Next() {
 		var i Channel
-		if err := rows.Scan(&i.ID, &i.ParentID, &i.Name, &i.SortKey, &i.CreatedAt, &i.UpdatedAt); err != nil {
+		if err := rows.Scan(&i.ID, &i.ParentID, &i.Name, &i.SortKey, &i.CreatedAt, &i.UpdatedAt, &i.Encrypted); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

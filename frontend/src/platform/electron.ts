@@ -1,10 +1,22 @@
-import type { MenuTemplate, PickedFile, PlatformAdapter, WindowState } from './types'
+import { deriveDataKey } from '@/crypto/keys'
+import { fromBase64Url, toBase64Url } from '@/crypto/encoding'
+import {
+  KeyStoreUnavailableError,
+  type EncryptionKeyStore,
+  type MenuTemplate,
+  type PickedFile,
+  type PlatformAdapter,
+  type WindowState,
+} from './types'
 
 type Bridge = {
   kind: 'electron'
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
   on: (channel: string, listener: (payload: unknown) => void) => () => void
 }
+
+/** メインプロセスの secret-ipc.mjs と同じ名前。safeStorage が使えないときは保存を拒まれる。 */
+export const ENCRYPTION_SECRET_KEY = 'encryption.masterKey'
 
 function bridge(): Bridge {
   const b = window.postallPlatform
@@ -14,10 +26,45 @@ function bridge(): Bridge {
   return b
 }
 
+/**
+ * マスター鍵の値を、既存の secret:*（safeStorage で暗号化したファイル）に置く。
+ * 読み出したら暗号鍵を導いて、値はすぐに消す。
+ */
+export function createElectronKeyStore(b: Pick<Bridge, 'invoke'>): EncryptionKeyStore {
+  const canPersist = async () => (await b.invoke('secret:persistent')) === true
+  return {
+    canPersist,
+    async save(keyId, masterKey) {
+      if (!(await canPersist())) throw new KeyStoreUnavailableError()
+      await b.invoke('secret:set', ENCRYPTION_SECRET_KEY, JSON.stringify({ keyId, masterKey: toBase64Url(masterKey) }))
+    },
+    async load() {
+      const raw = await b.invoke('secret:get', ENCRYPTION_SECRET_KEY)
+      if (typeof raw !== 'string') return null
+      try {
+        const parsed = JSON.parse(raw) as { keyId?: unknown; masterKey?: unknown }
+        if (typeof parsed.keyId !== 'string' || typeof parsed.masterKey !== 'string') return null
+        const master = fromBase64Url(parsed.masterKey)
+        try {
+          return { keyId: parsed.keyId, dataKey: await deriveDataKey(master, parsed.keyId) }
+        } finally {
+          master.fill(0)
+        }
+      } catch {
+        return null
+      }
+    },
+    async clear() {
+      await b.invoke('secret:delete', ENCRYPTION_SECRET_KEY)
+    },
+  }
+}
+
 export function createElectronAdapter(): PlatformAdapter {
   const b = bridge()
   return {
     kind: 'electron',
+    encryptionKeyStore: createElectronKeyStore(b),
     has: (_capability) => true,
     getItem: (key) => b.invoke('persist:get', key) as Promise<string | null>,
     setItem: (key, value) => b.invoke('persist:set', key, value) as Promise<void>,

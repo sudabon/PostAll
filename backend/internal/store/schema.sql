@@ -14,7 +14,9 @@ create table channels (
     sort_key   text not null,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
-    constraint channels_name_not_blank check (btrim(name) <> '')
+    encrypted  boolean not null default false,
+    constraint channels_name_not_blank check (btrim(name) <> ''),
+    constraint channels_id_encrypted_key unique (id, encrypted)
 );
 
 create unique index channels_name_in_parent
@@ -34,7 +36,15 @@ create table posts (
     created_at     timestamptz not null default now(),
     updated_at     timestamptz not null default now(),
     edited_at      timestamptz,
-    deleted_at     timestamptz
+    deleted_at     timestamptz,
+    encrypted      boolean not null default false,
+    body_ciphertext text,
+    constraint posts_channel_encryption_fkey
+        foreign key (channel_id, encrypted) references channels (id, encrypted) on delete cascade,
+    constraint posts_encrypted_has_no_plain_body check (not encrypted or body = ''),
+    constraint posts_plain_has_no_ciphertext check (encrypted or body_ciphertext is null),
+    constraint posts_live_encrypted_has_ciphertext
+        check (not encrypted or deleted_at is not null or body_ciphertext is not null)
 );
 
 create index posts_timeline
@@ -129,6 +139,16 @@ create table change_events (
 );
 
 create index change_events_created_at on change_events (created_at);
+
+create table encryption_keyring (
+    key_id          uuid primary key,
+    singleton       boolean not null default true unique check (singleton),
+    auth_hash       bytea not null,
+    passphrase_wrap jsonb not null,
+    recovery_wrap   jsonb not null,
+    created_at      timestamptz not null default now(),
+    updated_at      timestamptz not null default now()
+);
 
 create table change_event_retention (
     singleton      boolean primary key default true,

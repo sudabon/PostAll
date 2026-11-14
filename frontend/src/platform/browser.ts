@@ -1,4 +1,5 @@
 import type { Capability, MenuTemplate, PickedFile, PlatformAdapter, WindowState } from './types'
+import { createIndexedDbKeyStore } from './key-store'
 import { putBytesWithXhr } from '@/lib/upload'
 
 const caps: Record<Capability, boolean> = {
@@ -24,6 +25,7 @@ export function createBrowserAdapter(): PlatformAdapter {
 
   return {
     kind: 'browser',
+    encryptionKeyStore: createIndexedDbKeyStore(),
     has: (c) => caps[c],
     async getItem(key) {
       try {

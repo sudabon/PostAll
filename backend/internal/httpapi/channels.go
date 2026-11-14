@@ -11,6 +11,7 @@ import (
 	"github.com/sudabon/PostAll/backend/internal/attachment"
 	"github.com/sudabon/PostAll/backend/internal/channel"
 	"github.com/sudabon/PostAll/backend/internal/emoji"
+	"github.com/sudabon/PostAll/backend/internal/encryption"
 	"github.com/sudabon/PostAll/backend/internal/post"
 	searchservice "github.com/sudabon/PostAll/backend/internal/search"
 	"github.com/sudabon/PostAll/backend/internal/store"
@@ -40,7 +41,8 @@ func (s *Server) CreateChannel(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	row, err := s.channels.Create(r.Context(), body.Name, body.ParentId)
+	encrypted := body.Encrypted != nil && *body.Encrypted
+	row, err := s.channels.Create(r.Context(), body.Name, body.ParentId, encrypted)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
@@ -137,6 +139,11 @@ func writeAppError(w http.ResponseWriter, r *http.Request, err error) {
 		writeAPIError(w, ee.Status, ee.Code, ee.Message, nil)
 		return
 	}
+	var ke *encryption.Error
+	if errors.As(err, &ke) {
+		writeAPIError(w, ke.Status, ke.Code, ke.Message, nil)
+		return
+	}
 	var se *searchservice.Error
 	if errors.As(err, &se) {
 		writeAPIError(w, se.Status, se.Code, se.Message, nil)
@@ -156,6 +163,7 @@ func toAPIChannel(row store.Channel) api.Channel {
 		ParentId:  row.ParentID,
 		Name:      row.Name,
 		SortKey:   row.SortKey,
+		Encrypted: row.Encrypted,
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
 	}

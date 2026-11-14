@@ -6,6 +6,7 @@ import App from '@/App'
 import { AuthProvider, useAuth } from '@/auth/AuthProvider'
 import { TokenRequestError } from '@/auth/pkce'
 import { AUTH_SECRET_KEY, PKCE_VERIFIER_KEY, rememberTokens } from '@/auth/session'
+import { generateMasterKey } from '@/crypto/keys'
 import { PlatformProvider, createFakeAdapter } from '@/platform'
 import { useSettings } from '@/state/settings'
 
@@ -157,6 +158,8 @@ describe('AuthProvider account_not_allowed', () => {
       },
     })
     const deleteSecret = vi.spyOn(adapter, 'deleteSecret')
+    await adapter.encryptionKeyStore.save(crypto.randomUUID(), generateMasterKey())
+    expect(await adapter.encryptionKeyStore.load()).not.toBeNull()
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
     render(
@@ -179,6 +182,7 @@ describe('AuthProvider account_not_allowed', () => {
     expect(rejected.length).toBeGreaterThanOrEqual(2)
     expect(deleteSecret.mock.calls.filter(([key]) => key === AUTH_SECRET_KEY)).toHaveLength(1)
     expect(await adapter.getSecret(AUTH_SECRET_KEY)).toBeNull()
+    expect(await adapter.encryptionKeyStore.load()).toBeNull()
     expect(screen.queryByTestId('channel-tree')).toBeNull()
   })
 })

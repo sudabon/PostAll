@@ -3,9 +3,9 @@ import { buildForest, descendantIds, flattenVisible } from './tree'
 
 describe('channel tree', () => {
   const channels = [
-    { id: 'a', name: 'root', sortKey: 'a', parentId: null, createdAt: '', updatedAt: '' },
-    { id: 'b', name: 'child', sortKey: 'a', parentId: 'a', createdAt: '', updatedAt: '' },
-    { id: 'c', name: 'other', sortKey: 'b', parentId: null, createdAt: '', updatedAt: '' },
+    { id: 'a', name: 'root', sortKey: 'a', parentId: null, encrypted: false, createdAt: '', updatedAt: '' },
+    { id: 'b', name: 'child', sortKey: 'a', parentId: 'a', encrypted: false, createdAt: '', updatedAt: '' },
+    { id: 'c', name: 'other', sortKey: 'b', parentId: null, encrypted: false, createdAt: '', updatedAt: '' },
   ]
 
   it('nests children and keeps sibling order', () => {

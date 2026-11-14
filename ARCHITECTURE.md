@@ -211,7 +211,7 @@ Transaction pooling に合わせて `internal/httpapi` は pgxpool を `MaxConns
 
 PGroonga（`pgroonga_text_regexp_ops_v2`）で `posts.body` を検索する。日本語の分かち書きを前提にせず部分一致が効くこと、Supabase の拡張として使えることが選定理由。索引はクラッシュで壊れることがあり、その場合は `REINDEX INDEX posts_body_pgroonga;` で作り直す。
 
-検索結果はスレッド返信にも当たるため、`timelinePostId`（タイムラインに表示すべきルートポスト）を併せて返し、クライアントは `GET /v1/channels/{id}/posts?around=` で該当箇所の前後を復元する。
+検索結果はスレッド返信にも当たるため、`timelinePostId`（タイムラインに表示すべきルートポスト）を併せて返し、クライアントは `GET /v1/channels/{id}/posts?around=` で該当箇所の前後を復元する。暗号化チャネルのポストは本文の平文をサーバーが持たないので、検索 SQL の `not p.encrypted` と空の `body` の両方で索引の対象から外す。
 
 ### 9. 多層防御
 
@@ -237,6 +237,18 @@ Supabase の Data API（PostgREST）は `public` スキーマを公開し、ク�
 #### 削除時の本文消去
 
 ポストの論理削除（`SoftDeletePost`）は、`deleted_at` を立てるのと同じ UPDATE で `body` を空にする。削除済みであることと、返信の `thread_root_id` は残す。表示層の隠蔽（`fromPost` が削除済みの本文を空にして返す）に頼らず、DB・PGroonga の索引・以後のバックアップから本文が消える。本変更より前に削除済みだった行は、マイグレーション `00016_erase_deleted_post_bodies.sql` で空にした（戻せないので Down は何もしない）。削除前に取得済みのバックアップには、保持期限（30 日）まで残る。
+
+#### 暗号化チャネル
+
+秘匿したいメモは、チャネル作成時に暗号化チャネルとして置く。既定は非暗号化で、作成後に切り替える経路は API にも DB のトリガーにも無い。暗号化の有無は親子で引き継がない。
+
+鍵はワークスペースに 1 つ（マスター鍵）だけ作る。パスフレーズは PBKDF2-SHA256（600,000 回）、復旧キーは HKDF-SHA256 で包み鍵を導き、マスター鍵を AES-GCM で包んでサーバーの `encryption_keyring` に置く。ポストの暗号鍵と、鍵束を書き換えるときの所持の証明は、マスター鍵から別の HKDF で導く。サーバーが保存し応答するのは、暗号文（`pe1.<keyId>.<iv>.<ciphertext>`）と包んだ鍵だけである。パスフレーズ、復旧キー、マスター鍵の平文は受け取らない。
+
+暗号文は `posts.body` ではなく `body_ciphertext` に置く。`body` は空のままなので、PGroonga の索引に暗号文の文字列は入らない。論理削除では暗号文も同じ UPDATE で消す。
+
+Web 版と PWA は、配信された JavaScript を信頼するしかない。Vercel 上の配信物が改変されると、ブラウザで表示した平文は守られない。Electron はローカルの `dist` を読むのでこの経路を持たない。最も秘匿性の高い操作は Electron で行う。解錠の記憶は端末ごとで、ブラウザは取り出せない `CryptoKey` を IndexedDB に、Electron は OS の safeStorage にマスター鍵を置く。記憶しない端末は 15 分操作が無いとロックする。会社支給の端末では記憶しない。
+
+チャネル名、投稿日時、リアクション、返信件数は平文のままである。チャネル名に秘匿情報を入れない。
 
 #### バックアップの公開鍵暗号化
 
@@ -277,6 +289,8 @@ PostAll/
 │   └── src/
 │       ├── api/            # 生成型と手書き HTTP クライアント
 │       ├── auth/           # PKCE、セッション、AuthProvider
+│       ├── crypto/         # クライアント側の鍵階層と pe1 暗号文
+│       ├── encryption/     # 解錠状態、自動ロック、下書きのメモリ保持
 │       ├── platform/       # ブラウザ / Electron の差異を吸収する抽象
 │       ├── hooks/          # useChangeSync / usePosts / useSearch 等
 │       ├── state/          # Zustand（UI 状態・接続設定）

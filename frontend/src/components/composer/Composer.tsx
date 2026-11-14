@@ -1,5 +1,6 @@
-import { CirclePlus, Send } from 'lucide-react'
+import { CirclePlus, KeyRound, Send } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { readMemoryDraft, useMemoryDraftEpoch, writeMemoryDraft } from '@/encryption/draft-memory'
 import type { Attachment } from '@/api/client'
 import { usePlatform, type PickedFile } from '@/platform'
 import { useUi } from '@/state/ui'
@@ -52,6 +53,11 @@ export function Composer({
   submitLabel = '送信',
   onCancel,
   persistDraft = true,
+  /** 暗号化チャネルとそのスレッド。下書きはメモリだけに置き、添付は出さない */
+  encrypted = false,
+  /** ロック中の送信は解錠を待ち、入力はそのまま残す */
+  locked = false,
+  onRequestUnlock,
   autoFocus = false,
   suppressAutoFocus = false,
   resolveAttachmentUrl,
@@ -74,6 +80,9 @@ export function Composer({
   onCancel?: () => void
   /** 偽なら下書きを読まない・書かない */
   persistDraft?: boolean
+  encrypted?: boolean
+  locked?: boolean
+  onRequestUnlock?: () => Promise<boolean>
   /** タッチ端末でもマウント時に本文へフォーカスする */
   autoFocus?: boolean
   /** 真ならマウント時に本文へフォーカスしない。明示的なフォーカス要求（epoch 更新）は従来どおり効く */
@@ -83,8 +92,12 @@ export function Composer({
 }) {
   const platform = usePlatform()
   const epoch = useUi((s) => s.composerEpoch)
+  const memoryEpoch = useMemoryDraftEpoch()
+  // 暗号化チャネルの下書きはメモリだけに置く。編集フォーム（persistDraft=false）はどちらも使わない。
+  const memoryDraft = persistDraft && encrypted
+  const keepDraft = persistDraft && !encrypted
   const editing = Boolean(onCancel)
-  const [value, setValue] = useState(initialBody)
+  const [value, setValue] = useState(() => (memoryDraft ? readMemoryDraft(storageKey) : initialBody))
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(initialError ?? null)
   // 編集フォームを開いたまま保存失敗が届くことがある。マウント済みでも表示できるよう、
@@ -111,9 +124,17 @@ export function Composer({
     replaceDrafts(update(draftsRef.current))
   }
 
+  // 暗号化チャネルの下書きはメモリから同期で読む。下書きの切り替えと、ロックでの破棄（epoch）で読み直す。
+  const memorySource = memoryDraft ? `${memoryEpoch}:${storageKey}` : null
+  const [lastMemorySource, setLastMemorySource] = useState(memorySource)
+  if (memorySource !== lastMemorySource) {
+    setLastMemorySource(memorySource)
+    if (memorySource !== null) setValue(readMemoryDraft(storageKey))
+  }
+
   useEffect(() => {
-    // 編集中の入力は下書きにしない。新規投稿の下書きを読むことも書くこともしない。
-    if (!persistDraft) return
+    // 編集中の入力は下書きにしない。暗号化チャネルの下書きは端末へ書かない。
+    if (!keepDraft) return
     let cancelled = false
     void platform.getItem(storageKey).then((raw) => {
       if (cancelled) return
@@ -123,12 +144,16 @@ export function Composer({
     return () => {
       cancelled = true
     }
-  }, [persistDraft, platform, storageKey])
+  }, [keepDraft, platform, storageKey])
 
   useEffect(() => {
-    if (!persistDraft || !loaded) return
+    if (memoryDraft) {
+      writeMemoryDraft(storageKey, value)
+      return
+    }
+    if (!keepDraft || !loaded) return
     void platform.setItem(storageKey, value)
-  }, [loaded, persistDraft, platform, storageKey, value])
+  }, [keepDraft, loaded, memoryDraft, platform, storageKey, value])
 
   useEffect(() => {
     const el = area.current
@@ -197,6 +222,10 @@ export function Composer({
   }
 
   const addPicked = (picked: PickedFile[]) => {
+    if (encrypted) {
+      setError('暗号化チャネルには添付できません')
+      return
+    }
     if (mutationDisabled) {
       setError('接続されていないため添付をアップロードできません')
       return
@@ -243,17 +272,27 @@ export function Composer({
   }
 
   const submit = async () => {
-    if (!canSend) return
+    if (!ready) return
     if (!hasContent) {
       setError('本文または添付のいずれかが必要です')
       return
+    }
+    if (encrypted && locked) {
+      const unlocked = await onRequestUnlock?.()
+      if (!unlocked) return
     }
     setSending(true)
     setError(null)
     const snapshot = value
     try {
       await onSubmit(value, readyIds, readyAttachments)
-      if (!persistDraft) return
+      if (memoryDraft) {
+        writeMemoryDraft(storageKey, '')
+        setValue('')
+        replaceDrafts([])
+        return
+      }
+      if (!keepDraft) return
       setValue('')
       draftsRef.current.forEach((d) => {
         if (d.preview) URL.revokeObjectURL(d.preview)
@@ -409,8 +448,15 @@ export function Composer({
             ))}
           </ul>
         ) : null}
+        {encrypted ? (
+          <p className="flex items-center gap-1 px-3 pb-1 text-caption text-muted-foreground" data-testid="composer-encrypted">
+            <KeyRound className="size-3.5" aria-hidden="true" />
+            暗号化して送信します。添付は使えません。
+          </p>
+        ) : null}
         <div className="flex items-center justify-between gap-2 px-2 pb-2">
           <div className="flex min-w-0 items-center gap-2">
+            {encrypted ? null : (
             <Button
               type="button"
               variant="ghost"
@@ -426,6 +472,7 @@ export function Composer({
             >
               <CirclePlus className="size-5" />
             </Button>
+            )}
             {error ? <p role="alert" className="min-w-0 text-caption text-destructive">{error}</p> : null}
           </div>
           {onCancel ? (

@@ -143,6 +143,154 @@ func TestEraseDeletedPostBodiesDownIsDocumentedNoop(t *testing.T) {
 	}
 }
 
+const testCiphertext = "pe1.00000000-0000-4000-8000-000000000001.AAAAAAAAAAAAAAAA.c2VjcmV0"
+
+func TestChannelEncryptionKeepsPostsConsistentWithChannel(t *testing.T) {
+	db := openUnmigrated(t)
+	ctx := context.Background()
+	migrateTo(t, db, 17)
+
+	var userID, plainID, encryptedID string
+	mustScan(t, db.QueryRowContext(ctx, `insert into users (auth_subject) values ('migration-user') returning id`), &userID)
+	mustScan(t, db.QueryRowContext(ctx, `insert into channels (name, sort_key) values ('inbox', 'a') returning id`), &plainID)
+	mustScan(t, db.QueryRowContext(ctx, `
+		insert into channels (name, sort_key, encrypted) values ('secret', 'b', true) returning id
+	`), &encryptedID)
+
+	var rootID string
+	mustScan(t, db.QueryRowContext(ctx, `
+		insert into posts (channel_id, author_id, encrypted, body_ciphertext)
+		values ($1, $2, true, $3) returning id
+	`, encryptedID, userID, testCiphertext), &rootID)
+	if _, err := db.ExecContext(ctx, `
+		insert into posts (channel_id, thread_root_id, author_id, encrypted, body_ciphertext)
+		values ($1, $2, $3, true, $4)
+	`, encryptedID, rootID, userID, testCiphertext); err != nil {
+		t.Fatalf("encrypted reply: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `insert into posts (channel_id, author_id, body) values ($1, $2, 'plain')`, plainID, userID); err != nil {
+		t.Fatalf("plain post: %v", err)
+	}
+
+	rejected := []struct {
+		name string
+		sql  string
+		args []any
+	}{
+		{"plain post in encrypted channel", `insert into posts (channel_id, author_id, body) values ($1, $2, 'leak')`, []any{encryptedID, userID}},
+		{"encrypted post with plain body", `
+			insert into posts (channel_id, author_id, encrypted, body, body_ciphertext)
+			values ($1, $2, true, 'leak', $3)`, []any{encryptedID, userID, testCiphertext}},
+		{"live encrypted post without ciphertext", `
+			insert into posts (channel_id, author_id, encrypted) values ($1, $2, true)`, []any{encryptedID, userID}},
+		{"ciphertext in plain channel", `
+			insert into posts (channel_id, author_id, body_ciphertext) values ($1, $2, $3)`, []any{plainID, userID, testCiphertext}},
+		{"encrypted flag in plain channel", `
+			insert into posts (channel_id, author_id, encrypted, body_ciphertext)
+			values ($1, $2, true, $3)`, []any{plainID, userID, testCiphertext}},
+		{"plain body written over an encrypted post", `update posts set body = 'leak' where id = $1`, []any{rootID}},
+		{"post moved to the other kind of channel", `update posts set channel_id = $1 where id = $2`, []any{plainID, rootID}},
+	}
+	for _, tc := range rejected {
+		if _, err := db.ExecContext(ctx, tc.sql, tc.args...); err == nil {
+			t.Errorf("%s: accepted, want constraint violation", tc.name)
+		}
+	}
+
+	// 論理削除では暗号文を消せる。削除済みであることとスレッドの参照は残る。
+	if _, err := db.ExecContext(ctx, `
+		update posts set deleted_at = now(), body_ciphertext = null where id = $1
+	`, rootID); err != nil {
+		t.Fatalf("soft delete encrypted post: %v", err)
+	}
+
+	for _, tc := range []struct{ id, value string }{{encryptedID, "false"}, {plainID, "true"}} {
+		if _, err := db.ExecContext(ctx, `update channels set encrypted = `+tc.value+` where id = $1`, tc.id); err == nil {
+			t.Errorf("channels.encrypted of %s changed to %s", tc.id, tc.value)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `update channels set name = 'renamed', parent_id = $1 where id = $2`, plainID, encryptedID); err != nil {
+		t.Fatalf("rename and move encrypted channel: %v", err)
+	}
+	var stillEncrypted bool
+	mustScan(t, db.QueryRowContext(ctx, `select encrypted from channels where id = $1`, encryptedID), &stillEncrypted)
+	if !stillEncrypted {
+		t.Fatal("rename/move changed channels.encrypted")
+	}
+}
+
+func TestEncryptionKeyringHoldsASingleRow(t *testing.T) {
+	db := openUnmigrated(t)
+	ctx := context.Background()
+	migrateTo(t, db, 17)
+
+	insert := func(keyID string) error {
+		_, err := db.ExecContext(ctx, `
+			insert into encryption_keyring (key_id, auth_hash, passphrase_wrap, recovery_wrap)
+			values ($1, '\x00', '{}', '{}')
+		`, keyID)
+		return err
+	}
+	if err := insert("00000000-0000-4000-8000-000000000001"); err != nil {
+		t.Fatalf("first keyring: %v", err)
+	}
+	if err := insert("00000000-0000-4000-8000-000000000002"); err == nil {
+		t.Fatal("second keyring row was accepted")
+	}
+	if _, err := db.ExecContext(ctx, `
+		insert into encryption_keyring (key_id, singleton, auth_hash, passphrase_wrap, recovery_wrap)
+		values ('00000000-0000-4000-8000-000000000003', false, '\x00', '{}', '{}')
+	`); err == nil {
+		t.Fatal("non-singleton keyring row was accepted")
+	}
+}
+
+func TestChannelEncryptionDownRefusesWhileEncryptedChannelsExist(t *testing.T) {
+	db := openUnmigrated(t)
+	ctx := context.Background()
+	migrateTo(t, db, 17)
+
+	var channelID string
+	mustScan(t, db.QueryRowContext(ctx, `
+		insert into channels (name, sort_key, encrypted) values ('secret', 'a', true) returning id
+	`), &channelID)
+	if err := goose.DownTo(db, ".", 16); err == nil {
+		t.Fatal("down succeeded while an encrypted channel exists")
+	}
+	var version int64
+	mustScan(t, db.QueryRowContext(ctx, `select max(version_id) from goose_db_version where is_applied`), &version)
+	if version != 17 {
+		t.Fatalf("version after failed down = %d, want 17", version)
+	}
+
+	if _, err := db.ExecContext(ctx, `delete from channels where id = $1`, channelID); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.DownTo(db, ".", 16); err != nil {
+		t.Fatalf("down without encrypted channels: %v", err)
+	}
+	var columns int
+	mustScan(t, db.QueryRowContext(ctx, `
+		select count(*) from information_schema.columns
+		where table_name in ('channels', 'posts') and column_name in ('encrypted', 'body_ciphertext')
+	`), &columns)
+	if columns != 0 {
+		t.Fatalf("%d encryption columns remain after down", columns)
+	}
+}
+
+func TestEncryptionKeyringIsLockedDown(t *testing.T) {
+	contents := strings.ToLower(migration(t, "00017_channel_encryption.sql"))
+	for _, required := range []string{
+		"alter table encryption_keyring enable row level security",
+		"revoke all on table encryption_keyring",
+	} {
+		if !strings.Contains(contents, required) {
+			t.Errorf("keyring migration is missing %q", required)
+		}
+	}
+}
+
 func openUnmigrated(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("pgx", testutil.EmptyPostgresURL(t))

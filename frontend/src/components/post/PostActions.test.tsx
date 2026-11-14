@@ -11,6 +11,7 @@ const post: Post = {
   threadRootId: 'root-1',
   authorId: 'author-1',
   body: 'original reply',
+  encrypted: false,
   createdAt: '2026-08-26T00:00:00Z',
   updatedAt: '2026-08-26T00:00:00Z',
   editedAt: null,

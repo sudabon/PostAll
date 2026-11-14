@@ -161,6 +161,29 @@ func TestMiddlewareSkipAuthPathsIgnoreAllowlist(t *testing.T) {
 	}
 }
 
+func TestMiddlewareKeepsEncryptionKeyringBehindAllowlist(t *testing.T) {
+	paths := []string{"/v1/encryption/keyring", "/v1/encryption/keyring/passphrase", "/v1/encryption/keyring/recovery"}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			users := &memoryUsers{}
+			h, token := newAllowlistTestHandler(t, users, NewAllowedSubjects(allowedSubA))
+			if rec := serveWithToken(h, path, token(allowedSubA)); rec.Code != http.StatusNoContent {
+				t.Fatalf("allowed subject status=%d", rec.Code)
+			}
+			assertAccountNotAllowed(t, serveWithToken(h, path, token(allowedSubB)))
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("missing token status=%d, want 401", rec.Code)
+			}
+			if users.calls != 1 {
+				t.Fatalf("ResolveByAuthSubject calls=%d, want 1 (allowed subject only)", users.calls)
+			}
+		})
+	}
+}
+
 func TestMiddlewareInvalidTokenIsStillUnauthorized(t *testing.T) {
 	h, _ := newAllowlistTestHandler(t, &memoryUsers{}, NewAllowedSubjects(allowedSubA))
 	rec := serveWithToken(h, "/v1/channels", "not-a-jwt")

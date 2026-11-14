@@ -5,6 +5,7 @@ type Channel = {
   parentId: string | null
   name: string
   sortKey: string
+  encrypted: boolean
   createdAt: string
   updatedAt: string
 }
@@ -15,6 +16,8 @@ type Post = {
   threadRootId: string | null
   authorId: string
   body: string
+  encrypted: boolean
+  ciphertext: string | null
   createdAt: string
   updatedAt: string
   editedAt: string | null
@@ -99,7 +102,22 @@ export const RICH_CONTENT_IMAGE = {
   url: '/e2e-assets/rich-content.png',
 }
 
-export type V1Request = { method: string; path: string; authorization: string | null }
+export type V1Request = {
+  method: string
+  path: string
+  authorization: string | null
+  /** 全ヘッダー（小文字の名前）。暗号化の要求に平文や鍵が混ざっていないかを検査する */
+  headers: Record<string, string>
+  /** 本文。暗号化の要求に平文や鍵が混ざっていないかを検査する */
+  body: string | null
+}
+
+export type MockKeyring = {
+  keyId: string
+  keyProof: string
+  passphraseWrap: unknown
+  recoveryWrap: unknown
+}
 
 /** mock:account-not-allowed が端末の永続ストレージに置く、拒否されるトークン。 */
 export const REJECTED_ACCESS_TOKEN = 'rejected-access-token'
@@ -118,6 +136,14 @@ export type ApiMockOptions = {
    * fixture 名: mock:rich-content-post
    */
   richContentPost?: boolean
+  /**
+   * 暗号化チャネルと鍵束。未指定なら鍵束は未設定。
+   * conflict は、登録の POST が 409 になり、その後の GET で既存の鍵束を返す。
+   */
+  encryption?: {
+    keyring?: MockKeyring
+    conflict?: boolean
+  }
   /**
    * スタンプ登録要求への応答。
    * mock:emoji-upload-conflict / mock:emoji-upload-error / mock:emoji-upload-slow
@@ -212,6 +238,46 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
   let rejectedCreates = 0
   let rejectedDeletes = 0
   const v1Requests: V1Request[] = []
+  let keyring: MockKeyring | null = options.encryption?.keyring ?? null
+  let hideKeyring = Boolean(options.encryption?.conflict)
+  const envelopeKey = (ciphertext: string) =>
+    /^pe1\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]+$/.exec(ciphertext)?.[1] ?? null
+  const checkedContent = async (
+    reject: (status: number, code: string) => Promise<void>,
+    encrypted: boolean,
+    body: { body?: string; ciphertext?: string; attachmentIds?: string[] },
+  ) => {
+    const text = body.body ?? ''
+    const attachments = body.attachmentIds ?? []
+    if (!encrypted) {
+      if (body.ciphertext) {
+        await reject(400, 'encryption_not_allowed')
+        return null
+      }
+      if (!text.trim() && attachments.length === 0) {
+        await reject(400, 'empty_content')
+        return null
+      }
+      return { body: text, ciphertext: null as string | null }
+    }
+    if (!keyring) {
+      await reject(409, 'encryption_not_configured')
+      return null
+    }
+    if (body.ciphertext == null || text !== '') {
+      await reject(400, 'encryption_required')
+      return null
+    }
+    if (attachments.length > 0) {
+      await reject(400, 'encrypted_attachments_unsupported')
+      return null
+    }
+    if (envelopeKey(body.ciphertext) !== keyring.keyId) {
+      await reject(400, 'invalid_ciphertext')
+      return null
+    }
+    return { body: '', ciphertext: body.ciphertext }
+  }
 
   const emitEvent = async (event: ChangeEvent) => {
     if (!connected || page.isClosed()) return
@@ -239,6 +305,11 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
     await route.fulfill({ contentType: 'image/png', body: ONE_PIXEL_PNG })
   })
 
+  // アプリを読み込まずに、同じオリジンのストレージを準備するための空のページ。
+  await page.route('**/__e2e__/blank', async (route) => {
+    await route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>blank</title>' })
+  })
+
   await page.route('**/v1/**', async (route) => {
     const req = route.request()
     const url = new URL(req.url())
@@ -247,7 +318,18 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
       const raw = req.postData()
       return raw ? JSON.parse(raw) : {}
     }
-    v1Requests.push({ method, path: url.pathname, authorization: (await req.allHeaders()).authorization ?? null })
+    const rejectContent = async (status: number, code: string) => {
+      await route.fulfill({ status, json: { code, message: code } })
+    }
+    const rawBody = req.postData()
+    const headers = await req.allHeaders()
+    v1Requests.push({
+      method,
+      path: `${url.pathname}${url.search}`,
+      authorization: headers.authorization ?? null,
+      headers,
+      body: rawBody,
+    })
 
     if (options.accountNotAllowed) {
       await route.fulfill({
@@ -274,6 +356,53 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
       })
       return
     }
+    if (url.pathname === '/v1/encryption/keyring' && method === 'GET') {
+      if (!keyring || hideKeyring) {
+        await route.fulfill({ status: 404, json: { code: 'encryption_not_configured', message: '暗号化の鍵が設定されていません' } })
+        return
+      }
+      await route.fulfill({
+        json: { ...keyring, createdAt: now(), updatedAt: now() },
+      })
+      return
+    }
+    if (url.pathname === '/v1/encryption/keyring' && method === 'POST') {
+      const body = await json()
+      if (hideKeyring) {
+        hideKeyring = false
+        await route.fulfill({ status: 409, json: { code: 'encryption_already_configured', message: '暗号化の鍵は既に設定されています' } })
+        return
+      }
+      if (keyring) {
+        await route.fulfill({ status: 409, json: { code: 'encryption_already_configured', message: '暗号化の鍵は既に設定されています' } })
+        return
+      }
+      keyring = {
+        keyId: body.keyId,
+        keyProof: body.keyProof,
+        passphraseWrap: body.passphraseWrap,
+        recoveryWrap: body.recoveryWrap,
+      }
+      await route.fulfill({ status: 201, json: { ...keyring, createdAt: now(), updatedAt: now() } })
+      return
+    }
+    const wrapPath = url.pathname.match(/^\/v1\/encryption\/keyring\/(passphrase|recovery)$/)
+    if (wrapPath && method === 'PUT') {
+      if (!keyring) {
+        await route.fulfill({ status: 404, json: { code: 'encryption_not_configured', message: '暗号化の鍵が設定されていません' } })
+        return
+      }
+      const proof = (await req.allHeaders())['x-postall-key-proof']
+      if (!proof || proof !== keyring.keyProof) {
+        await route.fulfill({ status: 403, json: { code: 'key_proof_mismatch', message: '鍵の所持を確認できませんでした' } })
+        return
+      }
+      const body = await json()
+      if (wrapPath[1] === 'passphrase') keyring = { ...keyring, passphraseWrap: body }
+      else keyring = { ...keyring, recoveryWrap: body }
+      await route.fulfill({ json: { ...keyring, createdAt: now(), updatedAt: now() } })
+      return
+    }
     if (url.pathname === '/v1/search' && method === 'GET') {
       const query = (url.searchParams.get('q') ?? '').toLocaleLowerCase()
       const channelId = url.searchParams.get('channelId')
@@ -282,7 +411,7 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
       const limit = Math.min(Number(url.searchParams.get('limit') ?? 20), 50)
       const offset = Number(url.searchParams.get('cursor') ?? 0)
       const matches = db.posts
-        .filter((post) => !post.deletedAt && post.body.toLocaleLowerCase().includes(query))
+        .filter((post) => !post.deletedAt && !post.encrypted && post.body.toLocaleLowerCase().includes(query))
         .filter((post) => !channelId || post.channelId === channelId)
         .filter((post) => !createdFrom || post.createdAt >= createdFrom)
         .filter((post) => !createdTo || post.createdAt <= createdTo)
@@ -366,11 +495,16 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
         await route.fulfill({ status: 409, json: { code: 'name_conflict', message: 'conflict' } })
         return
       }
+      if (body.encrypted && !keyring) {
+        await route.fulfill({ status: 409, json: { code: 'encryption_not_configured', message: '暗号化の鍵が設定されていません' } })
+        return
+      }
       const ch: Channel = {
         id: crypto.randomUUID(),
         parentId: body.parentId ?? null,
         name: body.name,
         sortKey: String(db.channels.length),
+        encrypted: Boolean(body.encrypted),
         createdAt: now(),
         updatedAt: now(),
       }
@@ -412,12 +546,17 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
         return
       }
       const body = await json()
+      const channel = db.channels.find((item) => item.id === postsPath[1])
+      const content = await checkedContent(rejectContent, Boolean(channel?.encrypted), body)
+      if (!content) return
       const post: Post = {
         id: crypto.randomUUID(),
         channelId: postsPath[1],
         threadRootId: null,
         authorId: 'user',
-        body: body.body,
+        body: content.body,
+        encrypted: Boolean(channel?.encrypted),
+        ciphertext: content.ciphertext,
         createdAt: now(),
         updatedAt: now(),
         editedAt: null,
@@ -444,13 +583,17 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
         await route.fulfill({ status: 404, json: { code: 'not_found', message: 'missing' } })
         return
       }
+      const content = await checkedContent(rejectContent, parent.encrypted, body)
+      if (!content) return
       const rootId = parent.threadRootId ?? parent.id
       const post: Post = {
         id: crypto.randomUUID(),
         channelId: parent.channelId,
         threadRootId: rootId,
         authorId: 'user',
-        body: body.body,
+        body: content.body,
+        encrypted: parent.encrypted,
+        ciphertext: content.ciphertext,
         createdAt: now(),
         updatedAt: now(),
         editedAt: null,
@@ -585,7 +728,10 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
         await route.fulfill({ status: 404, json: { code: 'not_found', message: 'missing' } })
         return
       }
-      post.body = body.body
+      const content = await checkedContent(rejectContent, post.encrypted, body)
+      if (!content) return
+      post.body = content.body
+      post.ciphertext = content.ciphertext
       if (Array.isArray(body.attachmentIds)) {
         post.attachments = post.attachments.filter((attachment) => body.attachmentIds.includes(attachment.id))
       }
@@ -607,6 +753,8 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
       }
       post.deletedAt = now()
       post.deleted = true
+      post.body = ''
+      post.ciphertext = null
       if (post.threadRootId) {
         const root = db.posts.find((item) => item.id === post.threadRootId)
         if (root) {
@@ -622,18 +770,22 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
     await route.fulfill({ status: 404, json: { code: 'not_found', message: url.pathname } })
   })
 
+  /** content が { ciphertext } なら、別の端末が暗号化チャネルに投稿したポストとして置く。 */
   const createSeedPost = (
     channelId: string,
-    body: string,
+    content: string | { ciphertext: string },
     createdAt: string,
     threadRootId: string | null = null,
   ): Post => {
+    const ciphertext = typeof content === 'string' ? null : content.ciphertext
     const post: Post = {
       id: crypto.randomUUID(),
       channelId,
       threadRootId,
       authorId: 'external-user',
-      body,
+      body: typeof content === 'string' ? content : '',
+      encrypted: ciphertext !== null,
+      ciphertext,
       createdAt,
       updatedAt: createdAt,
       editedAt: null,
@@ -647,23 +799,28 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
     return post
   }
 
-  const seedChannel = (name: string, bodies: string[] = []) => {
+  const seedChannelWith = (name: string, contents: Array<string | { ciphertext: string }>, encrypted: boolean) => {
     const channel: Channel = {
       id: crypto.randomUUID(),
       parentId: null,
       name,
       sortKey: String(db.channels.length),
+      encrypted,
       createdAt: now(),
       updatedAt: now(),
     }
     db.channels.push(channel)
-    const posts = bodies.map((body, index) => createSeedPost(
+    const posts = contents.map((content, index) => createSeedPost(
       channel.id,
-      body,
+      content,
       new Date(Date.UTC(2026, 7, 23, 0, index)).toISOString(),
     ))
     return { channel, posts }
   }
+  const seedChannel = (name: string, bodies: string[] = []) => seedChannelWith(name, bodies, false)
+  /** 暗号化チャネルと、その暗号文のポスト。鍵束は options.encryption.keyring で与える */
+  const seedEncryptedChannel = (name: string, ciphertexts: string[] = []) =>
+    seedChannelWith(name, ciphertexts.map((ciphertext) => ({ ciphertext })), true)
 
   if (options.richContentPost) {
     const { posts: [post] } = seedChannel('rich', [RICH_CONTENT_BODY])
@@ -692,6 +849,29 @@ export async function installApiMock(page: Page, options: ApiMockOptions = {}) {
       releaseEmojiUpload?.()
     },
     seedChannel,
+    seedEncryptedChannel,
+    /** スレッドへの返信を、別の端末が投稿したものとして置く。親と同じチャネルに属する */
+    seedReply(rootId: string, content: string | { ciphertext: string }) {
+      const root = db.posts.find((post) => post.id === rootId)
+      if (!root) throw new Error(`seedReply: ${rootId} が無い`)
+      const reply = createSeedPost(
+        root.channelId,
+        content,
+        new Date(new Date(root.createdAt).getTime() + 60_000).toISOString(),
+        root.id,
+      )
+      root.replyCount += 1
+      root.lastReplyAt = reply.createdAt
+      return reply
+    },
+    /** 保存されているポスト（暗号化チャネルのポストは暗号文だけを持つ） */
+    storedPosts() {
+      return db.posts.map((post) => ({ ...post }))
+    },
+    /** 登録されている鍵束 */
+    storedKeyring() {
+      return keyring
+    },
     /** 次の count 件の投稿・返信の作成をサーバーが拒否する */
     rejectNextCreates(count = 1) {
       rejectedCreates = count

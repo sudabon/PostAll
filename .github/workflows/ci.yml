@@ -48,7 +48,8 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
+      # webkit は browser:webkit-iphone（iPhone の PWA 相当、TP-032）で使う。
+      - run: npx playwright install --with-deps chromium webkit
       - run: npm run test:e2e
 
   electron:
@@ -81,8 +82,13 @@ jobs:
         run: |
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+      # encryption-key-store.e2e.mjs（electron:encryption-key-store）は safeStorage に鍵を記憶する。
+      # Linux では Secret Service が要るので、gnome-keyring を空のパスワードで解錠して起動し、
+      # 同じ D-Bus のセッションでテストを走らせる。
+      - name: Install a Secret Service for safeStorage
+        run: sudo apt-get update && sudo apt-get install -y gnome-keyring
       # E2E は実際に BrowserWindow を開くので仮想ディスプレイが要る。
-      - run: xvfb-run -a npm test
+      - run: dbus-run-session -- bash -c 'echo -n "" | gnome-keyring-daemon --unlock --components=secrets >/dev/null && xvfb-run -a npm test'
 
   backup-scripts:
     runs-on: ubuntu-latest

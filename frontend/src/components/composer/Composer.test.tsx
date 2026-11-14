@@ -387,3 +387,76 @@ describe('Composer edit mode', () => {
     expect(onCancel).not.toHaveBeenCalled()
   })
 })
+
+describe('Composer on an encrypted channel', () => {
+  afterEach(cleanup)
+
+  function renderEncrypted(options: { locked?: boolean; unlock?: () => Promise<boolean> } = {}) {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const adapter = createFakeAdapter()
+    render(
+      <PlatformProvider adapter={adapter}>
+        <Composer
+          storageKey="draft:secret"
+          encrypted
+          locked={options.locked}
+          onRequestUnlock={options.unlock ?? (async () => true)}
+          onSubmit={onSubmit}
+        />
+      </PlatformProvider>,
+    )
+    return { onSubmit, adapter }
+  }
+
+  it('says the post will be encrypted and offers no attachment control', () => {
+    renderEncrypted()
+    expect(screen.getByTestId('composer-encrypted')).toHaveTextContent('暗号化して送信')
+    expect(screen.queryByTestId('composer-attach')).toBeNull()
+  })
+
+  it('keeps the draft in memory and not in storage', async () => {
+    const { adapter } = renderEncrypted()
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '秘密の下書き' } })
+    expect(await adapter.getItem('draft:secret')).toBeNull()
+    cleanup()
+    renderEncrypted()
+    expect(screen.getByTestId('composer-input')).toHaveValue('秘密の下書き')
+  })
+
+  it('asks for an unlock and keeps the text until the send is allowed', async () => {
+    const unlock = vi.fn(async () => false)
+    const { onSubmit } = renderEncrypted({ locked: true, unlock })
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '残す' } })
+    fireEvent.submit(screen.getByTestId('composer'))
+    await waitFor(() => expect(unlock).toHaveBeenCalled())
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByTestId('composer-input')).toHaveValue('残す')
+  })
+
+  it('opens an encrypted edit with the given body and writes no memory draft', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    render(
+      <PlatformProvider adapter={createFakeAdapter()}>
+        <Composer
+          storageKey="edit:secret-post"
+          persistDraft={false}
+          encrypted
+          initialBody="復号した本文"
+          submitLabel="保存"
+          onCancel={vi.fn()}
+          onSubmit={onSubmit}
+        />
+      </PlatformProvider>,
+    )
+    expect(screen.getByTestId('composer-input')).toHaveValue('復号した本文')
+    expect(screen.queryByTestId('composer-attach')).toBeNull()
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '書き換え' } })
+    cleanup()
+    render(
+      <PlatformProvider adapter={createFakeAdapter()}>
+        <Composer storageKey="edit:secret-post" encrypted onSubmit={onSubmit} />
+      </PlatformProvider>,
+    )
+    expect(screen.getByTestId('composer-input')).toHaveValue('')
+  })
+})

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countReplies = `-- name: CountReplies :one
@@ -27,7 +28,7 @@ func (q *Queries) CountReplies(ctx context.Context, threadRootID uuid.UUID) (int
 }
 
 const getPost = `-- name: GetPost :one
-select id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at
+select id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at, encrypted, body_ciphertext
 from posts
 where id = $1
 `
@@ -45,21 +46,32 @@ func (q *Queries) GetPost(ctx context.Context, id uuid.UUID) (Post, error) {
 		&i.UpdatedAt,
 		&i.EditedAt,
 		&i.DeletedAt,
+		&i.Encrypted,
+		&i.BodyCiphertext,
 	)
 	return i, err
 }
 
 const insertPost = `-- name: InsertPost :one
-insert into posts (channel_id, thread_root_id, author_id, body)
-values ($1, $2::uuid, $3, $4)
-returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at
+insert into posts (channel_id, thread_root_id, author_id, body, encrypted, body_ciphertext)
+values (
+    $1,
+    $2::uuid,
+    $3,
+    $4,
+    $5,
+    $6::text
+)
+returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at, encrypted, body_ciphertext
 `
 
 type InsertPostParams struct {
-	ChannelID    uuid.UUID
-	ThreadRootID *uuid.UUID
-	AuthorID     uuid.UUID
-	Body         string
+	ChannelID      uuid.UUID
+	ThreadRootID   *uuid.UUID
+	AuthorID       uuid.UUID
+	Body           string
+	Encrypted      bool
+	BodyCiphertext pgtype.Text
 }
 
 func (q *Queries) InsertPost(ctx context.Context, arg InsertPostParams) (Post, error) {
@@ -68,6 +80,8 @@ func (q *Queries) InsertPost(ctx context.Context, arg InsertPostParams) (Post, e
 		arg.ThreadRootID,
 		arg.AuthorID,
 		arg.Body,
+		arg.Encrypted,
+		arg.BodyCiphertext,
 	)
 	var i Post
 	err := row.Scan(
@@ -80,6 +94,8 @@ func (q *Queries) InsertPost(ctx context.Context, arg InsertPostParams) (Post, e
 		&i.UpdatedAt,
 		&i.EditedAt,
 		&i.DeletedAt,
+		&i.Encrypted,
+		&i.BodyCiphertext,
 	)
 	return i, err
 }
@@ -111,6 +127,8 @@ select
     p.updated_at,
     p.edited_at,
     p.deleted_at,
+    p.encrypted,
+    p.body_ciphertext,
     0::bigint as reply_count,
     null::timestamptz as last_reply_at
 from posts p
@@ -120,17 +138,19 @@ order by p.created_at asc, p.id asc
 `
 
 type ListThreadRepliesRow struct {
-	ID           uuid.UUID
-	ChannelID    uuid.UUID
-	ThreadRootID *uuid.UUID
-	AuthorID     uuid.UUID
-	Body         string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	EditedAt     *time.Time
-	DeletedAt    *time.Time
-	ReplyCount   int64
-	LastReplyAt  *time.Time
+	ID             uuid.UUID
+	ChannelID      uuid.UUID
+	ThreadRootID   *uuid.UUID
+	AuthorID       uuid.UUID
+	Body           string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	EditedAt       *time.Time
+	DeletedAt      *time.Time
+	Encrypted      bool
+	BodyCiphertext pgtype.Text
+	ReplyCount     int64
+	LastReplyAt    *time.Time
 }
 
 func (q *Queries) ListThreadReplies(ctx context.Context, threadRootID uuid.UUID) ([]ListThreadRepliesRow, error) {
@@ -152,6 +172,8 @@ func (q *Queries) ListThreadReplies(ctx context.Context, threadRootID uuid.UUID)
 			&i.UpdatedAt,
 			&i.EditedAt,
 			&i.DeletedAt,
+			&i.Encrypted,
+			&i.BodyCiphertext,
 			&i.ReplyCount,
 			&i.LastReplyAt,
 		); err != nil {
@@ -176,6 +198,8 @@ select
     p.updated_at,
     p.edited_at,
     p.deleted_at,
+    p.encrypted,
+    p.body_ciphertext,
     coalesce(s.reply_count, 0)::bigint as reply_count,
     s.last_reply_at
 from posts target
@@ -210,17 +234,19 @@ type ListTimelineAroundParams struct {
 }
 
 type ListTimelineAroundRow struct {
-	ID           uuid.UUID
-	ChannelID    uuid.UUID
-	ThreadRootID *uuid.UUID
-	AuthorID     uuid.UUID
-	Body         string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	EditedAt     *time.Time
-	DeletedAt    *time.Time
-	ReplyCount   int64
-	LastReplyAt  interface{}
+	ID             uuid.UUID
+	ChannelID      uuid.UUID
+	ThreadRootID   *uuid.UUID
+	AuthorID       uuid.UUID
+	Body           string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	EditedAt       *time.Time
+	DeletedAt      *time.Time
+	Encrypted      bool
+	BodyCiphertext pgtype.Text
+	ReplyCount     int64
+	LastReplyAt    interface{}
 }
 
 func (q *Queries) ListTimelineAround(ctx context.Context, arg ListTimelineAroundParams) ([]ListTimelineAroundRow, error) {
@@ -242,6 +268,8 @@ func (q *Queries) ListTimelineAround(ctx context.Context, arg ListTimelineAround
 			&i.UpdatedAt,
 			&i.EditedAt,
 			&i.DeletedAt,
+			&i.Encrypted,
+			&i.BodyCiphertext,
 			&i.ReplyCount,
 			&i.LastReplyAt,
 		); err != nil {
@@ -266,6 +294,8 @@ select
     p.updated_at,
     p.edited_at,
     p.deleted_at,
+    p.encrypted,
+    p.body_ciphertext,
     coalesce(s.reply_count, 0)::bigint as reply_count,
     s.last_reply_at
 from posts p
@@ -300,17 +330,19 @@ type ListTimelineBeforeParams struct {
 }
 
 type ListTimelineBeforeRow struct {
-	ID           uuid.UUID
-	ChannelID    uuid.UUID
-	ThreadRootID *uuid.UUID
-	AuthorID     uuid.UUID
-	Body         string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	EditedAt     *time.Time
-	DeletedAt    *time.Time
-	ReplyCount   int64
-	LastReplyAt  interface{}
+	ID             uuid.UUID
+	ChannelID      uuid.UUID
+	ThreadRootID   *uuid.UUID
+	AuthorID       uuid.UUID
+	Body           string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	EditedAt       *time.Time
+	DeletedAt      *time.Time
+	Encrypted      bool
+	BodyCiphertext pgtype.Text
+	ReplyCount     int64
+	LastReplyAt    interface{}
 }
 
 func (q *Queries) ListTimelineBefore(ctx context.Context, arg ListTimelineBeforeParams) ([]ListTimelineBeforeRow, error) {
@@ -337,6 +369,8 @@ func (q *Queries) ListTimelineBefore(ctx context.Context, arg ListTimelineBefore
 			&i.UpdatedAt,
 			&i.EditedAt,
 			&i.DeletedAt,
+			&i.Encrypted,
+			&i.BodyCiphertext,
 			&i.ReplyCount,
 			&i.LastReplyAt,
 		); err != nil {
@@ -361,6 +395,8 @@ select
     p.updated_at,
     p.edited_at,
     p.deleted_at,
+    p.encrypted,
+    p.body_ciphertext,
     coalesce(s.reply_count, 0)::bigint as reply_count,
     s.last_reply_at
 from posts p
@@ -386,17 +422,19 @@ type ListTimelineLatestParams struct {
 }
 
 type ListTimelineLatestRow struct {
-	ID           uuid.UUID
-	ChannelID    uuid.UUID
-	ThreadRootID *uuid.UUID
-	AuthorID     uuid.UUID
-	Body         string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	EditedAt     *time.Time
-	DeletedAt    *time.Time
-	ReplyCount   int64
-	LastReplyAt  interface{}
+	ID             uuid.UUID
+	ChannelID      uuid.UUID
+	ThreadRootID   *uuid.UUID
+	AuthorID       uuid.UUID
+	Body           string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	EditedAt       *time.Time
+	DeletedAt      *time.Time
+	Encrypted      bool
+	BodyCiphertext pgtype.Text
+	ReplyCount     int64
+	LastReplyAt    interface{}
 }
 
 func (q *Queries) ListTimelineLatest(ctx context.Context, arg ListTimelineLatestParams) ([]ListTimelineLatestRow, error) {
@@ -418,6 +456,8 @@ func (q *Queries) ListTimelineLatest(ctx context.Context, arg ListTimelineLatest
 			&i.UpdatedAt,
 			&i.EditedAt,
 			&i.DeletedAt,
+			&i.Encrypted,
+			&i.BodyCiphertext,
 			&i.ReplyCount,
 			&i.LastReplyAt,
 		); err != nil {
@@ -435,13 +475,14 @@ const softDeletePost = `-- name: SoftDeletePost :one
 update posts
 set deleted_at = now(),
     body = '',
+    body_ciphertext = null,
     updated_at = now()
 where id = $1
   and deleted_at is null
-returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at
+returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at, encrypted, body_ciphertext
 `
 
-// 論理削除と同じ文で本文を消す。削除済みであることとスレッドの参照（thread_root_id）は残す。
+// 論理削除と同じ文で本文と暗号文を消す。削除済みであることとスレッドの参照（thread_root_id）は残す。
 func (q *Queries) SoftDeletePost(ctx context.Context, id uuid.UUID) (Post, error) {
 	row := q.db.QueryRow(ctx, softDeletePost, id)
 	var i Post
@@ -455,6 +496,8 @@ func (q *Queries) SoftDeletePost(ctx context.Context, id uuid.UUID) (Post, error
 		&i.UpdatedAt,
 		&i.EditedAt,
 		&i.DeletedAt,
+		&i.Encrypted,
+		&i.BodyCiphertext,
 	)
 	return i, err
 }
@@ -462,20 +505,22 @@ func (q *Queries) SoftDeletePost(ctx context.Context, id uuid.UUID) (Post, error
 const updatePostBody = `-- name: UpdatePostBody :one
 update posts
 set body = $1,
+    body_ciphertext = $2::text,
     edited_at = now(),
     updated_at = now()
-where id = $2
+where id = $3
   and deleted_at is null
-returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at
+returning id, channel_id, thread_root_id, author_id, body, created_at, updated_at, edited_at, deleted_at, encrypted, body_ciphertext
 `
 
 type UpdatePostBodyParams struct {
-	Body string
-	ID   uuid.UUID
+	Body           string
+	BodyCiphertext pgtype.Text
+	ID             uuid.UUID
 }
 
 func (q *Queries) UpdatePostBody(ctx context.Context, arg UpdatePostBodyParams) (Post, error) {
-	row := q.db.QueryRow(ctx, updatePostBody, arg.Body, arg.ID)
+	row := q.db.QueryRow(ctx, updatePostBody, arg.Body, arg.BodyCiphertext, arg.ID)
 	var i Post
 	err := row.Scan(
 		&i.ID,
@@ -487,6 +532,8 @@ func (q *Queries) UpdatePostBody(ctx context.Context, arg UpdatePostBodyParams) 
 		&i.UpdatedAt,
 		&i.EditedAt,
 		&i.DeletedAt,
+		&i.Encrypted,
+		&i.BodyCiphertext,
 	)
 	return i, err
 }

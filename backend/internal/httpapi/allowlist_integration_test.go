@@ -103,6 +103,9 @@ func TestAllowlistRejectsValidTokenOutsideListWithoutCreatingUser(t *testing.T) 
 		{http.MethodGet, "/v1/search?q=secret"},
 		{http.MethodGet, "/v1/events"},
 		{http.MethodGet, "/v1/emojis"},
+		{http.MethodGet, "/v1/encryption/keyring"},
+		{http.MethodPost, "/v1/encryption/keyring"},
+		{http.MethodPut, "/v1/encryption/keyring/passphrase"},
 	} {
 		var body map[string]any
 		if req.method == http.MethodPost {

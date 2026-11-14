@@ -1,4 +1,5 @@
-import type { Capability, MenuTemplate, PickedFile, PlatformAdapter, WindowState } from './types'
+import type { Capability, EncryptionKeyStore, MenuTemplate, PickedFile, PlatformAdapter, WindowState } from './types'
+import { createMemoryKeyStore } from './key-store'
 
 type Memory = {
   items: Map<string, string>
@@ -10,6 +11,8 @@ export type FakeAdapterOptions = {
   capabilities?: Partial<Record<Capability, boolean>>
   seedSecrets?: Record<string, string>
   files?: PickedFile[]
+  /** 既定はメモリの保管場所。E2E では本物の IndexedDB の保管場所を渡す */
+  encryptionKeyStore?: EncryptionKeyStore
 }
 
 const defaultCaps: Record<Capability, boolean> = {
@@ -52,6 +55,7 @@ export function createFakeAdapter(options: FakeAdapterOptions = {}): PlatformAda
 
   const adapter: PlatformAdapter & { emitMenu: (id: string) => void; emitShortcut: (id: string) => void; emitDeepLink: (url: string) => void } = {
     kind: 'fake',
+    encryptionKeyStore: options.encryptionKeyStore ?? createMemoryKeyStore(),
     has: (c) => caps[c] !== false,
     async getItem(key) {
       return mem.items.get(key) ?? null
